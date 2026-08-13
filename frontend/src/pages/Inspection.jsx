@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { CaretLeft, CheckCircle, XCircle, Wrench } from "@phosphor-icons/react";
+import { CaretLeft, CheckCircle, XCircle, Wrench, Camera } from "@phosphor-icons/react";
 
 export default function Inspection() {
   const { vehicleId } = useParams();
@@ -110,8 +110,25 @@ export default function Inspection() {
           </div>
           <div>
             <label className="overline block mb-2">Odometer (km)</label>
-            <input type="number" value={odometer} onChange={(e) => setOdometer(e.target.value)} data-testid="inspection-odometer"
-              className="w-full bg-[#121214] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none" />
+            <div className="flex gap-1">
+              <input type="number" value={odometer} onChange={(e) => setOdometer(e.target.value)} data-testid="inspection-odometer"
+                className="flex-1 bg-[#121214] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none" />
+              <label className="cursor-pointer border border-border px-3 py-2.5 text-xs text-muted-foreground hover:border-primary hover:text-primary flex items-center gap-1" data-testid="scan-odometer" title="Scan odometer from photo">
+                <Camera size={14} /> Scan
+                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
+                  const file = e.target.files?.[0]; if (!file) return;
+                  const reader = new FileReader();
+                  reader.onloadend = async () => {
+                    try {
+                      const { data } = await api.post("/ocr", { image_base64: reader.result, mode: "odometer" });
+                      setOdometer(data.value);
+                      toast.success(`Odometer: ${data.value}`);
+                    } catch { toast.error("OCR failed"); }
+                  };
+                  reader.readAsDataURL(file);
+                }} />
+              </label>
+            </div>
           </div>
         </div>
 

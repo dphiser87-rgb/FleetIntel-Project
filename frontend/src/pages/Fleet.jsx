@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Truck, ClipboardText } from "@phosphor-icons/react";
+import { Plus, Truck, ClipboardText, Camera } from "@phosphor-icons/react";
 
 const StatusBadge = ({ status }) => {
   const map = {
@@ -55,8 +55,27 @@ export default function Fleet() {
           ].map(([k, l, t]) => (
             <div key={k}>
               <label className="overline block mb-1">{l}</label>
-              <input required type={t} value={form[k]} onChange={set(k)} data-testid={`v-${k}`}
-                className="w-full bg-[#121214] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+              <div className="flex gap-1">
+                <input required type={t} value={form[k]} onChange={set(k)} data-testid={`v-${k}`}
+                  className="flex-1 w-full bg-[#121214] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                {(k === "plate" || k === "odometer") && (
+                  <label className="cursor-pointer border border-border px-2 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-primary flex items-center" data-testid={`ocr-${k}`} title={`Scan ${k} from photo`}>
+                    <Camera size={14} />
+                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
+                      const file = e.target.files?.[0]; if (!file) return;
+                      const reader = new FileReader();
+                      reader.onloadend = async () => {
+                        try {
+                          const { data } = await api.post("/ocr", { image_base64: reader.result, mode: k === "plate" ? "plate" : "odometer" });
+                          setForm(f => ({ ...f, [k]: data.value }));
+                          toast.success(`Scanned: ${data.value}`);
+                        } catch { toast.error("OCR failed"); }
+                      };
+                      reader.readAsDataURL(file);
+                    }} />
+                  </label>
+                )}
+              </div>
             </div>
           ))}
           <div>

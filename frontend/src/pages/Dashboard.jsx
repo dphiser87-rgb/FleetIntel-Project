@@ -30,6 +30,7 @@ export default function Dashboard() {
   const [maint, setMaint] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [forecast, setForecast] = useState({ history: [], forecast: [] });
+  const [anomalies, setAnomalies] = useState([]);
 
   useEffect(() => {
     Promise.all([
@@ -40,6 +41,7 @@ export default function Dashboard() {
       api.get("/maintenance").then(r => setMaint(r.data)),
       api.get("/parts/alerts").then(r => setAlerts(r.data)),
       api.get("/analytics/forecast").then(r => setForecast(r.data)),
+      api.get("/analytics/anomalies").then(r => setAnomalies(r.data)),
     ]).catch(() => {});
   }, []);
 
@@ -59,6 +61,30 @@ export default function Dashboard() {
       </header>
 
       <div className="p-8 space-y-6">
+        {anomalies.length > 0 && (
+          <div className="bg-primary/10 border border-primary/40 p-4" data-testid="anomaly-alert">
+            <div className="flex items-center gap-3 mb-3">
+              <Warning size={18} className="text-primary" />
+              <div>
+                <div className="overline">Cost anomalies detected</div>
+                <div className="text-sm mt-0.5">{anomalies.length} vehicle{anomalies.length !== 1 && "s"} spent above their normal band this month</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {anomalies.slice(0, 6).map(a => (
+                <Link to={`/fleet/${a.vehicle_id}`} key={a.vehicle_id} className="border border-primary/30 bg-[#121214] p-3 hover:border-primary transition-colors" data-testid={`anomaly-${a.vehicle_id}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="font-display font-bold text-sm">{a.vehicle}</div>
+                    <div className="mono text-primary text-sm">+{a.delta_pct}%</div>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1 mono">{a.plate} · {a.month}</div>
+                  <div className="text-xs mono mt-2">{money(a.spend)} <span className="text-muted-foreground">vs avg {money(a.mean)}</span></div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         {alerts.length > 0 && (
           <div className="bg-primary/10 border border-primary/40 px-6 py-3 flex items-center justify-between flex-wrap gap-3" data-testid="parts-alert">
             <div className="flex items-center gap-3">

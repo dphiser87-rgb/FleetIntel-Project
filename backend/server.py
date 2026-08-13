@@ -5,10 +5,18 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import io
+import re
+import ipaddress
+import secrets
+import asyncio
 import logging
 import uuid
 import bcrypt
 import jwt
+import httpx
+from html import escape
+from html.parser import HTMLParser
+from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
@@ -21,6 +29,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -32,7 +41,91 @@ db = client[os.environ['DB_NAME']]
 
 # --- JWT helpers ---
 JWT_ALGO = "HS256"
+DEFAULT_WORKSPACE_ID = "default"
 def jwt_secret(): return os.environ["JWT_SECRET"]
+
+# --- Email guardrails & sender (Resend playbook) ---
+EMAIL_BASE_URL = "https://integrations.emergentagent.com"
+_SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
+_CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
+             "send us your password", "enter your password below", "confirm your card number",
+             "your full card number", "seed phrase", "recovery phrase", "verify your card",
+             "social security number", "confirm your bank details")
+_HOSTISH = re.compile(r"\b(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,})", re.I)
+
+def _host_ok(host: str) -> bool:
+    if not host or "xn--" in host: return False
+    try:
+        ipaddress.ip_address(host); return False
+    except ValueError:
+        pass
+    return not any(host == s or host.endswith("." + s) for s in _SHORTENERS)
+
+def _same_site(shown: str, real: str) -> bool:
+    return shown == real or real.endswith("." + shown) or shown.endswith("." + real)
+
+class _EmailScan(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.tags, self.urls, self.anchors = set(), [], []
+        self._href, self._text = None, []
+    def handle_starttag(self, tag, attrs):
+        self.tags.add(tag.lower())
+        self.urls += [v for k, v in attrs if k.lower() in ("href", "src") and v]
+        if tag.lower() == "a":
+            self._href = dict((k.lower(), v) for k, v in attrs).get("href"); self._text = []
+    def handle_data(self, data):
+        if self._href is not None: self._text.append(data)
+    def handle_endtag(self, tag):
+        if tag.lower() == "a" and self._href is not None:
+            self.anchors.append((self._href, "".join(self._text))); self._href, self._text = None, []
+
+def _assert_safe_email(subject: str, html: str) -> None:
+    scan = _EmailScan(); scan.feed(html)
+    if scan.tags & {"form", "input", "textarea", "select"}:
+        raise ValueError("No forms or input fields in email (G2)")
+    body = f"{subject}\n{html}".lower()
+    for p in _CRED_ASK:
+        if p in body: raise ValueError(f"Credential ask: {p!r} (G2)")
+    for url in scan.urls:
+        low = url.strip().lower()
+        if low.startswith(("mailto:", "tel:", "cid:", "#")): continue
+        if not low.startswith("https://"):
+            raise ValueError(f"Non-https link/src: {url!r} (G3)")
+        host = urlparse(low).hostname or ""
+        if not _host_ok(host) or urlparse(low).username is not None:
+            raise ValueError(f"Bad host: {url!r} (G3)")
+    for href, text in scan.anchors:
+        real = urlparse(href.strip().lower()).hostname or ""
+        if not real: continue
+        for m in _HOSTISH.finditer(text):
+            if not _same_site(m.group(1).lower(), real):
+                raise ValueError(f"Anchor mismatch {m.group(1)!r} != {real!r} (G3)")
+
+async def send_email(*, to: str, subject: str, html: str) -> Optional[str]:
+    _assert_safe_email(subject, html)
+    key = os.environ.get("EMERGENT_EMAIL_KEY")
+    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetCost Intelligence")
+    if not key:
+        logger.warning("EMERGENT_EMAIL_KEY not set — skipping email")
+        return None
+    payload = {"to": [to], "subject": subject, "html": html, "from_name": from_name}
+    reply_to = os.environ.get("EMAIL_REPLY_TO")
+    if reply_to: payload["contact_email"] = reply_to
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
+                                     headers={"X-Email-Key": key}, json=payload)
+        resp.raise_for_status()
+        return resp.json().get("id")
+    except Exception as e:
+        logger.error(f"Email send error: {e}")
+        return None
+
+def ws_filter(user: dict, extra: dict = None) -> dict:
+    q = {"workspace_id": user.get("workspace_id", DEFAULT_WORKSPACE_ID)}
+    if extra: q.update(extra)
+    return q
 
 def hash_pw(pw: str) -> str:
     return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
@@ -79,6 +172,8 @@ class RegisterReq(BaseModel):
     password: str
     name: str
     role: Optional[Literal["admin", "manager", "inspector", "mechanic"]] = "manager"
+    invite_code: Optional[str] = None
+    workspace_name: Optional[str] = None
 
 class LoginReq(BaseModel):
     email: EmailStr
@@ -126,10 +221,22 @@ class PartIn(BaseModel):
     reorder_point: int = 5
     unit_cost: float = 0
     supplier: Optional[str] = ""
+    supplier_email: Optional[str] = ""
 
 class PartAdjust(BaseModel):
     delta: int  # +add stock, -consume
     reason: Optional[str] = ""
+
+class InviteIn(BaseModel):
+    email: EmailStr
+    role: Literal["manager", "inspector", "mechanic", "admin"] = "manager"
+
+class WorkspaceRename(BaseModel):
+    name: str
+
+class OCRIn(BaseModel):
+    image_base64: str  # data URL or raw base64
+    mode: Literal["plate", "odometer"] = "plate"
 
 class InspectionIn(BaseModel):
     template_id: str
@@ -171,18 +278,42 @@ async def register(req: RegisterReq):
     email = req.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Resolve workspace via invite or new workspace
+    workspace_id = None
+    role = req.role
+    if req.invite_code:
+        invite = await db.invites.find_one({"code": req.invite_code, "used_by": None})
+        if not invite:
+            raise HTTPException(status_code=400, detail="Invalid or used invite code")
+        if invite.get("email") and invite["email"].lower() != email:
+            raise HTTPException(status_code=400, detail="Invite email mismatch")
+        workspace_id = invite["workspace_id"]
+        role = invite.get("role", role)
+    else:
+        # Create a new workspace for this user
+        workspace_id = str(uuid.uuid4())
+        await db.workspaces.insert_one({
+            "id": workspace_id, "name": req.workspace_name or f"{req.name}'s Fleet",
+            "owner_email": email, "created_at": now_iso(),
+        })
+
     user = {
         "id": str(uuid.uuid4()),
         "email": email,
         "name": req.name,
-        "role": req.role,
+        "role": role,
+        "workspace_id": workspace_id,
         "password_hash": hash_pw(req.password),
         "created_at": now_iso(),
     }
     await db.users.insert_one(user)
+
+    if req.invite_code:
+        await db.invites.update_one({"code": req.invite_code}, {"$set": {"used_by": user["id"], "used_at": now_iso()}})
+
     token = create_access_token(user["id"], user["email"], user["role"])
-    user.pop("password_hash", None)
-    user.pop("_id", None)
+    user.pop("password_hash", None); user.pop("_id", None)
     return {"user": user, "token": token}
 
 @api.post("/auth/login")
@@ -206,18 +337,19 @@ async def logout(user: dict = Depends(get_current_user)):
 
 @api.get("/users")
 async def list_users(user: dict = Depends(get_current_user)):
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(500)
+    users = await db.users.find(ws_filter(user), {"_id": 0, "password_hash": 0}).to_list(500)
     return users
 
 # --- Vehicles ---
 @api.get("/vehicles")
 async def list_vehicles(user: dict = Depends(get_current_user)):
-    return await db.vehicles.find({}, {"_id": 0}).to_list(1000)
+    return await db.vehicles.find(ws_filter(user), {"_id": 0}).to_list(1000)
 
 @api.post("/vehicles")
 async def create_vehicle(v: VehicleIn, user: dict = Depends(get_current_user)):
     doc = v.model_dump()
     doc["id"] = str(uuid.uuid4())
+    doc["workspace_id"] = user["workspace_id"]
     doc["created_at"] = now_iso()
     await db.vehicles.insert_one(doc)
     doc.pop("_id", None)
@@ -225,30 +357,31 @@ async def create_vehicle(v: VehicleIn, user: dict = Depends(get_current_user)):
 
 @api.get("/vehicles/{vid}")
 async def get_vehicle(vid: str, user: dict = Depends(get_current_user)):
-    v = await db.vehicles.find_one({"id": vid}, {"_id": 0})
+    v = await db.vehicles.find_one(ws_filter(user, {"id": vid}), {"_id": 0})
     if not v: raise HTTPException(status_code=404, detail="Not found")
     return v
 
 @api.patch("/vehicles/{vid}")
 async def update_vehicle(vid: str, patch: dict, user: dict = Depends(get_current_user)):
-    patch.pop("id", None); patch.pop("_id", None)
-    await db.vehicles.update_one({"id": vid}, {"$set": patch})
-    return await db.vehicles.find_one({"id": vid}, {"_id": 0})
+    patch.pop("id", None); patch.pop("_id", None); patch.pop("workspace_id", None)
+    await db.vehicles.update_one(ws_filter(user, {"id": vid}), {"$set": patch})
+    return await db.vehicles.find_one(ws_filter(user, {"id": vid}), {"_id": 0})
 
 @api.delete("/vehicles/{vid}")
 async def delete_vehicle(vid: str, user: dict = Depends(get_current_user)):
-    await db.vehicles.delete_one({"id": vid})
+    await db.vehicles.delete_one(ws_filter(user, {"id": vid}))
     return {"ok": True}
 
 # --- Templates ---
 @api.get("/templates")
 async def list_templates(user: dict = Depends(get_current_user)):
-    return await db.templates.find({}, {"_id": 0}).to_list(200)
+    return await db.templates.find(ws_filter(user), {"_id": 0}).to_list(200)
 
 @api.post("/templates")
 async def create_template(t: TemplateIn, user: dict = Depends(get_current_user)):
     doc = t.model_dump()
     doc["id"] = str(uuid.uuid4())
+    doc["workspace_id"] = user["workspace_id"]
     doc["created_by"] = user["id"]
     doc["created_at"] = now_iso()
     await db.templates.insert_one(doc)
@@ -257,25 +390,25 @@ async def create_template(t: TemplateIn, user: dict = Depends(get_current_user))
 
 @api.get("/templates/{tid}")
 async def get_template(tid: str, user: dict = Depends(get_current_user)):
-    t = await db.templates.find_one({"id": tid}, {"_id": 0})
+    t = await db.templates.find_one(ws_filter(user, {"id": tid}), {"_id": 0})
     if not t: raise HTTPException(status_code=404, detail="Not found")
     return t
 
 @api.patch("/templates/{tid}")
 async def update_template(tid: str, patch: dict, user: dict = Depends(get_current_user)):
-    patch.pop("id", None); patch.pop("_id", None)
-    await db.templates.update_one({"id": tid}, {"$set": patch})
-    return await db.templates.find_one({"id": tid}, {"_id": 0})
+    patch.pop("id", None); patch.pop("_id", None); patch.pop("workspace_id", None)
+    await db.templates.update_one(ws_filter(user, {"id": tid}), {"$set": patch})
+    return await db.templates.find_one(ws_filter(user, {"id": tid}), {"_id": 0})
 
 @api.delete("/templates/{tid}")
 async def delete_template(tid: str, user: dict = Depends(get_current_user)):
-    await db.templates.delete_one({"id": tid})
+    await db.templates.delete_one(ws_filter(user, {"id": tid}))
     return {"ok": True}
 
 # --- Inspections ---
 @api.get("/inspections")
 async def list_inspections(vehicle_id: Optional[str] = None, user: dict = Depends(get_current_user)):
-    q = {"vehicle_id": vehicle_id} if vehicle_id else {}
+    q = ws_filter(user, {"vehicle_id": vehicle_id} if vehicle_id else {})
     return await db.inspections.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
 
 @api.post("/inspections")
@@ -304,50 +437,49 @@ async def get_inspection(iid: str, user: dict = Depends(get_current_user)):
 # --- Maintenance jobs ---
 @api.get("/maintenance")
 async def list_maintenance(user: dict = Depends(get_current_user)):
-    return await db.maintenance.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return await db.maintenance.find(ws_filter(user), {"_id": 0}).sort("created_at", -1).to_list(500)
 
 @api.post("/maintenance")
 async def create_maintenance(m: MaintenanceIn, user: dict = Depends(get_current_user)):
     doc = m.model_dump()
     doc["id"] = str(uuid.uuid4())
+    doc["workspace_id"] = user["workspace_id"]
     doc["status"] = "pending"
     doc["created_by"] = user["id"]
     doc["created_at"] = now_iso()
     doc["actual_cost"] = 0
     doc["downtime_hours"] = 0
     await db.maintenance.insert_one(doc)
-    # set vehicle to maintenance
-    await db.vehicles.update_one({"id": doc["vehicle_id"]}, {"$set": {"status": "maintenance"}})
+    await db.vehicles.update_one(ws_filter(user, {"id": doc["vehicle_id"]}), {"$set": {"status": "maintenance"}})
     doc.pop("_id", None)
     return doc
 
 @api.patch("/maintenance/{mid}")
 async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = Depends(get_current_user)):
     upd = {k: v for k, v in patch.model_dump().items() if v is not None}
-    job = await db.maintenance.find_one({"id": mid})
+    job = await db.maintenance.find_one(ws_filter(user, {"id": mid}))
     if not job: raise HTTPException(status_code=404, detail="Not found")
     if upd.get("status") == "completed":
         upd["completed_at"] = now_iso()
         pc = upd.get("parts_cost", job.get("parts_cost", 0))
         lc = upd.get("labor_cost", job.get("labor_cost", 0))
         upd["actual_cost"] = upd.get("actual_cost") or (pc + lc)
-        # restore vehicle to active
-        await db.vehicles.update_one({"id": job["vehicle_id"]}, {"$set": {"status": "active"}})
+        await db.vehicles.update_one(ws_filter(user, {"id": job["vehicle_id"]}), {"$set": {"status": "active"}})
     if upd.get("status") == "in_progress":
         upd["started_at"] = now_iso()
-    await db.maintenance.update_one({"id": mid}, {"$set": upd})
-    return await db.maintenance.find_one({"id": mid}, {"_id": 0})
+    await db.maintenance.update_one(ws_filter(user, {"id": mid}), {"$set": upd})
+    return await db.maintenance.find_one(ws_filter(user, {"id": mid}), {"_id": 0})
 
 @api.delete("/maintenance/{mid}")
 async def delete_maintenance(mid: str, user: dict = Depends(get_current_user)):
-    await db.maintenance.delete_one({"id": mid})
+    await db.maintenance.delete_one(ws_filter(user, {"id": mid}))
     return {"ok": True}
 
 # --- KPIs / Analytics ---
 @api.get("/analytics/kpi")
 async def analytics_kpi(user: dict = Depends(get_current_user)):
-    vehicles = await db.vehicles.find({}, {"_id": 0}).to_list(1000)
-    maint = await db.maintenance.find({}, {"_id": 0}).to_list(2000)
+    vehicles = await db.vehicles.find(ws_filter(user), {"_id": 0}).to_list(1000)
+    maint = await db.maintenance.find(ws_filter(user), {"_id": 0}).to_list(2000)
     total_vehicles = len(vehicles)
     active = sum(1 for v in vehicles if v.get("status") == "active")
     in_maint = sum(1 for v in vehicles if v.get("status") == "maintenance")
@@ -394,10 +526,10 @@ async def cost_trend(user: dict = Depends(get_current_user)):
 
 @api.get("/analytics/cost-by-category")
 async def cost_by_category(user: dict = Depends(get_current_user)):
-    maint = await db.maintenance.find({"status": "completed"}, {"_id": 0}).to_list(2000)
+    maint = await db.maintenance.find(ws_filter(user, {"status": "completed"}), {"_id": 0}).to_list(2000)
     total_parts = sum(m.get("parts_cost", 0) or 0 for m in maint)
     total_labor = sum(m.get("labor_cost", 0) or 0 for m in maint)
-    vehicles = await db.vehicles.find({}, {"_id": 0}).to_list(1000)
+    vehicles = await db.vehicles.find(ws_filter(user), {"_id": 0}).to_list(1000)
     total_fuel = sum((v.get("odometer", 0) or 0) * (v.get("fuel_cost_per_km", 0) or 0) for v in vehicles)
     return [
         {"name": "Parts", "value": round(total_parts, 2)},
@@ -407,8 +539,8 @@ async def cost_by_category(user: dict = Depends(get_current_user)):
 
 @api.get("/analytics/vehicle-cost")
 async def vehicle_cost(user: dict = Depends(get_current_user)):
-    vehicles = await db.vehicles.find({}, {"_id": 0}).to_list(1000)
-    maint = await db.maintenance.find({"status": "completed"}, {"_id": 0}).to_list(2000)
+    vehicles = await db.vehicles.find(ws_filter(user), {"_id": 0}).to_list(1000)
+    maint = await db.maintenance.find(ws_filter(user, {"status": "completed"}), {"_id": 0}).to_list(2000)
     result = []
     for v in vehicles:
         cost = sum(m.get("actual_cost", 0) or 0 for m in maint if m.get("vehicle_id") == v["id"])
@@ -418,12 +550,18 @@ async def vehicle_cost(user: dict = Depends(get_current_user)):
 # --- Parts inventory ---
 @api.get("/parts")
 async def list_parts(user: dict = Depends(get_current_user)):
-    return await db.parts.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+    return await db.parts.find(ws_filter(user), {"_id": 0}).sort("name", 1).to_list(1000)
+
+@api.get("/parts/alerts")
+async def part_alerts(user: dict = Depends(get_current_user)):
+    parts = await db.parts.find(ws_filter(user), {"_id": 0}).to_list(1000)
+    return [p for p in parts if (p.get("stock", 0) or 0) <= (p.get("reorder_point", 0) or 0)]
 
 @api.post("/parts")
 async def create_part(p: PartIn, user: dict = Depends(get_current_user)):
     doc = p.model_dump()
     doc["id"] = str(uuid.uuid4())
+    doc["workspace_id"] = user["workspace_id"]
     doc["created_at"] = now_iso()
     await db.parts.insert_one(doc)
     doc.pop("_id", None)
@@ -431,37 +569,172 @@ async def create_part(p: PartIn, user: dict = Depends(get_current_user)):
 
 @api.patch("/parts/{pid}")
 async def update_part(pid: str, patch: dict, user: dict = Depends(get_current_user)):
-    patch.pop("id", None); patch.pop("_id", None)
-    await db.parts.update_one({"id": pid}, {"$set": patch})
-    return await db.parts.find_one({"id": pid}, {"_id": 0})
+    patch.pop("id", None); patch.pop("_id", None); patch.pop("workspace_id", None)
+    await db.parts.update_one(ws_filter(user, {"id": pid}), {"$set": patch})
+    return await db.parts.find_one(ws_filter(user, {"id": pid}), {"_id": 0})
+
+async def _maybe_reorder_email(part: dict, workspace_id: str) -> Optional[str]:
+    """Send supplier reorder email if part is at/below reorder point and has an email."""
+    if not part.get("supplier_email"): return None
+    if (part.get("stock", 0) or 0) > (part.get("reorder_point", 0) or 0): return None
+    # Prevent duplicate emails within 24h
+    key = f"reorder:{workspace_id}:{part['id']}"
+    recent = await db.email_log.find_one({"key": key})
+    if recent and (datetime.now(timezone.utc) - datetime.fromisoformat(recent["at"])).total_seconds() < 86400:
+        return None
+    ws = await db.workspaces.find_one({"id": workspace_id}) or {"name": "FleetCost"}
+    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetCost Intelligence")
+    subject = f"Reorder request: {part['name']} (SKU {part['sku']})"
+    html = (
+        f'<table role="presentation" width="100%" style="max-width:560px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:2px solid #FF3B30">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape(from_name)}</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:22px">Automated reorder request</h1></td></tr>'
+        f'<tr><td style="padding:24px">'
+        f'<p style="margin:0 0 16px 0">Hello,</p>'
+        f'<p style="margin:0 0 16px 0"><strong>{escape(ws.get("name", "FleetCost"))}</strong> would like to reorder the following part which has fallen below the reorder threshold:</p>'
+        f'<table role="presentation" width="100%" style="border-collapse:collapse;margin:12px 0">'
+        f'<tr><td style="padding:8px;background:#f1f5f9;font-weight:bold">Part</td><td style="padding:8px;background:#f8fafc">{escape(part["name"])}</td></tr>'
+        f'<tr><td style="padding:8px;background:#f1f5f9;font-weight:bold">SKU</td><td style="padding:8px;background:#f8fafc">{escape(part["sku"])}</td></tr>'
+        f'<tr><td style="padding:8px;background:#f1f5f9;font-weight:bold">Current stock</td><td style="padding:8px;background:#f8fafc">{part.get("stock", 0)}</td></tr>'
+        f'<tr><td style="padding:8px;background:#f1f5f9;font-weight:bold">Reorder point</td><td style="padding:8px;background:#f8fafc">{part.get("reorder_point", 0)}</td></tr>'
+        f'<tr><td style="padding:8px;background:#f1f5f9;font-weight:bold">Supplier</td><td style="padding:8px;background:#f8fafc">{escape(part.get("supplier", "") or "—")}</td></tr>'
+        f'</table>'
+        f'<p style="margin:16px 0 0 0">Please confirm availability and expected delivery. Reply to this email to coordinate.</p>'
+        f'<p style="margin:24px 0 0 0;font-size:12px;color:#888">Sent by {escape(from_name)}. We never ask for your password or card details by email.</p>'
+        f'</td></tr></table>'
+    )
+    email_id = await send_email(to=part["supplier_email"], subject=subject, html=html)
+    await db.email_log.update_one({"key": key}, {"$set": {"key": key, "at": now_iso(), "email_id": email_id}}, upsert=True)
+    return email_id
 
 @api.post("/parts/{pid}/adjust")
 async def adjust_part(pid: str, adj: PartAdjust, user: dict = Depends(get_current_user)):
-    part = await db.parts.find_one({"id": pid})
+    part = await db.parts.find_one(ws_filter(user, {"id": pid}))
     if not part: raise HTTPException(status_code=404, detail="Not found")
+    was_above = (part.get("stock", 0) or 0) > (part.get("reorder_point", 0) or 0)
     new_stock = max(0, (part.get("stock", 0) or 0) + adj.delta)
-    await db.parts.update_one({"id": pid}, {"$set": {"stock": new_stock}})
+    await db.parts.update_one(ws_filter(user, {"id": pid}), {"$set": {"stock": new_stock}})
     await db.parts_history.insert_one({
-        "id": str(uuid.uuid4()), "part_id": pid, "delta": adj.delta,
-        "reason": adj.reason or "", "by": user["id"], "at": now_iso()
+        "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"], "part_id": pid,
+        "delta": adj.delta, "reason": adj.reason or "", "by": user["id"], "at": now_iso()
     })
-    return await db.parts.find_one({"id": pid}, {"_id": 0})
+    updated = await db.parts.find_one(ws_filter(user, {"id": pid}), {"_id": 0})
+    # Trigger auto-reorder email if we JUST crossed below threshold
+    is_below = new_stock <= (part.get("reorder_point", 0) or 0)
+    if was_above and is_below:
+        asyncio.create_task(_maybe_reorder_email(updated, user["workspace_id"]))
+    return updated
 
 @api.delete("/parts/{pid}")
 async def delete_part(pid: str, user: dict = Depends(get_current_user)):
-    await db.parts.delete_one({"id": pid})
+    await db.parts.delete_one(ws_filter(user, {"id": pid}))
     return {"ok": True}
 
-@api.get("/parts/alerts")
-async def part_alerts(user: dict = Depends(get_current_user)):
-    parts = await db.parts.find({}, {"_id": 0}).to_list(1000)
-    return [p for p in parts if (p.get("stock", 0) or 0) <= (p.get("reorder_point", 0) or 0)]
+# --- Workspace / Team / Invites ---
+@api.get("/workspace")
+async def get_workspace(user: dict = Depends(get_current_user)):
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0})
+    if not ws:
+        ws = {"id": user["workspace_id"], "name": "FleetCost Workspace"}
+    users = await db.users.find({"workspace_id": user["workspace_id"]}, {"_id": 0, "password_hash": 0}).to_list(200)
+    invites = await db.invites.find({"workspace_id": user["workspace_id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"workspace": ws, "members": users, "invites": invites}
+
+@api.patch("/workspace")
+async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_current_user)):
+    await db.workspaces.update_one({"id": user["workspace_id"]}, {"$set": {"name": req.name}})
+    return await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0})
+
+@api.post("/workspace/invites")
+async def create_invite(req: InviteIn, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Only admins/managers can invite")
+    if await db.users.find_one({"email": req.email.lower(), "workspace_id": user["workspace_id"]}):
+        raise HTTPException(status_code=400, detail="User already a member")
+    code = secrets.token_urlsafe(12)
+    doc = {
+        "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"], "code": code,
+        "email": req.email.lower(), "role": req.role, "created_by": user["id"],
+        "created_at": now_iso(), "used_by": None, "used_at": None,
+    }
+    await db.invites.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.delete("/workspace/invites/{iid}")
+async def revoke_invite(iid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    await db.invites.delete_one({"id": iid, "workspace_id": user["workspace_id"]})
+    return {"ok": True}
+
+# --- OCR (Camera OCR) ---
+@api.post("/ocr")
+async def ocr_image(req: OCRIn, user: dict = Depends(get_current_user)):
+    key = os.environ.get("EMERGENT_LLM_KEY")
+    if not key:
+        raise HTTPException(status_code=503, detail="LLM key not configured")
+    raw = req.image_base64
+    if raw.startswith("data:"):
+        raw = raw.split(",", 1)[-1]
+    prompt = (
+        "Extract only the license plate number from this photo. Return just the plate string, no other text."
+        if req.mode == "plate" else
+        "Extract only the odometer reading (numeric km/mi) from this photo. Return just the integer, no units, no other text."
+    )
+    try:
+        chat = LlmChat(api_key=key, session_id=f"ocr-{user['id']}-{uuid.uuid4().hex[:6]}",
+                       system_message="You are an OCR assistant. Reply with only the requested value, nothing else.").with_model("openai", "gpt-4o-mini")
+        img = ImageContent(image_base64=raw)
+        result = await chat.send_message(UserMessage(text=prompt, file_contents=[img]))
+        text = (result or "").strip().strip('"').strip("'")
+        if req.mode == "odometer":
+            digits = "".join(ch for ch in text if ch.isdigit())
+            return {"value": digits or text, "raw": text}
+        return {"value": text, "raw": text}
+    except Exception as e:
+        logger.error(f"OCR failed: {e}")
+        raise HTTPException(status_code=502, detail=f"OCR failed: {str(e)[:100]}")
+
+# --- Cost anomaly detection ---
+@api.get("/analytics/anomalies")
+async def anomalies(user: dict = Depends(get_current_user)):
+    """Detect vehicles whose most recent month's spend is > mean + 1.5*std of their history."""
+    vehicles = await db.vehicles.find(ws_filter(user), {"_id": 0}).to_list(1000)
+    maint = await db.maintenance.find(ws_filter(user, {"status": "completed"}), {"_id": 0}).to_list(2000)
+    out = []
+    for v in vehicles:
+        by_month = {}
+        for m in maint:
+            if m.get("vehicle_id") != v["id"]: continue
+            d = m.get("completed_at") or m.get("created_at") or ""
+            mo = d[:7]
+            if not mo: continue
+            by_month[mo] = by_month.get(mo, 0) + (m.get("actual_cost", 0) or 0)
+        if len(by_month) < 3: continue
+        series = sorted(by_month.items())
+        vals = [s[1] for s in series]
+        latest_month, latest_val = series[-1]
+        history = vals[:-1]
+        mean = sum(history) / len(history)
+        var = sum((x - mean) ** 2 for x in history) / len(history)
+        std = var ** 0.5
+        threshold = mean + 1.5 * std
+        if std > 0 and latest_val > threshold:
+            out.append({
+                "vehicle_id": v["id"], "vehicle": v["name"], "plate": v["plate"],
+                "month": latest_month, "spend": round(latest_val, 2),
+                "mean": round(mean, 2), "threshold": round(threshold, 2),
+                "delta_pct": round((latest_val - mean) / mean * 100 if mean else 0, 1),
+            })
+    return sorted(out, key=lambda x: x["delta_pct"], reverse=True)
 
 # --- Forecast ---
 @api.get("/analytics/forecast")
 async def forecast(user: dict = Depends(get_current_user)):
     """Linear-regression forecast of maintenance cost for next 3 months."""
-    maint = await db.maintenance.find({"status": "completed"}, {"_id": 0}).to_list(2000)
+    maint = await db.maintenance.find(ws_filter(user, {"status": "completed"}), {"_id": 0}).to_list(2000)
     buckets = {}
     for m in maint:
         d = m.get("completed_at") or m.get("created_at") or now_iso()
@@ -582,30 +855,49 @@ async def inspection_pdf(iid: str, request: Request):
 async def seed():
     admin_email = os.environ["ADMIN_EMAIL"].lower()
     admin_password = os.environ["ADMIN_PASSWORD"]
+
+    # Ensure default workspace exists
+    if not await db.workspaces.find_one({"id": DEFAULT_WORKSPACE_ID}):
+        await db.workspaces.insert_one({
+            "id": DEFAULT_WORKSPACE_ID, "name": "FleetCost Demo Workspace",
+            "owner_email": admin_email, "created_at": now_iso(),
+        })
+
     existing = await db.users.find_one({"email": admin_email})
     if not existing:
         await db.users.insert_one({
             "id": str(uuid.uuid4()), "email": admin_email, "name": "Fleet Owner",
-            "role": "admin", "password_hash": hash_pw(admin_password), "created_at": now_iso(),
+            "role": "admin", "workspace_id": DEFAULT_WORKSPACE_ID,
+            "password_hash": hash_pw(admin_password), "created_at": now_iso(),
         })
         logger.info(f"Seeded admin: {admin_email}")
-    elif not verify_pw(admin_password, existing["password_hash"]):
-        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_pw(admin_password)}})
+    else:
+        upd = {}
+        if "workspace_id" not in existing: upd["workspace_id"] = DEFAULT_WORKSPACE_ID
+        if not verify_pw(admin_password, existing["password_hash"]): upd["password_hash"] = hash_pw(admin_password)
+        if upd: await db.users.update_one({"email": admin_email}, {"$set": upd})
 
-    # Test users
     for email, name, role, pw in [
         ("manager@fleet.com", "Marcus Chen", "manager", "manager123"),
         ("inspector@fleet.com", "Sara Ortiz", "inspector", "inspector123"),
         ("mechanic@fleet.com", "Dan Fields", "mechanic", "mechanic123"),
     ]:
-        if not await db.users.find_one({"email": email}):
+        existing_u = await db.users.find_one({"email": email})
+        if not existing_u:
             await db.users.insert_one({
                 "id": str(uuid.uuid4()), "email": email, "name": name,
-                "role": role, "password_hash": hash_pw(pw), "created_at": now_iso(),
+                "role": role, "workspace_id": DEFAULT_WORKSPACE_ID,
+                "password_hash": hash_pw(pw), "created_at": now_iso(),
             })
+        elif "workspace_id" not in existing_u:
+            await db.users.update_one({"email": email}, {"$set": {"workspace_id": DEFAULT_WORKSPACE_ID}})
+
+    # Backfill workspace_id on any existing data (idempotent)
+    for coll in ("vehicles", "templates", "inspections", "maintenance", "parts"):
+        await db[coll].update_many({"workspace_id": {"$exists": False}}, {"$set": {"workspace_id": DEFAULT_WORKSPACE_ID}})
 
     # Vehicles
-    if await db.vehicles.count_documents({}) == 0:
+    if await db.vehicles.count_documents({"workspace_id": DEFAULT_WORKSPACE_ID}) == 0:
         vs = [
             {"name": "Falcon-01", "plate": "FLT-1001", "make": "Volvo", "model": "FH16", "year": 2022, "type": "truck", "status": "active", "odometer": 148200, "fuel_cost_per_km": 0.42, "image_url": "https://images.unsplash.com/photo-1695222833131-54ee679ae8e5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHw0fHxmbGVldCUyMHZlaGljbGUlMjB0cnVjayUyMGRyaXZpbmd8ZW58MHx8fHwxNzg2NjA5NjczfDA&ixlib=rb-4.1.0&q=85"},
             {"name": "Falcon-02", "plate": "FLT-1002", "make": "Scania", "model": "R500", "year": 2021, "type": "truck", "status": "maintenance", "odometer": 210400, "fuel_cost_per_km": 0.45, "image_url": "https://images.unsplash.com/photo-1592838064575-70ed626d3a0e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwzfHxmbGVldCUyMHZlaGljbGUlMjB0cnVjayUyMGRyaXZpbmd8ZW58MHx8fHwxNzg2NjA5NjczfDA&ixlib=rb-4.1.0&q=85"},
@@ -616,13 +908,15 @@ async def seed():
         ]
         for v in vs:
             v["id"] = str(uuid.uuid4())
+            v["workspace_id"] = DEFAULT_WORKSPACE_ID
             v["created_at"] = now_iso()
         await db.vehicles.insert_many(vs)
 
     # Default template
-    if await db.templates.count_documents({}) == 0:
+    if await db.templates.count_documents({"workspace_id": DEFAULT_WORKSPACE_ID}) == 0:
         template = {
             "id": str(uuid.uuid4()),
+            "workspace_id": DEFAULT_WORKSPACE_ID,
             "name": "Standard Pre-Trip Inspection",
             "description": "Comprehensive daily vehicle inspection checklist",
             "sections": [
@@ -658,8 +952,8 @@ async def seed():
         await db.templates.insert_one(template)
 
     # Sample maintenance history (for KPIs)
-    if await db.maintenance.count_documents({}) == 0:
-        vehicles = await db.vehicles.find({}, {"_id": 0}).to_list(100)
+    if await db.maintenance.count_documents({"workspace_id": DEFAULT_WORKSPACE_ID}) == 0:
+        vehicles = await db.vehicles.find({"workspace_id": DEFAULT_WORKSPACE_ID}, {"_id": 0}).to_list(100)
         if vehicles:
             samples = [
                 {"vehicle_id": vehicles[0]["id"], "title": "Oil & filter change", "priority": "low", "parts_cost": 85, "labor_cost": 60, "downtime_hours": 1.5, "status": "completed", "months_ago": 4},
@@ -677,6 +971,7 @@ async def seed():
                 actual = (s["parts_cost"] + s["labor_cost"]) if s["status"] == "completed" else 0
                 await db.maintenance.insert_one({
                     "id": str(uuid.uuid4()),
+                    "workspace_id": DEFAULT_WORKSPACE_ID,
                     "vehicle_id": s["vehicle_id"],
                     "title": s["title"],
                     "description": "",
@@ -695,19 +990,20 @@ async def seed():
                 })
 
     # Seed parts
-    if await db.parts.count_documents({}) == 0:
+    if await db.parts.count_documents({"workspace_id": DEFAULT_WORKSPACE_ID}) == 0:
         parts = [
-            {"name": "Engine Oil 5W-30 (1L)", "sku": "OIL-5W30", "category": "fluids", "stock": 24, "reorder_point": 12, "unit_cost": 8.50, "supplier": "Mobil"},
-            {"name": "Brake Pad Set (Front)", "sku": "BRK-PAD-F", "category": "brakes", "stock": 6, "reorder_point": 8, "unit_cost": 62.00, "supplier": "Bosch"},
-            {"name": "Brake Pad Set (Rear)", "sku": "BRK-PAD-R", "category": "brakes", "stock": 4, "reorder_point": 6, "unit_cost": 48.00, "supplier": "Bosch"},
-            {"name": "Air Filter", "sku": "FLT-AIR", "category": "filters", "stock": 18, "reorder_point": 10, "unit_cost": 14.00, "supplier": "Mann"},
-            {"name": "Oil Filter", "sku": "FLT-OIL", "category": "filters", "stock": 3, "reorder_point": 15, "unit_cost": 9.50, "supplier": "Mann"},
-            {"name": "Coolant Antifreeze (5L)", "sku": "COOL-5L", "category": "fluids", "stock": 8, "reorder_point": 6, "unit_cost": 22.00, "supplier": "Prestone"},
-            {"name": "Wiper Blade 22\"", "sku": "WIP-22", "category": "consumables", "stock": 14, "reorder_point": 8, "unit_cost": 11.00, "supplier": "Rain-X"},
-            {"name": "Tire 275/70R22.5", "sku": "TIR-275", "category": "tires", "stock": 2, "reorder_point": 4, "unit_cost": 380.00, "supplier": "Michelin"},
+            {"name": "Engine Oil 5W-30 (1L)", "sku": "OIL-5W30", "category": "fluids", "stock": 24, "reorder_point": 12, "unit_cost": 8.50, "supplier": "Mobil", "supplier_email": "delivered@resend.dev"},
+            {"name": "Brake Pad Set (Front)", "sku": "BRK-PAD-F", "category": "brakes", "stock": 6, "reorder_point": 8, "unit_cost": 62.00, "supplier": "Bosch", "supplier_email": "delivered@resend.dev"},
+            {"name": "Brake Pad Set (Rear)", "sku": "BRK-PAD-R", "category": "brakes", "stock": 4, "reorder_point": 6, "unit_cost": 48.00, "supplier": "Bosch", "supplier_email": "delivered@resend.dev"},
+            {"name": "Air Filter", "sku": "FLT-AIR", "category": "filters", "stock": 18, "reorder_point": 10, "unit_cost": 14.00, "supplier": "Mann", "supplier_email": "delivered@resend.dev"},
+            {"name": "Oil Filter", "sku": "FLT-OIL", "category": "filters", "stock": 3, "reorder_point": 15, "unit_cost": 9.50, "supplier": "Mann", "supplier_email": "delivered@resend.dev"},
+            {"name": "Coolant Antifreeze (5L)", "sku": "COOL-5L", "category": "fluids", "stock": 8, "reorder_point": 6, "unit_cost": 22.00, "supplier": "Prestone", "supplier_email": "delivered@resend.dev"},
+            {"name": "Wiper Blade 22\"", "sku": "WIP-22", "category": "consumables", "stock": 14, "reorder_point": 8, "unit_cost": 11.00, "supplier": "Rain-X", "supplier_email": "delivered@resend.dev"},
+            {"name": "Tire 275/70R22.5", "sku": "TIR-275", "category": "tires", "stock": 2, "reorder_point": 4, "unit_cost": 380.00, "supplier": "Michelin", "supplier_email": "delivered@resend.dev"},
         ]
         for p in parts:
             p["id"] = str(uuid.uuid4())
+            p["workspace_id"] = DEFAULT_WORKSPACE_ID
             p["created_at"] = now_iso()
         await db.parts.insert_many(parts)
 

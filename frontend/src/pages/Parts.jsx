@@ -8,7 +8,7 @@ const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDig
 export default function Parts() {
   const [parts, setParts] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ name: "", sku: "", category: "general", stock: 0, reorder_point: 5, unit_cost: 0, supplier: "" });
+  const [form, setForm] = useState({ name: "", sku: "", category: "general", stock: 0, reorder_point: 5, unit_cost: 0, supplier: "", supplier_email: "" });
 
   const load = () => api.get("/parts").then(r => setParts(r.data));
   useEffect(() => { load(); }, []);
@@ -24,7 +24,7 @@ export default function Parts() {
     await api.post("/parts", { ...form, stock: Number(form.stock), reorder_point: Number(form.reorder_point), unit_cost: Number(form.unit_cost) });
     toast.success("Part added");
     setShowAdd(false);
-    setForm({ name: "", sku: "", category: "general", stock: 0, reorder_point: 5, unit_cost: 0, supplier: "" });
+    setForm({ name: "", sku: "", category: "general", stock: 0, reorder_point: 5, unit_cost: 0, supplier: "", supplier_email: "" });
     load();
   };
 
@@ -64,6 +64,7 @@ export default function Parts() {
         <form onSubmit={save} className="border-b border-border bg-[#0d0d0f] p-6 grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="add-part-form">
           {[
             ["name", "Name", "text"], ["sku", "SKU", "text"], ["category", "Category", "text"], ["supplier", "Supplier", "text"],
+            ["supplier_email", "Supplier email (for auto-reorder)", "email"],
             ["stock", "Stock", "number"], ["reorder_point", "Reorder point", "number"], ["unit_cost", "Unit cost ($)", "number"],
           ].map(([k, l, t]) => (
             <div key={k}>
