@@ -30,6 +30,11 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+import pyotp
+import qrcode
+from io import BytesIO
+import base64 as b64
+import csv as csvlib
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -168,7 +173,7 @@ async def get_current_user(request: Request) -> dict:
         payload = jwt.decode(token, jwt_secret(), algorithms=[JWT_ALGO])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Invalid token")
-        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0, "totp_secret": 0, "totp_pending_secret": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
         return user
@@ -256,6 +261,14 @@ class OCRIn(BaseModel):
     image_base64: str  # data URL or raw base64
     mode: Literal["plate", "odometer"] = "plate"
 
+class TwoFAVerify(BaseModel):
+    code: str
+
+class LoginReq2FA(BaseModel):
+    email: EmailStr
+    password: str
+    code: Optional[str] = None
+
 class InspectionIn(BaseModel):
     template_id: str
     vehicle_id: str
@@ -336,15 +349,70 @@ async def register(req: RegisterReq):
     return {"user": user, "token": token}
 
 @api.post("/auth/login")
-async def login(req: LoginReq):
+async def login(req: LoginReq2FA):
     email = req.email.lower()
     user = await db.users.find_one({"email": email})
     if not user or not verify_pw(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if user.get("totp_enabled"):
+        if not req.code:
+            return {"requires_2fa": True, "email": email}
+        totp = pyotp.TOTP(user["totp_secret"])
+        if not totp.verify(req.code, valid_window=1):
+            raise HTTPException(status_code=401, detail="Invalid 2FA code")
     token = create_access_token(user["id"], user["email"], user["role"])
-    user.pop("password_hash", None)
-    user.pop("_id", None)
+    user.pop("password_hash", None); user.pop("_id", None); user.pop("totp_secret", None)
     return {"user": user, "token": token}
+
+@api.post("/auth/2fa/setup")
+async def twofa_setup(user: dict = Depends(get_current_user)):
+    """Generate a new TOTP secret + provisioning URI. Not yet enabled until verified."""
+    secret = pyotp.random_base32()
+    issuer = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
+    uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user["email"], issuer_name=issuer)
+    # generate QR code as data URL
+    img = qrcode.make(uri)
+    buf = BytesIO(); img.save(buf, format="PNG"); buf.seek(0)
+    qr_data_url = "data:image/png;base64," + b64.b64encode(buf.read()).decode()
+    # Save as pending secret (not enabled yet)
+    await db.users.update_one({"id": user["id"]}, {"$set": {"totp_pending_secret": secret}})
+    return {"secret": secret, "uri": uri, "qr": qr_data_url, "issuer": issuer}
+
+@api.post("/auth/2fa/enable")
+async def twofa_enable(req: TwoFAVerify, user: dict = Depends(get_current_user)):
+    u = await db.users.find_one({"id": user["id"]})
+    secret = u.get("totp_pending_secret")
+    if not secret:
+        raise HTTPException(status_code=400, detail="No pending 2FA setup. Call /2fa/setup first.")
+    totp = pyotp.TOTP(secret)
+    if not totp.verify(req.code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Invalid 2FA code")
+    await db.users.update_one({"id": user["id"]}, {
+        "$set": {"totp_secret": secret, "totp_enabled": True},
+        "$unset": {"totp_pending_secret": ""},
+    })
+    await log_event(user, "2fa.enabled", "user", user["id"])
+    return {"enabled": True}
+
+@api.post("/auth/2fa/disable")
+async def twofa_disable(req: TwoFAVerify, user: dict = Depends(get_current_user)):
+    u = await db.users.find_one({"id": user["id"]})
+    if not u.get("totp_enabled"):
+        return {"enabled": False}
+    totp = pyotp.TOTP(u["totp_secret"])
+    if not totp.verify(req.code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Invalid 2FA code")
+    await db.users.update_one({"id": user["id"]}, {
+        "$set": {"totp_enabled": False},
+        "$unset": {"totp_secret": "", "totp_pending_secret": ""},
+    })
+    await log_event(user, "2fa.disabled", "user", user["id"])
+    return {"enabled": False}
+
+@api.get("/auth/2fa/status")
+async def twofa_status(user: dict = Depends(get_current_user)):
+    u = await db.users.find_one({"id": user["id"]}, {"totp_enabled": 1})
+    return {"enabled": bool(u and u.get("totp_enabled"))}
 
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
@@ -732,6 +800,275 @@ async def export_parts(request: Request):
             "low_stock": "yes" if stock <= (p.get("reorder_point", 0) or 0) else "no",
         })
     return _csv_response(rows, ["sku","name","category","supplier","supplier_email","stock","reorder_point","unit_cost","inventory_value","low_stock"], "parts-inventory.csv")
+
+# --- Bulk CSV import ---
+def _parse_csv(text: str) -> list:
+    reader = csvlib.DictReader(BytesIO(text.encode()).read().decode().splitlines())
+    return [row for row in reader]
+
+@api.post("/import/vehicles")
+async def import_vehicles(payload: dict, user: dict = Depends(get_current_user)):
+    text = payload.get("csv", "")
+    if not text.strip(): raise HTTPException(status_code=400, detail="Empty CSV")
+    rows = list(csvlib.DictReader(text.splitlines()))
+    created = 0; errors = []
+    for i, r in enumerate(rows):
+        try:
+            doc = {
+                "id": str(uuid.uuid4()),
+                "workspace_id": user["workspace_id"],
+                "name": r.get("name") or r.get("Name") or "",
+                "plate": r.get("plate") or r.get("Plate") or r.get("license_plate") or "",
+                "make": r.get("make") or r.get("Make") or "",
+                "model": r.get("model") or r.get("Model") or "",
+                "year": int(r.get("year") or r.get("Year") or 2023),
+                "type": (r.get("type") or "truck").lower(),
+                "status": (r.get("status") or "active").lower(),
+                "odometer": float(r.get("odometer") or 0),
+                "fuel_cost_per_km": float(r.get("fuel_cost_per_km") or 0.35),
+                "created_at": now_iso(),
+            }
+            if not doc["name"] or not doc["plate"]:
+                raise ValueError("name and plate required")
+            await db.vehicles.insert_one(doc)
+            created += 1
+        except Exception as e:
+            errors.append(f"row {i+2}: {e}")
+    await log_event(user, "vehicles.imported", "vehicle", "", {"created": created, "errors": len(errors)})
+    return {"created": created, "errors": errors}
+
+@api.post("/import/parts")
+async def import_parts(payload: dict, user: dict = Depends(get_current_user)):
+    text = payload.get("csv", "")
+    if not text.strip(): raise HTTPException(status_code=400, detail="Empty CSV")
+    rows = list(csvlib.DictReader(text.splitlines()))
+    created = 0; errors = []
+    for i, r in enumerate(rows):
+        try:
+            doc = {
+                "id": str(uuid.uuid4()),
+                "workspace_id": user["workspace_id"],
+                "sku": r.get("sku") or r.get("SKU") or "",
+                "name": r.get("name") or r.get("Name") or "",
+                "category": (r.get("category") or "general").lower(),
+                "supplier": r.get("supplier") or "",
+                "supplier_email": r.get("supplier_email") or "",
+                "stock": int(float(r.get("stock") or 0)),
+                "reorder_point": int(float(r.get("reorder_point") or 5)),
+                "unit_cost": float(r.get("unit_cost") or 0),
+                "created_at": now_iso(),
+            }
+            if not doc["sku"] or not doc["name"]:
+                raise ValueError("sku and name required")
+            await db.parts.insert_one(doc)
+            created += 1
+        except Exception as e:
+            errors.append(f"row {i+2}: {e}")
+    await log_event(user, "parts.imported", "part", "", {"created": created, "errors": len(errors)})
+    return {"created": created, "errors": errors}
+
+@api.post("/import/drivers")
+async def import_drivers(payload: dict, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Only admins/managers can bulk-invite drivers")
+    text = payload.get("csv", "")
+    if not text.strip(): raise HTTPException(status_code=400, detail="Empty CSV")
+    rows = list(csvlib.DictReader(text.splitlines()))
+    created = 0; errors = []
+    for i, r in enumerate(rows):
+        try:
+            email = (r.get("email") or "").lower().strip()
+            name = r.get("name") or ""
+            role = (r.get("role") or "mechanic").lower()
+            if not email or not name:
+                raise ValueError("email and name required")
+            if await db.users.find_one({"email": email, "workspace_id": user["workspace_id"]}):
+                raise ValueError("already a member")
+            code = secrets.token_urlsafe(12)
+            await db.invites.insert_one({
+                "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"],
+                "code": code, "email": email, "role": role,
+                "created_by": user["id"], "created_at": now_iso(),
+                "used_by": None, "used_at": None,
+                "invitee_name": name,
+            })
+            created += 1
+        except Exception as e:
+            errors.append(f"row {i+2}: {e}")
+    await log_event(user, "drivers.imported", "invite", "", {"created": created, "errors": len(errors)})
+    return {"created": created, "errors": errors}
+
+# --- Weekly digest (PDF + email) ---
+async def _build_weekly_digest_pdf(workspace_id: str) -> tuple:
+    """Build the digest PDF for a workspace. Returns (pdf_bytes, kpi_dict)."""
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors as rlc
+    user_stub = {"workspace_id": workspace_id}
+    vehicles = await db.vehicles.find({"workspace_id": workspace_id}, {"_id": 0}).to_list(1000)
+    maint = await db.maintenance.find({"workspace_id": workspace_id}, {"_id": 0}).to_list(2000)
+    parts = await db.parts.find({"workspace_id": workspace_id}, {"_id": 0}).to_list(1000)
+    completed = [m for m in maint if m.get("status") == "completed"]
+    pending = [m for m in maint if m.get("status") in ("pending", "in_progress")]
+    total_cost = sum(m.get("actual_cost", 0) or 0 for m in completed)
+    low_stock = [p for p in parts if (p.get("stock", 0) or 0) <= (p.get("reorder_point", 0) or 0)]
+    # Anomalies (reuse logic simplified)
+    by_v = {}
+    for m in completed:
+        d = m.get("completed_at") or m.get("created_at") or ""
+        mo = d[:7]
+        if not mo: continue
+        by_v.setdefault(m["vehicle_id"], {}).setdefault(mo, 0)
+        by_v[m["vehicle_id"]][mo] += m.get("actual_cost", 0) or 0
+    anomalies = []
+    vmap = {v["id"]: v for v in vehicles}
+    for vid, months in by_v.items():
+        if len(months) < 3: continue
+        series = sorted(months.items())
+        vals = [s[1] for s in series]
+        latest = vals[-1]; hist = vals[:-1]
+        mean = sum(hist) / len(hist)
+        std = (sum((x - mean) ** 2 for x in hist) / len(hist)) ** 0.5
+        if std > 0 and latest > mean + 1.5 * std:
+            anomalies.append({"vehicle": vmap.get(vid, {}).get("name", "?"), "spend": round(latest, 0), "mean": round(mean, 0)})
+    kpi = {
+        "vehicles": len(vehicles), "active": sum(1 for v in vehicles if v.get("status") == "active"),
+        "in_maint": sum(1 for v in vehicles if v.get("status") == "maintenance"),
+        "total_cost": round(total_cost, 2), "pending_jobs": len(pending),
+        "completed_jobs": len(completed), "low_stock": len(low_stock),
+        "anomalies": len(anomalies),
+    }
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.5*inch, bottomMargin=0.5*inch, leftMargin=0.6*inch, rightMargin=0.6*inch)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=22, textColor=rlc.HexColor("#0f172a"))
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=13, textColor=rlc.HexColor("#059669"), spaceBefore=12, spaceAfter=6)
+    small = ParagraphStyle("small", parent=styles["BodyText"], fontName="Helvetica", fontSize=8, textColor=rlc.grey)
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontName="Helvetica", fontSize=10)
+    story = []
+    story.append(Paragraph("FleetIntel · Weekly Digest", small))
+    story.append(Paragraph(f"Week of {datetime.now(timezone.utc).strftime('%B %d, %Y')}", h1))
+    kpi_rows = [
+        ["Vehicles", str(kpi["vehicles"]), "Active", str(kpi["active"])],
+        ["In maintenance", str(kpi["in_maint"]), "Total spend", f"${kpi['total_cost']:,.0f}"],
+        ["Pending jobs", str(kpi["pending_jobs"]), "Completed jobs", str(kpi["completed_jobs"])],
+        ["Low-stock parts", str(kpi["low_stock"]), "Cost anomalies", str(kpi["anomalies"])],
+    ]
+    t = Table(kpi_rows, colWidths=[1.4*inch, 2.0*inch, 1.4*inch, 2.0*inch])
+    t.setStyle(TableStyle([
+        ("FONT", (0,0), (-1,-1), "Helvetica", 10),
+        ("FONT", (0,0), (0,-1), "Helvetica-Bold", 9),
+        ("FONT", (2,0), (2,-1), "Helvetica-Bold", 9),
+        ("TEXTCOLOR", (0,0), (0,-1), rlc.HexColor("#64748b")),
+        ("TEXTCOLOR", (2,0), (2,-1), rlc.HexColor("#64748b")),
+        ("LINEBELOW", (0,0), (-1,-1), 0.25, rlc.HexColor("#e2e8f0")),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+    ]))
+    story.append(t)
+    if anomalies:
+        story.append(Paragraph("Cost anomalies", h2))
+        rows = [["Vehicle", "This month", "Normal (avg)"]] + [[a["vehicle"], f"${a['spend']:,.0f}", f"${a['mean']:,.0f}"] for a in anomalies[:10]]
+        at = Table(rows, colWidths=[3.0*inch, 2.0*inch, 2.0*inch])
+        at.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), rlc.HexColor("#059669")),
+            ("TEXTCOLOR", (0,0), (-1,0), rlc.white),
+            ("FONT", (0,0), (-1,0), "Helvetica-Bold", 9),
+            ("FONT", (0,1), (-1,-1), "Helvetica", 9),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [rlc.HexColor("#f8fafc"), rlc.white]),
+            ("GRID", (0,0), (-1,-1), 0.25, rlc.HexColor("#e2e8f0")),
+        ]))
+        story.append(at)
+    if pending:
+        story.append(Paragraph("Pending maintenance", h2))
+        rows = [["Job", "Vehicle", "Priority", "Est. cost"]]
+        for j in pending[:15]:
+            v = vmap.get(j["vehicle_id"], {})
+            rows.append([j.get("title", "")[:40], v.get("name", "?"), j.get("priority", ""), f"${(j.get('estimated_cost') or 0):,.0f}"])
+        pt = Table(rows, colWidths=[3.0*inch, 1.6*inch, 1.0*inch, 1.4*inch])
+        pt.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), rlc.HexColor("#0f172a")),
+            ("TEXTCOLOR", (0,0), (-1,0), rlc.white),
+            ("FONT", (0,0), (-1,0), "Helvetica-Bold", 9),
+            ("FONT", (0,1), (-1,-1), "Helvetica", 9),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [rlc.HexColor("#f8fafc"), rlc.white]),
+            ("GRID", (0,0), (-1,-1), 0.25, rlc.HexColor("#e2e8f0")),
+        ]))
+        story.append(pt)
+    if low_stock:
+        story.append(Paragraph("Parts below reorder point", h2))
+        rows = [["Part", "SKU", "Stock", "Reorder pt"]]
+        for p in low_stock[:15]:
+            rows.append([p.get("name", "")[:40], p.get("sku", ""), str(p.get("stock", 0)), str(p.get("reorder_point", 0))])
+        lt = Table(rows, colWidths=[3.0*inch, 1.6*inch, 1.0*inch, 1.4*inch])
+        lt.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), rlc.HexColor("#0f172a")),
+            ("TEXTCOLOR", (0,0), (-1,0), rlc.white),
+            ("FONT", (0,0), (-1,0), "Helvetica-Bold", 9),
+            ("FONT", (0,1), (-1,-1), "Helvetica", 9),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [rlc.HexColor("#f8fafc"), rlc.white]),
+            ("GRID", (0,0), (-1,-1), 0.25, rlc.HexColor("#e2e8f0")),
+        ]))
+        story.append(lt)
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("Generated by FleetIntel · Cost Intelligence Platform", small))
+    doc.build(story)
+    buf.seek(0)
+    return buf.getvalue(), kpi
+
+async def _send_workspace_digest(workspace_id: str):
+    """Send a weekly digest email to the workspace owner. Returns email_id or None."""
+    ws = await db.workspaces.find_one({"id": workspace_id})
+    if not ws: return None
+    owner_email = ws.get("owner_email")
+    if not owner_email: return None
+    _, kpi = await _build_weekly_digest_pdf(workspace_id)
+    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
+    subject = f"Your weekly {from_name} digest"
+    html = (
+        f'<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:3px solid #34C759">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape(from_name)}</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:24px">Weekly digest</h1>'
+        f'<div style="color:#64748b;margin-top:4px">{escape(ws.get("name", "Workspace"))}</div></td></tr>'
+        f'<tr><td style="padding:24px">'
+        f'<p style="margin:0 0 16px 0">Here\'s your fleet snapshot for the week:</p>'
+        f'<table role="presentation" width="100%" style="border-collapse:collapse;margin:12px 0">'
+        f'<tr><td style="padding:12px;background:#ecfdf5;font-weight:bold;color:#065f46;width:50%">Total spend</td><td style="padding:12px;background:#f8fafc;font-size:20px;font-weight:bold">${kpi["total_cost"]:,.0f}</td></tr>'
+        f'<tr><td style="padding:12px;background:#ecfdf5;font-weight:bold;color:#065f46">Vehicles</td><td style="padding:12px;background:#f8fafc">{kpi["vehicles"]} · {kpi["active"]} active · {kpi["in_maint"]} in maintenance</td></tr>'
+        f'<tr><td style="padding:12px;background:#ecfdf5;font-weight:bold;color:#065f46">Maintenance jobs</td><td style="padding:12px;background:#f8fafc">{kpi["pending_jobs"]} pending · {kpi["completed_jobs"]} completed</td></tr>'
+        f'<tr><td style="padding:12px;background:#fef2f2;font-weight:bold;color:#991b1b">Cost anomalies</td><td style="padding:12px;background:#f8fafc"><strong>{kpi["anomalies"]}</strong> vehicle(s) above their normal band</td></tr>'
+        f'<tr><td style="padding:12px;background:#fef2f2;font-weight:bold;color:#991b1b">Low-stock parts</td><td style="padding:12px;background:#f8fafc"><strong>{kpi["low_stock"]}</strong> at or below reorder point</td></tr>'
+        f'</table>'
+        f'<p style="margin:16px 0 0 0;font-size:12px;color:#888">Sent by {escape(from_name)}. We never ask for your password or card details by email.</p>'
+        f'</td></tr></table>'
+    )
+    return await send_email(to=owner_email, subject=subject, html=html)
+
+@api.post("/cron/weekly-digest")
+async def cron_weekly_digest(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    auth = request.headers.get("Authorization", "")
+    expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    if not expected or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    async def _run():
+        workspaces = await db.workspaces.find({}, {"_id": 0}).to_list(1000)
+        for ws in workspaces:
+            try:
+                await _send_workspace_digest(ws["id"])
+            except Exception as e:
+                logger.error(f"digest for {ws.get('id')} failed: {e}")
+    asyncio.create_task(_run())
+    return {"ok": True, "queued": True}
+
+@api.post("/workspace/send-digest")
+async def send_digest_now(user: dict = Depends(get_current_user)):
+    """Manual trigger of the weekly digest for this workspace."""
+    email_id = await _send_workspace_digest(user["workspace_id"])
+    await log_event(user, "digest.sent", "workspace", user["workspace_id"], {"email_id": email_id})
+    return {"sent": bool(email_id), "email_id": email_id}
 
 # --- Workspace / Team / Invites ---
 @api.get("/workspace")

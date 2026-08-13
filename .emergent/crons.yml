@@ -1,0 +1,8 @@
+crons:
+  - name: weekly-digest
+    description: "Emails each workspace owner a weekly PDF digest of KPIs, anomalies, and pending jobs"
+    cron: "0 13 * * 1"
+    endpoint: "{{BASE_URL}}/api/cron/weekly-digest"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

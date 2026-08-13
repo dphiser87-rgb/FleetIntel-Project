@@ -63,6 +63,19 @@ export default function Parts() {
           }} className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
             <DownloadSimple size={14} /> Export CSV
           </button>
+          <label className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary cursor-pointer" data-testid="import-parts-csv">
+            <DownloadSimple size={14} className="rotate-180" /> Import CSV
+            <input type="file" accept=".csv" className="hidden" onChange={async (e) => {
+              const file = e.target.files?.[0]; if (!file) return;
+              const text = await file.text();
+              try {
+                const { data } = await api.post("/import/parts", { csv: text });
+                toast.success(`Imported ${data.created} part${data.created !== 1 ? "s" : ""}${data.errors.length ? ` · ${data.errors.length} error(s)` : ""}`);
+                load();
+              } catch { toast.error("Import failed"); }
+              e.target.value = "";
+            }} />
+          </label>
         </div>
       </header>
 

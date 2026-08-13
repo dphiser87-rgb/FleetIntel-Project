@@ -2,7 +2,7 @@ import React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise,
+  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise, ShieldCheck,
 } from "@phosphor-icons/react";
 
 const nav = [
@@ -14,6 +14,7 @@ const nav = [
   { to: "/team", label: "Team", icon: UsersThree, id: "nav-team" },
   { to: "/audit", label: "Activity", icon: ClockCounterClockwise, id: "nav-audit" },
   { to: "/reports", label: "Reports", icon: ChartBar, id: "nav-reports" },
+  { to: "/security", label: "Security", icon: ShieldCheck, id: "nav-security" },
 ];
 
 export default function Layout() {
@@ -32,8 +33,8 @@ export default function Layout() {
               <ChartLine size={18} weight="bold" color="#fff" />
             </div>
             <div>
-              <div className="font-display font-black text-lg tracking-tight leading-none">FleetCost</div>
-              <div className="overline mt-1">Intelligence</div>
+              <div className="font-display font-black text-lg tracking-tight leading-none">FleetIntel</div>
+              <div className="overline mt-1">Cost intelligence</div>
             </div>
           </div>
         </div>

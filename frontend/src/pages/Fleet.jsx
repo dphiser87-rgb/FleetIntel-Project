@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Truck, ClipboardText, Camera } from "@phosphor-icons/react";
+import { Plus, Truck, ClipboardText, Camera, UploadSimple } from "@phosphor-icons/react";
 
 const StatusBadge = ({ status }) => {
   const map = {
@@ -37,14 +37,30 @@ export default function Fleet() {
 
   return (
     <div className="noise-bg min-h-screen">
-      <header className="border-b border-border px-8 py-6 flex items-end justify-between">
+      <header className="border-b border-border px-8 py-6 flex items-end justify-between flex-wrap gap-4" data-testid="fleet-header">
         <div>
           <div className="overline">Assets</div>
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="fleet-title">Fleet</h1>
         </div>
+        <div className="flex items-center gap-2 flex-wrap">
         <button data-testid="add-vehicle-btn" onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
           <Plus size={14} weight="bold" /> Add vehicle
         </button>
+        <label className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary cursor-pointer" data-testid="import-vehicles-csv">
+          <UploadSimple size={14} /> Import CSV
+          <input type="file" accept=".csv" className="hidden" onChange={async (e) => {
+            const file = e.target.files?.[0]; if (!file) return;
+            const text = await file.text();
+            try {
+              const { data } = await api.post("/import/vehicles", { csv: text });
+              toast.success(`Imported ${data.created} vehicle${data.created !== 1 ? "s" : ""}${data.errors.length ? ` · ${data.errors.length} error(s)` : ""}`);
+              if (data.errors.length) console.warn(data.errors);
+              load();
+            } catch { toast.error("Import failed"); }
+            e.target.value = "";
+          }} />
+        </label>
+        </div>
       </header>
 
       {showAdd && (

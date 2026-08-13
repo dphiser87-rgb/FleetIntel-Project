@@ -17,6 +17,7 @@ import Parts from "@/pages/Parts";
 import InspectionReport from "@/pages/InspectionReport";
 import Team from "@/pages/Team";
 import AuditLog from "@/pages/AuditLog";
+import Security from "@/pages/Security";
 
 const Protected = ({ children }) => {
   const { user, loading } = useAuth();
@@ -51,6 +52,7 @@ function App() {
               <Route path="parts" element={<Parts />} />
               <Route path="team" element={<Team />} />
               <Route path="audit" element={<AuditLog />} />
+              <Route path="security" element={<Security />} />
               <Route path="reports" element={<Reports />} />
             </Route>
           </Routes>
