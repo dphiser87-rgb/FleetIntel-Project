@@ -82,11 +82,11 @@ export default function VehicleDetail() {
             <div className="overline">Recent inspections</div>
             <div className="mt-4 space-y-3">
               {insp.slice(0, 5).map(i => (
-                <div key={i.id} className="border-b border-border/50 pb-3">
+                <Link to={`/inspections/${i.id}`} key={i.id} className="block border-b border-border/50 pb-3 hover:bg-[#141416] -mx-2 px-2 py-1" data-testid={`inspection-${i.id}`}>
                   <div className="text-sm">By {i.inspector_name}</div>
                   <div className="overline mt-1">{new Date(i.created_at).toLocaleString()}</div>
                   {i.fail_count > 0 && <div className="mt-1 text-xs text-primary mono">{i.fail_count} failed items</div>}
-                </div>
+                </Link>
               ))}
               {insp.length === 0 && <div className="text-sm text-muted-foreground">No inspections yet.</div>}
             </div>

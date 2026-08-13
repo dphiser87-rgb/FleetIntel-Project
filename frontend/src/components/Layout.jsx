@@ -2,7 +2,7 @@ import React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge,
+  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package,
 } from "@phosphor-icons/react";
 
 const nav = [
@@ -10,6 +10,7 @@ const nav = [
   { to: "/fleet", label: "Fleet", icon: Truck, id: "nav-fleet" },
   { to: "/templates", label: "Checklists", icon: ClipboardText, id: "nav-templates" },
   { to: "/maintenance", label: "Maintenance", icon: Wrench, id: "nav-maintenance" },
+  { to: "/parts", label: "Parts", icon: Package, id: "nav-parts" },
   { to: "/reports", label: "Reports", icon: ChartBar, id: "nav-reports" },
 ];
 

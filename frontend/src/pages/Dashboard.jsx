@@ -5,7 +5,7 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell, Legend, CartesianGrid,
 } from "recharts";
-import { ArrowUpRight, TrendUp, Wrench, Truck, ClockCounterClockwise, GasPump, CurrencyDollar, Warning } from "@phosphor-icons/react";
+import { ArrowUpRight, TrendUp, Wrench, Truck, ClockCounterClockwise, GasPump, CurrencyDollar, Warning, Package, Crosshair } from "@phosphor-icons/react";
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
@@ -28,6 +28,8 @@ export default function Dashboard() {
   const [byCat, setByCat] = useState([]);
   const [byVehicle, setByVehicle] = useState([]);
   const [maint, setMaint] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [forecast, setForecast] = useState({ history: [], forecast: [] });
 
   useEffect(() => {
     Promise.all([
@@ -36,8 +38,12 @@ export default function Dashboard() {
       api.get("/analytics/cost-by-category").then(r => setByCat(r.data)),
       api.get("/analytics/vehicle-cost").then(r => setByVehicle(r.data)),
       api.get("/maintenance").then(r => setMaint(r.data)),
+      api.get("/parts/alerts").then(r => setAlerts(r.data)),
+      api.get("/analytics/forecast").then(r => setForecast(r.data)),
     ]).catch(() => {});
   }, []);
+
+  const nextForecast = forecast.forecast[0];
 
   return (
     <div className="noise-bg min-h-screen">
@@ -53,6 +59,32 @@ export default function Dashboard() {
       </header>
 
       <div className="p-8 space-y-6">
+        {alerts.length > 0 && (
+          <div className="bg-primary/10 border border-primary/40 px-6 py-3 flex items-center justify-between flex-wrap gap-3" data-testid="parts-alert">
+            <div className="flex items-center gap-3">
+              <Package size={18} className="text-primary" />
+              <div className="text-sm">
+                <span className="text-primary font-bold">{alerts.length}</span> part{alerts.length !== 1 && "s"} below reorder point: <span className="text-muted-foreground">{alerts.slice(0, 3).map(a => a.name).join(", ")}{alerts.length > 3 ? "…" : ""}</span>
+              </div>
+            </div>
+            <Link to="/parts" className="overline hover:text-primary">Manage inventory →</Link>
+          </div>
+        )}
+        {nextForecast && (
+          <div className="bg-[#121214] border border-border p-6 flex items-center justify-between flex-wrap gap-4" data-testid="forecast-card">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-primary/10 border border-primary/40 flex items-center justify-center">
+                <Crosshair size={22} weight="regular" className="text-primary" />
+              </div>
+              <div>
+                <div className="overline">Forecast · {nextForecast.month}</div>
+                <div className="mono text-2xl font-bold mt-1">{money(nextForecast.total)}</div>
+                <div className="text-xs text-muted-foreground mt-1">Projected maintenance spend next month (linear trend)</div>
+              </div>
+            </div>
+            <Link to="/reports" className="overline hover:text-primary">See full forecast →</Link>
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0 border border-border grid-borders" data-testid="kpi-grid">
           <KPI label="Total vehicles" value={kpi?.total_vehicles ?? "—"} icon={Truck} sub={`${kpi?.active ?? 0} active · ${kpi?.in_maintenance ?? 0} in maint`} testId="kpi-total-vehicles" />
           <KPI label="Maintenance cost" value={money(kpi?.total_maintenance_cost)} icon={Wrench} sub={`Parts ${money(kpi?.total_parts_cost)} + labor ${money(kpi?.total_labor_cost)}`} testId="kpi-maint-cost" />

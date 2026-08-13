@@ -13,6 +13,8 @@ import TemplateBuilder from "@/pages/TemplateBuilder";
 import Inspection from "@/pages/Inspection";
 import Maintenance from "@/pages/Maintenance";
 import Reports from "@/pages/Reports";
+import Parts from "@/pages/Parts";
+import InspectionReport from "@/pages/InspectionReport";
 
 const Protected = ({ children }) => {
   const { user, loading } = useAuth();
@@ -42,7 +44,9 @@ function App() {
               <Route path="templates/new" element={<TemplateBuilder />} />
               <Route path="templates/:id" element={<TemplateBuilder />} />
               <Route path="inspection/:vehicleId" element={<Inspection />} />
+              <Route path="inspections/:id" element={<InspectionReport />} />
               <Route path="maintenance" element={<Maintenance />} />
+              <Route path="parts" element={<Parts />} />
               <Route path="reports" element={<Reports />} />
             </Route>
           </Routes>

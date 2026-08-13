@@ -4,6 +4,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import io
 import logging
 import uuid
 import bcrypt
@@ -11,9 +12,15 @@ import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -109,6 +116,20 @@ class InspectionAnswer(BaseModel):
     item_id: str
     value: str  # "pass", "fail", rating number, text
     note: Optional[str] = ""
+    photo: Optional[str] = None  # base64 data URL
+
+class PartIn(BaseModel):
+    name: str
+    sku: str
+    category: Optional[str] = "general"
+    stock: int = 0
+    reorder_point: int = 5
+    unit_cost: float = 0
+    supplier: Optional[str] = ""
+
+class PartAdjust(BaseModel):
+    delta: int  # +add stock, -consume
+    reason: Optional[str] = ""
 
 class InspectionIn(BaseModel):
     template_id: str
@@ -394,6 +415,169 @@ async def vehicle_cost(user: dict = Depends(get_current_user)):
         result.append({"vehicle": v["name"], "plate": v["plate"], "cost": round(cost, 2)})
     return sorted(result, key=lambda x: x["cost"], reverse=True)
 
+# --- Parts inventory ---
+@api.get("/parts")
+async def list_parts(user: dict = Depends(get_current_user)):
+    return await db.parts.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+
+@api.post("/parts")
+async def create_part(p: PartIn, user: dict = Depends(get_current_user)):
+    doc = p.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = now_iso()
+    await db.parts.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.patch("/parts/{pid}")
+async def update_part(pid: str, patch: dict, user: dict = Depends(get_current_user)):
+    patch.pop("id", None); patch.pop("_id", None)
+    await db.parts.update_one({"id": pid}, {"$set": patch})
+    return await db.parts.find_one({"id": pid}, {"_id": 0})
+
+@api.post("/parts/{pid}/adjust")
+async def adjust_part(pid: str, adj: PartAdjust, user: dict = Depends(get_current_user)):
+    part = await db.parts.find_one({"id": pid})
+    if not part: raise HTTPException(status_code=404, detail="Not found")
+    new_stock = max(0, (part.get("stock", 0) or 0) + adj.delta)
+    await db.parts.update_one({"id": pid}, {"$set": {"stock": new_stock}})
+    await db.parts_history.insert_one({
+        "id": str(uuid.uuid4()), "part_id": pid, "delta": adj.delta,
+        "reason": adj.reason or "", "by": user["id"], "at": now_iso()
+    })
+    return await db.parts.find_one({"id": pid}, {"_id": 0})
+
+@api.delete("/parts/{pid}")
+async def delete_part(pid: str, user: dict = Depends(get_current_user)):
+    await db.parts.delete_one({"id": pid})
+    return {"ok": True}
+
+@api.get("/parts/alerts")
+async def part_alerts(user: dict = Depends(get_current_user)):
+    parts = await db.parts.find({}, {"_id": 0}).to_list(1000)
+    return [p for p in parts if (p.get("stock", 0) or 0) <= (p.get("reorder_point", 0) or 0)]
+
+# --- Forecast ---
+@api.get("/analytics/forecast")
+async def forecast(user: dict = Depends(get_current_user)):
+    """Linear-regression forecast of maintenance cost for next 3 months."""
+    maint = await db.maintenance.find({"status": "completed"}, {"_id": 0}).to_list(2000)
+    buckets = {}
+    for m in maint:
+        d = m.get("completed_at") or m.get("created_at") or now_iso()
+        month = d[:7]
+        buckets[month] = buckets.get(month, 0) + (m.get("actual_cost", 0) or 0)
+    history = sorted(buckets.items(), key=lambda x: x[0])
+    if len(history) < 2:
+        return {"history": [{"month": m, "total": t, "type": "actual"} for m, t in history], "forecast": []}
+    n = len(history)
+    xs = list(range(n))
+    ys = [h[1] for h in history]
+    mx = sum(xs) / n; my = sum(ys) / n
+    denom = sum((x - mx) ** 2 for x in xs) or 1
+    slope = sum((xs[i] - mx) * (ys[i] - my) for i in range(n)) / denom
+    intercept = my - slope * mx
+    # forecast next 3 months
+    last_month = datetime.strptime(history[-1][0] + "-01", "%Y-%m-%d")
+    out_hist = [{"month": m, "total": round(t, 2), "type": "actual"} for m, t in history]
+    out_fore = []
+    for i in range(1, 4):
+        nm = (last_month.replace(day=1) + timedelta(days=32 * i)).replace(day=1)
+        key = nm.strftime("%Y-%m")
+        pred = max(0, intercept + slope * (n - 1 + i))
+        out_fore.append({"month": key, "total": round(pred, 2), "type": "forecast"})
+    return {"history": out_hist, "forecast": out_fore}
+
+# --- PDF export ---
+@api.get("/inspections/{iid}/pdf")
+async def inspection_pdf(iid: str, request: Request):
+    # Accept token via query param for direct download links
+    token = request.query_params.get("token") or None
+    if token:
+        try:
+            jwt.decode(token, jwt_secret(), algorithms=[JWT_ALGO])
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    else:
+        await get_current_user(request)
+
+    insp = await db.inspections.find_one({"id": iid}, {"_id": 0})
+    if not insp: raise HTTPException(status_code=404, detail="Inspection not found")
+    vehicle = await db.vehicles.find_one({"id": insp["vehicle_id"]}, {"_id": 0}) or {}
+    template = await db.templates.find_one({"id": insp["template_id"]}, {"_id": 0}) or {"sections": []}
+    ans_map = {a["item_id"]: a for a in insp.get("answers", [])}
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.5*inch, bottomMargin=0.5*inch, leftMargin=0.6*inch, rightMargin=0.6*inch)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=22, textColor=colors.HexColor("#0f172a"))
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=13, textColor=colors.HexColor("#334155"), spaceBefore=12, spaceAfter=6)
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontName="Helvetica", fontSize=10)
+    small = ParagraphStyle("small", parent=styles["BodyText"], fontName="Helvetica", fontSize=8, textColor=colors.grey)
+    story = []
+
+    story.append(Paragraph("FleetCost Intelligence", small))
+    story.append(Paragraph("Vehicle Inspection Report", h1))
+    header_tbl = Table([
+        ["Vehicle", f"{vehicle.get('name','?')}  ({vehicle.get('plate','?')})", "Inspector", insp.get("inspector_name","")],
+        ["Template", template.get("name","?"), "Date", insp.get("created_at","")[:19].replace("T"," ")],
+        ["Odometer", f"{insp.get('odometer','—')} km", "Failed items", str(insp.get("fail_count", 0))],
+    ], colWidths=[1.1*inch, 2.6*inch, 1.1*inch, 2.6*inch])
+    header_tbl.setStyle(TableStyle([
+        ("FONT", (0,0), (-1,-1), "Helvetica", 9),
+        ("FONT", (0,0), (0,-1), "Helvetica-Bold", 9),
+        ("FONT", (2,0), (2,-1), "Helvetica-Bold", 9),
+        ("TEXTCOLOR", (0,0), (0,-1), colors.HexColor("#64748b")),
+        ("TEXTCOLOR", (2,0), (2,-1), colors.HexColor("#64748b")),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ("LINEBELOW", (0,0), (-1,-1), 0.25, colors.HexColor("#e2e8f0")),
+    ]))
+    story.append(header_tbl)
+
+    for sec in template.get("sections", []):
+        story.append(Paragraph(sec.get("title","Section"), h2))
+        rows = [["Item", "Result", "Note"]]
+        for it in sec.get("items", []):
+            a = ans_map.get(it["id"], {})
+            val = str(a.get("value","—"))
+            rows.append([it.get("label",""), val, a.get("note","") or ""])
+        t = Table(rows, colWidths=[3.3*inch, 1.0*inch, 3.1*inch])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0f172a")),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+            ("FONT", (0,0), (-1,0), "Helvetica-Bold", 9),
+            ("FONT", (0,1), (-1,-1), "Helvetica", 9),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.HexColor("#f8fafc"), colors.white]),
+            ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#e2e8f0")),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("LEFTPADDING", (0,0), (-1,-1), 6),
+            ("RIGHTPADDING", (0,0), (-1,-1), 6),
+            ("TOPPADDING", (0,0), (-1,-1), 4),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ]))
+        # Color code Pass/Fail
+        for ri, r in enumerate(rows[1:], start=1):
+            v = r[1].lower()
+            if v == "pass":
+                t.setStyle(TableStyle([("TEXTCOLOR", (1, ri), (1, ri), colors.HexColor("#16a34a"))]))
+            elif v == "fail":
+                t.setStyle(TableStyle([("TEXTCOLOR", (1, ri), (1, ri), colors.HexColor("#dc2626")),
+                                       ("FONT", (1, ri), (1, ri), "Helvetica-Bold", 9)]))
+        story.append(t)
+        story.append(Spacer(1, 6))
+
+    if insp.get("notes"):
+        story.append(Paragraph("General notes", h2))
+        story.append(Paragraph(insp["notes"], body))
+
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · FleetCost Intelligence", small))
+
+    doc.build(story)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=inspection-{iid[:8]}.pdf"})
+
 # --- Seed ---
 async def seed():
     admin_email = os.environ["ADMIN_EMAIL"].lower()
@@ -510,11 +694,29 @@ async def seed():
                     "created_by": "system",
                 })
 
+    # Seed parts
+    if await db.parts.count_documents({}) == 0:
+        parts = [
+            {"name": "Engine Oil 5W-30 (1L)", "sku": "OIL-5W30", "category": "fluids", "stock": 24, "reorder_point": 12, "unit_cost": 8.50, "supplier": "Mobil"},
+            {"name": "Brake Pad Set (Front)", "sku": "BRK-PAD-F", "category": "brakes", "stock": 6, "reorder_point": 8, "unit_cost": 62.00, "supplier": "Bosch"},
+            {"name": "Brake Pad Set (Rear)", "sku": "BRK-PAD-R", "category": "brakes", "stock": 4, "reorder_point": 6, "unit_cost": 48.00, "supplier": "Bosch"},
+            {"name": "Air Filter", "sku": "FLT-AIR", "category": "filters", "stock": 18, "reorder_point": 10, "unit_cost": 14.00, "supplier": "Mann"},
+            {"name": "Oil Filter", "sku": "FLT-OIL", "category": "filters", "stock": 3, "reorder_point": 15, "unit_cost": 9.50, "supplier": "Mann"},
+            {"name": "Coolant Antifreeze (5L)", "sku": "COOL-5L", "category": "fluids", "stock": 8, "reorder_point": 6, "unit_cost": 22.00, "supplier": "Prestone"},
+            {"name": "Wiper Blade 22\"", "sku": "WIP-22", "category": "consumables", "stock": 14, "reorder_point": 8, "unit_cost": 11.00, "supplier": "Rain-X"},
+            {"name": "Tire 275/70R22.5", "sku": "TIR-275", "category": "tires", "stock": 2, "reorder_point": 4, "unit_cost": 380.00, "supplier": "Michelin"},
+        ]
+        for p in parts:
+            p["id"] = str(uuid.uuid4())
+            p["created_at"] = now_iso()
+        await db.parts.insert_many(parts)
+
     await db.users.create_index("email", unique=True)
     await db.vehicles.create_index("id")
     await db.templates.create_index("id")
     await db.inspections.create_index("id")
     await db.maintenance.create_index("id")
+    await db.parts.create_index("id")
 
 app.include_router(api)
 

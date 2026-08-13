@@ -34,6 +34,12 @@ export default function Inspection() {
 
   const setAnswer = (itemId, value) => setAnswers({ ...answers, [itemId]: { ...(answers[itemId] || {}), value } });
   const setAnswerNote = (itemId, note) => setAnswers({ ...answers, [itemId]: { ...(answers[itemId] || {}), note } });
+  const setAnswerPhoto = (itemId, file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => setAnswers(a => ({ ...a, [itemId]: { ...(a[itemId] || {}), photo: reader.result } }));
+    reader.readAsDataURL(file);
+  };
 
   const failCount = Object.values(answers).filter(a => String(a.value).toLowerCase() === "fail").length;
 
@@ -44,7 +50,7 @@ export default function Inspection() {
       vehicle_id: vehicleId,
       odometer: Number(odometer) || null,
       notes,
-      answers: Object.entries(answers).map(([item_id, a]) => ({ item_id, value: String(a.value || ""), note: a.note || "" })),
+      answers: Object.entries(answers).map(([item_id, a]) => ({ item_id, value: String(a.value || ""), note: a.note || "", photo: a.photo || null })),
     };
     try {
       const { data } = await api.post("/inspections", payload);
@@ -146,7 +152,12 @@ export default function Inspection() {
                         className="w-64 bg-[#0b0b0d] border border-border px-2 py-1.5 text-sm focus:border-primary focus:outline-none" />
                     )}
                     <input value={a.note || ""} onChange={(e) => setAnswerNote(it.id, e.target.value)} placeholder="Note…"
-                      className="w-full sm:w-64 bg-[#0b0b0d] border border-border px-2 py-1.5 text-xs focus:border-primary focus:outline-none" />
+                      className="w-full sm:w-56 bg-[#0b0b0d] border border-border px-2 py-1.5 text-xs focus:border-primary focus:outline-none" />
+                    <label className="cursor-pointer border border-border px-2 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-primary" data-testid={`photo-${it.id}`}>
+                      {a.photo ? "Photo ✓" : "+ Photo"}
+                      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => setAnswerPhoto(it.id, e.target.files?.[0])} />
+                    </label>
+                    {a.photo && <img src={a.photo} alt="preview" className="w-16 h-16 object-cover border border-border" />}
                   </div>
                 );
               })}
