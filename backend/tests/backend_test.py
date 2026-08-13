@@ -360,3 +360,129 @@ class TestMaintenanceDriverSplit:
         # cleanup
         requests.delete(f"{API}/maintenance/{mid}", headers=auth_headers)
 
+
+
+# -------------------------- iteration 5: new features --------------------------
+# (A) User prefs, (B) Incident PATCH, (C) Fleet health, (D) Enriched /incidents list
+
+class TestUserPrefs:
+    def test_put_and_get_prefs_persist(self, auth_headers):
+        payload = {"dashboard_tiles": ["total_vehicles", "downtime"]}
+        r = requests.put(f"{API}/users/me/prefs", headers=auth_headers, json=payload)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d.get("dashboard_tiles") == payload["dashboard_tiles"]
+
+        g = requests.get(f"{API}/users/me/prefs", headers=auth_headers)
+        assert g.status_code == 200
+        gd = g.json()
+        assert gd.get("dashboard_tiles") == payload["dashboard_tiles"], f"prefs did not persist: {gd}"
+
+
+class TestIncidentPatch:
+    def _make_incident(self, headers):
+        vid = requests.get(f"{API}/vehicles", headers=headers).json()[0]["id"]
+        from datetime import datetime
+        p = {
+            "vehicle_id": vid,
+            "kind": "damage",
+            "severity": "minor",
+            "occurred_at": datetime.utcnow().isoformat(),
+            "location": "TEST_LOC_PATCH",
+            "description": "TEST_INCIDENT patch base",
+            "reported_cost": 10.0,
+        }
+        r = requests.post(f"{API}/incidents", headers=headers, json=p)
+        assert r.status_code in (200, 201), r.text
+        return r.json()["id"]
+
+    def test_patch_incident_updates_fields(self, auth_headers):
+        iid = self._make_incident(auth_headers)
+        try:
+            patch = {"severity": "severe", "resolution_notes": "Fixed at shop", "resolved": True}
+            r = requests.patch(f"{API}/incidents/{iid}", headers=auth_headers, json=patch)
+            assert r.status_code == 200, r.text
+            d = r.json()
+            assert d["severity"] == "severe"
+            assert d["resolution_notes"] == "Fixed at shop"
+            assert d["resolved"] is True
+
+            # GET list -> confirm persistence
+            lr = requests.get(f"{API}/incidents", headers=auth_headers)
+            assert lr.status_code == 200
+            found = [i for i in lr.json() if i["id"] == iid]
+            assert found and found[0]["severity"] == "severe"
+            assert found[0].get("resolved") is True
+            assert found[0].get("resolution_notes") == "Fixed at shop"
+        finally:
+            requests.delete(f"{API}/incidents/{iid}", headers=auth_headers)
+
+    def test_patch_incident_unknown_returns_404(self, auth_headers):
+        r = requests.patch(f"{API}/incidents/nonexistent-id-xyz", headers=auth_headers,
+                           json={"severity": "severe"})
+        assert r.status_code == 404
+
+    def test_patch_incident_audit_log(self, auth_headers):
+        iid = self._make_incident(auth_headers)
+        try:
+            r = requests.patch(f"{API}/incidents/{iid}", headers=auth_headers,
+                               json={"description": "TEST_updated desc"})
+            assert r.status_code == 200
+            ar = requests.get(f"{API}/audit", headers=auth_headers)
+            assert ar.status_code == 200
+            logs = ar.json()
+            # look for incident.updated action
+            actions = {l.get("action") for l in logs if isinstance(l, dict)}
+            assert "incident.updated" in actions, f"no incident.updated audit entry. actions sample: {list(actions)[:15]}"
+        finally:
+            requests.delete(f"{API}/incidents/{iid}", headers=auth_headers)
+
+
+class TestFleetHealth:
+    def test_fleet_health_shape_and_sorted(self, auth_headers):
+        r = requests.get(f"{API}/analytics/fleet-health", headers=auth_headers)
+        assert r.status_code == 200, r.text
+        rows = r.json()
+        assert isinstance(rows, list) and len(rows) > 0
+        for row in rows:
+            assert "vehicle_id" in row and "name" in row and "plate" in row
+            assert "score" in row and "status" in row and "factors" in row
+            assert isinstance(row["score"], (int, float))
+            assert 0 <= row["score"] <= 100, f"score out of range: {row['score']}"
+            assert row["status"] in ("healthy", "watch", "at_risk"), row["status"]
+            assert isinstance(row["factors"], list)
+        # sorted worst first (ascending score)
+        scores = [row["score"] for row in rows]
+        assert scores == sorted(scores), f"not sorted worst->best: {scores}"
+
+
+class TestIncidentsEnrichment:
+    def test_incidents_list_enriched(self, auth_headers):
+        vid = requests.get(f"{API}/vehicles", headers=auth_headers).json()[0]["id"]
+        drivers = requests.get(f"{API}/drivers", headers=auth_headers).json()
+        did = drivers[0]["id"] if drivers else None
+        from datetime import datetime
+        p = {
+            "vehicle_id": vid,
+            "driver_id": did,
+            "kind": "damage",
+            "severity": "minor",
+            "occurred_at": datetime.utcnow().isoformat(),
+            "location": "TEST_ENRICH",
+            "description": "TEST_ENRICH_INCIDENT",
+            "reported_cost": 5.0,
+        }
+        cr = requests.post(f"{API}/incidents", headers=auth_headers, json=p)
+        assert cr.status_code in (200, 201), cr.text
+        iid = cr.json()["id"]
+        try:
+            r = requests.get(f"{API}/incidents", headers=auth_headers)
+            assert r.status_code == 200
+            row = next((i for i in r.json() if i["id"] == iid), None)
+            assert row is not None
+            assert "vehicle_name" in row and "vehicle_plate" in row
+            assert row["vehicle_name"], f"empty vehicle_name: {row}"
+            if did:
+                assert "driver_name" in row and row["driver_name"], f"missing driver_name: {row}"
+        finally:
+            requests.delete(f"{API}/incidents/{iid}", headers=auth_headers)

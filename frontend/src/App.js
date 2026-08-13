@@ -19,6 +19,7 @@ import Team from "@/pages/Team";
 import AuditLog from "@/pages/AuditLog";
 import Security from "@/pages/Security";
 import Drivers from "@/pages/Drivers";
+import Incidents from "@/pages/Incidents";
 import PublicVehicle from "@/pages/PublicVehicle";
 
 const Protected = ({ children }) => {
@@ -54,6 +55,7 @@ function App() {
               <Route path="maintenance" element={<Maintenance />} />
               <Route path="parts" element={<Parts />} />
               <Route path="drivers" element={<Drivers />} />
+              <Route path="incidents" element={<Incidents />} />
               <Route path="team" element={<Team />} />
               <Route path="audit" element={<AuditLog />} />
               <Route path="security" element={<Security />} />

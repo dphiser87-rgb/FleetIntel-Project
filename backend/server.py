@@ -311,6 +311,20 @@ class IncidentIn(BaseModel):
     photos: List[str] = []  # base64 data URLs
     reported_cost: float = 0
 
+class IncidentUpdate(BaseModel):
+    driver_id: Optional[str] = None
+    kind: Optional[Literal["accident", "damage", "breakdown", "citation", "other"]] = None
+    severity: Optional[Literal["minor", "moderate", "severe"]] = None
+    occurred_at: Optional[str] = None
+    location: Optional[str] = None
+    description: Optional[str] = None
+    reported_cost: Optional[float] = None
+    resolution_notes: Optional[str] = None
+    resolved: Optional[bool] = None
+
+class UserPrefs(BaseModel):
+    dashboard_tiles: Optional[List[str]] = None
+
 class MaintenanceUpdate(BaseModel):
     status: Optional[Literal["pending", "in_progress", "completed", "cancelled"]] = None
     actual_cost: Optional[float] = None
@@ -492,6 +506,19 @@ async def logout(user: dict = Depends(get_current_user)):
 async def list_users(user: dict = Depends(get_current_user)):
     users = await db.users.find(ws_filter(user), {"_id": 0, "password_hash": 0}).to_list(500)
     return users
+
+@api.get("/users/me/prefs")
+async def get_my_prefs(user: dict = Depends(get_current_user)):
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "prefs": 1})
+    return (u or {}).get("prefs") or {}
+
+@api.put("/users/me/prefs")
+async def put_my_prefs(p: UserPrefs, user: dict = Depends(get_current_user)):
+    patch = {k: v for k, v in p.model_dump(exclude_unset=True).items() if v is not None}
+    if patch:
+        await db.users.update_one({"id": user["id"]}, {"$set": {f"prefs.{k}": v for k, v in patch.items()}})
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "prefs": 1})
+    return (u or {}).get("prefs") or {}
 
 # --- Vehicles ---
 @api.get("/vehicles")
@@ -1094,7 +1121,19 @@ async def vehicle_timeline(vid: str, user: dict = Depends(get_current_user)):
 @api.get("/incidents")
 async def list_incidents(vehicle_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     q = ws_filter(user, {"vehicle_id": vehicle_id} if vehicle_id else {})
-    return await db.incidents.find(q, {"_id": 0}).sort("occurred_at", -1).to_list(500)
+    incs = await db.incidents.find(q, {"_id": 0}).sort("occurred_at", -1).to_list(500)
+    # enrich with vehicle + driver names for fleet-wide index
+    v_ids = list({i.get("vehicle_id") for i in incs if i.get("vehicle_id")})
+    d_ids = list({i.get("driver_id") for i in incs if i.get("driver_id")})
+    vmap = {v["id"]: v for v in await db.vehicles.find(ws_filter(user, {"id": {"$in": v_ids}}), {"_id": 0, "id": 1, "name": 1, "plate": 1}).to_list(1000)} if v_ids else {}
+    dmap = {d["id"]: d for d in await db.drivers.find(ws_filter(user, {"id": {"$in": d_ids}}), {"_id": 0, "id": 1, "name": 1}).to_list(1000)} if d_ids else {}
+    for i in incs:
+        v = vmap.get(i.get("vehicle_id") or "", {})
+        d = dmap.get(i.get("driver_id") or "", {})
+        i["vehicle_name"] = v.get("name")
+        i["vehicle_plate"] = v.get("plate")
+        i["driver_name"] = d.get("name")
+    return incs
 
 @api.post("/incidents")
 async def create_incident(inc: IncidentIn, user: dict = Depends(get_current_user)):
@@ -1109,10 +1148,99 @@ async def create_incident(inc: IncidentIn, user: dict = Depends(get_current_user
     doc.pop("_id", None)
     return doc
 
+@api.patch("/incidents/{iid}")
+async def update_incident(iid: str, patch: IncidentUpdate, user: dict = Depends(get_current_user)):
+    data = {k: v for k, v in patch.model_dump(exclude_unset=True).items() if v is not None}
+    if not data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    data["updated_at"] = now_iso()
+    if data.get("resolved") is True and "resolved_at" not in data:
+        data["resolved_at"] = now_iso()
+    res = await db.incidents.update_one(ws_filter(user, {"id": iid}), {"$set": data})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    await log_event(user, "incident.updated", "incident", iid, {"fields": list(data.keys())})
+    doc = await db.incidents.find_one(ws_filter(user, {"id": iid}), {"_id": 0})
+    return doc
+
 @api.delete("/incidents/{iid}")
 async def delete_incident(iid: str, user: dict = Depends(get_current_user)):
     await db.incidents.delete_one(ws_filter(user, {"id": iid}))
     return {"ok": True}
+
+@api.get("/analytics/fleet-health")
+async def fleet_health(user: dict = Depends(get_current_user)):
+    """Returns per-vehicle health score (0-100) and contributing factors."""
+    from datetime import datetime as _dt
+    vehicles = await db.vehicles.find(ws_filter(user), {"_id": 0}).to_list(1000)
+    all_insp = await db.inspections.find(ws_filter(user), {"_id": 0}).to_list(2000)
+    all_maint = await db.maintenance.find(ws_filter(user), {"_id": 0}).to_list(2000)
+    all_inc = await db.incidents.find(ws_filter(user), {"_id": 0}).to_list(2000)
+    drivers = await db.drivers.find(ws_filter(user), {"_id": 0}).to_list(1000)
+    now = _dt.now(timezone.utc)
+    ninety_days = now - timedelta(days=90)
+    def _parse(d):
+        try: return _dt.fromisoformat(d.replace("Z", "+00:00")) if d else None
+        except Exception: return None
+    driver_by_vehicle = {}
+    for d in drivers:
+        if d.get("assigned_vehicle_id"):
+            driver_by_vehicle[d["assigned_vehicle_id"]] = d
+    results = []
+    for v in vehicles:
+        vid = v["id"]
+        score = 100
+        factors = []
+        # Inspection fails in last 90 days
+        recent_fails = sum(i.get("fail_count", 0) for i in all_insp if i.get("vehicle_id") == vid and (_parse(i.get("created_at")) or now) >= ninety_days)
+        if recent_fails > 0:
+            deduction = min(30, recent_fails * 8)
+            score -= deduction
+            factors.append({"key": "inspection_fails", "label": f"{recent_fails} failed inspection item(s) in 90d", "impact": -deduction})
+        # Maintenance backlog
+        pending = [m for m in all_maint if m.get("vehicle_id") == vid and m.get("status") in ("pending", "in_progress")]
+        critical_pending = [m for m in pending if m.get("priority") == "critical"]
+        if critical_pending:
+            score -= 20
+            factors.append({"key": "critical_maintenance", "label": f"{len(critical_pending)} critical maintenance open", "impact": -20})
+        if pending:
+            deduction = min(20, len(pending) * 4)
+            score -= deduction
+            factors.append({"key": "pending_maintenance", "label": f"{len(pending)} pending maintenance job(s)", "impact": -deduction})
+        # Recent incidents
+        vinc = [i for i in all_inc if i.get("vehicle_id") == vid and (_parse(i.get("occurred_at")) or now) >= ninety_days]
+        sev_weight = {"severe": 20, "moderate": 12, "minor": 4}
+        inc_deduction = 0
+        for i in vinc:
+            inc_deduction += sev_weight.get(i.get("severity"), 4)
+        inc_deduction = min(35, inc_deduction)
+        if inc_deduction > 0:
+            score -= inc_deduction
+            factors.append({"key": "incidents", "label": f"{len(vinc)} incident(s) in 90d", "impact": -inc_deduction})
+        # Driver license
+        drv = driver_by_vehicle.get(vid)
+        if drv and drv.get("license_expiry"):
+            try:
+                days = (_dt.strptime(drv["license_expiry"], "%Y-%m-%d").date() - now.date()).days
+                if days < 0:
+                    score -= 20
+                    factors.append({"key": "license_expired", "label": f"Driver license expired ({drv['name']})", "impact": -20})
+                elif days <= 30:
+                    score -= 8
+                    factors.append({"key": "license_expiring", "label": f"Driver license expires in {days}d", "impact": -8})
+            except Exception: pass
+        score = max(0, min(100, score))
+        status = "healthy" if score >= 80 else "watch" if score >= 55 else "at_risk"
+        results.append({
+            "vehicle_id": vid,
+            "name": v.get("name"),
+            "plate": v.get("plate"),
+            "score": score,
+            "status": status,
+            "factors": factors,
+        })
+    results.sort(key=lambda r: r["score"])  # worst first
+    return results
 
 # --- Bulk CSV import ---
 def _parse_csv(text: str) -> list:

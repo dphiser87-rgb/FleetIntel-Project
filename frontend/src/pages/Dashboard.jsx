@@ -79,14 +79,20 @@ export default function Dashboard() {
   const [investigate, setInvestigate] = useState(null);
   const [liveAlerts, setLiveAlerts] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
-  const [tileKeys, setTileKeys] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("fleetintel_tiles") || "null") || DEFAULT_TILES; }
-    catch { return DEFAULT_TILES; }
-  });
-  const saveTiles = (keys) => { setTileKeys(keys); localStorage.setItem("fleetintel_tiles", JSON.stringify(keys)); };
+  const [tileKeys, setTileKeys] = useState(DEFAULT_TILES);
+  const saveTiles = (keys) => {
+    setTileKeys(keys);
+    api.put("/users/me/prefs", { dashboard_tiles: keys }).catch(() => {});
+  };
   const activeTiles = ALL_TILES.filter(t => tileKeys.includes(t.key));
 
   useEffect(() => { api.get("/alerts").then(r => setLiveAlerts(r.data)).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get("/users/me/prefs").then(r => {
+      const saved = r.data?.dashboard_tiles;
+      if (Array.isArray(saved) && saved.length > 0) setTileKeys(saved);
+    }).catch(() => {});
+  }, []);
 
   return (
     <div className="noise-bg min-h-screen">

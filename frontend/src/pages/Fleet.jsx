@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Truck, ClipboardText, Camera, UploadSimple } from "@phosphor-icons/react";
+import { Plus, Truck, ClipboardText, Camera, UploadSimple, Heartbeat } from "@phosphor-icons/react";
 
 const StatusBadge = ({ status }) => {
   const map = {
@@ -14,13 +14,38 @@ const StatusBadge = ({ status }) => {
   return <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border ${s.c}`}>{s.l}</span>;
 };
 
+const HealthPill = ({ score, status }) => {
+  const color = status === "healthy" ? "border-[#34C759] text-[#34C759] bg-[#34C759]/10" : status === "watch" ? "border-[#FFCC00] text-[#FFCC00] bg-[#FFCC00]/10" : "border-primary text-primary bg-primary/10";
+  const label = status === "healthy" ? "Healthy" : status === "watch" ? "Watch" : "At risk";
+  return (
+    <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border flex items-center gap-1 ${color}`}>
+      <Heartbeat size={11} weight="bold" /> {label} · {score}
+    </span>
+  );
+};
+
 export default function Fleet() {
   const [vehicles, setVehicles] = useState([]);
+  const [health, setHealth] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
+  const [sortBy, setSortBy] = useState("health");
   const [form, setForm] = useState({ name: "", plate: "", make: "", model: "", year: 2023, type: "truck", odometer: 0, fuel_cost_per_km: 0.35 });
 
-  const load = () => api.get("/vehicles").then(r => setVehicles(r.data));
+  const load = async () => {
+    const [v, h] = await Promise.all([api.get("/vehicles"), api.get("/analytics/fleet-health").catch(() => ({ data: [] }))]);
+    setVehicles(v.data); setHealth(h.data || []);
+  };
   useEffect(() => { load(); }, []);
+
+  const healthMap = useMemo(() => Object.fromEntries(health.map(h => [h.vehicle_id, h])), [health]);
+  const sortedVehicles = useMemo(() => {
+    if (sortBy !== "health") return vehicles;
+    return [...vehicles].sort((a, b) => {
+      const sa = healthMap[a.id]?.score ?? 100;
+      const sb = healthMap[b.id]?.score ?? 100;
+      return sa - sb; // worst first
+    });
+  }, [vehicles, healthMap, sortBy]);
 
   const save = async (e) => {
     e.preventDefault();
@@ -43,6 +68,10 @@ export default function Fleet() {
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="fleet-title">Fleet</h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} data-testid="fleet-sort" className="bg-[#121214] border border-border px-2 py-2 text-xs uppercase tracking-widest">
+          <option value="health">Sort · Health (worst first)</option>
+          <option value="default">Sort · Default</option>
+        </select>
         <button data-testid="add-vehicle-btn" onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
           <Plus size={14} weight="bold" /> Add vehicle
         </button>
@@ -109,7 +138,9 @@ export default function Fleet() {
 
       <div className="p-8">
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6" data-testid="vehicle-grid">
-          {vehicles.map(v => (
+          {sortedVehicles.map(v => {
+            const h = healthMap[v.id];
+            return (
             <div key={v.id} className="bg-[#121214] border border-border overflow-hidden hover:border-primary/60 transition-colors group" data-testid={`vehicle-${v.plate}`}>
               <div className="aspect-video bg-[#0b0b0d] relative overflow-hidden">
                 {v.image_url ? (
@@ -119,7 +150,10 @@ export default function Fleet() {
                     <Truck size={64} weight="thin" className="text-muted-foreground" />
                   </div>
                 )}
-                <div className="absolute top-3 right-3"><StatusBadge status={v.status} /></div>
+                <div className="absolute top-3 right-3 flex flex-col gap-1 items-end">
+                  <StatusBadge status={v.status} />
+                  {h && <HealthPill score={h.score} status={h.status} />}
+                </div>
                 <div className="absolute bottom-3 left-3 overline text-white">{v.plate}</div>
               </div>
               <div className="p-5 space-y-3">
@@ -133,6 +167,17 @@ export default function Fleet() {
                     <div className="overline mt-1">{v.type}</div>
                   </div>
                 </div>
+                {h && h.factors.length > 0 && (
+                  <div className="border-l-2 border-primary/40 pl-2 space-y-1" data-testid={`health-factors-${v.plate}`}>
+                    {h.factors.slice(0, 2).map((f, i) => (
+                      <div key={i} className="text-xs text-muted-foreground flex items-center justify-between gap-2">
+                        <span className="truncate">{f.label}</span>
+                        <span className="mono text-primary shrink-0">{f.impact}</span>
+                      </div>
+                    ))}
+                    {h.factors.length > 2 && <div className="text-[10px] mono text-muted-foreground">+{h.factors.length - 2} more</div>}
+                  </div>
+                )}
                 <div className="flex gap-2 pt-2">
                   <Link to={`/fleet/${v.id}`} className="flex-1 border border-border px-3 py-2 text-xs uppercase tracking-widest text-center hover:border-primary hover:text-primary transition-colors" data-testid={`view-${v.plate}`}>View</Link>
                   <Link to={`/inspection/${v.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary px-3 py-2 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground transition-colors" data-testid={`inspect-${v.plate}`}>
@@ -141,7 +186,7 @@ export default function Fleet() {
                 </div>
               </div>
             </div>
-          ))}
+          )})}
         </div>
         {vehicles.length === 0 && <div className="text-center text-muted-foreground py-24">No vehicles. Add one to get started.</div>}
       </div>

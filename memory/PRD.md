@@ -61,9 +61,13 @@
 - P2: Refactor server.py (1787 lines) into routers/ (auth, fleet, maintenance, incidents, analytics)
 - P2: Consolidate Dashboard alert rendering into single AlertsPanel component
 
-## Backlog / Next
-- P1: PDF export of inspection reports + email delivery
-- P1: Cost forecasting (predict monthly spend from trend)
-- P2: Parts inventory + reorder alerts
-- P2: Multi-tenant workspaces
-- P2: Mobile-first inspector view w/ camera capture
+## Implemented (2026-02-13 iteration 5 — 4 additional features)
+- **Server prefs**: GET/PUT `/api/users/me/prefs` — Dashboard KPI tile choices persist per-user, cross-device (no more localStorage)
+- **Edit Incidents**: PATCH `/api/incidents/{id}` (severity, kind, driver, description, location, cost, resolution_notes, resolved) + full edit modal on `/incidents` page
+- **Fleet Health Score**: GET `/api/analytics/fleet-health` blends inspection fails, maintenance backlog, incidents (90d), driver license expiry into 0-100 score with factor breakdown; Fleet page shows health pill + factors, sorts worst-first by default
+- **Incidents Index Page**: New `/incidents` route + sidebar link — stats bar, severity/kind/driver/search filters, driver breakdown, CSV export
+
+## Backlog / Next (P1/P2)
+- P2: Refactor server.py (~1900 lines) into routers/ (auth, fleet, incidents, analytics, prefs)
+- P2: Consolidate Dashboard alert rendering into single AlertsPanel component
+- P2: Aggregate incidents enrichment via $lookup once fleet scales past a few hundred rows
