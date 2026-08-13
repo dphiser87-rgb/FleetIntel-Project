@@ -1,0 +1,127 @@
+{
+  "project_name": "FleetCost Intelligence - SaaS Platform",
+  "theme_strategy": "dark",
+  "archetype": "The Performance Pro mixed with Swiss Brutalism (Authority, Precision, Elite Operation)",
+  "typography": {
+    "headings": {
+      "family": "Outfit",
+      "weights": ["400", "700", "900"],
+      "rules": "MUST use tracking-tight or tracking-tighter for headings > 32px. DO NOT use Inter for headings. Use fluid scaling, maximum text-6xl for main dashboard hero."
+    },
+    "body": {
+      "family": "IBM Plex Sans",
+      "weights": ["400", "500", "600"],
+      "rules": "Use for paragraphs, standard labels, and inputs. Ensure leading-relaxed for long text."
+    },
+    "data_and_mono": {
+      "family": "JetBrains Mono",
+      "weights": ["400", "700"],
+      "rules": "CRITICAL: Use for all KPIs, currency values, cost trends, metric data, and vehicle IDs. Overlines must be uppercase, text-xs, tracking-[0.2em]."
+    }
+  },
+  "colors": {
+    "background": {
+      "default": "#080809",
+      "surface": "#121214",
+      "surface_hover": "#1A1A1D"
+    },
+    "primary": {
+      "default": "#FF3B30",
+      "hover": "#FF5248",
+      "foreground": "#FFFFFF"
+    },
+    "status": {
+      "maintenance": "#FFCC00",
+      "active": "#34C759",
+      "idle": "#8E8E93"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1A6",
+      "muted": "#636366"
+    },
+    "border": {
+      "default": "#27272A",
+      "focus": "#FF3B30"
+    },
+    "forbidden_colors": ["#1B93A4", "teal green", "teal blue", "#000000"]
+  },
+  "visual_enhancers": {
+    "surfaces": "Use 'Grid Borders' strategy. Expose the skeleton with `border-collapse` layout. Data cards should have `border-r border-b border-border/40`. No drop-shadows on standard cards; rely on 1px solid strokes to separate elements.",
+    "glassmorphism": "Only for sticky headers/floating nav. Use `backdrop-blur-xl bg-[#080809]/80` with a sharp 1px bottom border. NEVER use pure transparency.",
+    "radii": "Sharp edges. Use `rounded-none` or `rounded-sm` (max 2-4px) for all components to enforce the industrial/technical feel.",
+    "motion": "Fast, precise micro-interactions. Hover states should feature a slight lift (`-translate-y-1`) or a 1px border color transition to primary. Avoid bouncy animations."
+  },
+  "components": {
+    "buttons": "Sharp edges (`rounded-none`). Primary buttons use solid background, secondary buttons use transparent background with 1px solid border. Always configure explicit hover states (`hover:bg-primary/90 hover:text-white`).",
+    "dashboard_cards": "Flat background (`bg-[#121214]`), 1px subtle border. No shadow by default. Organize KPIs densely. Use monospaced fonts for large metric numbers.",
+    "kanban_board": "Ordered workflow columns (Pending, Inspecting, Maintenance, Done). Cards act as scanning surfaces (minmal data: ID, Title, Status Badge, Monospaced Cost). Show column WIP limits. Use badges for live states.",
+    "data_tables": "Dense layout. Use Shadcn Table. Monospaced numbers for costs. Left-align most text, right-align currency/numbers.",
+    "checklist_builder": "Multi-section form using Shadcn inputs. Use stark contrast for active/inactive items. Use `sonner` for toast notifications when checklist templates are saved."
+  },
+  "layouts": {
+    "dashboard": "Mode B (High Density Grid). Base grid: `grid-cols-1 md:grid-cols-3 lg:grid-cols-4`, tight gaps (`gap-4` or `gap-6`). Every pixel utilized. Summary KPI `col-span-1`, Main Cost Chart `col-span-2 row-span-2`.",
+    "vehicle_details": "Bento Grid approach. A large hero cell for vehicle image + specs, adjacent cells for cost history and maintenance logs.",
+    "spacing": "Generous spacing philosophy outside of the dense data grid. Use `p-6` or `p-8` for container internal padding. Avoid tight text collisions."
+  },
+  "icons_and_assets": {
+    "library": "@phosphor-icons/react",
+    "instructions": "Use for dense dashboards. Sharp, technical aesthetic."
+  },
+  "accessibility": {
+    "contrast": "Text below 18px requires 4.5:1. Interactive elements need 3:1 against background. Use text-shadow if placing text over images.",
+    "focus": "Focus states must have HIGHER contrast, e.g., `focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background`.",
+    "testing": "All interactive elements MUST include a `data-testid` attribute (e.g., `data-testid='allocate-mechanic-button'`)."
+  },
+  "image_urls": {
+    "fleet_vehicles": [
+      {
+        "url": "https://images.unsplash.com/photo-1695222833131-54ee679ae8e5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHw0fHxmbGVldCUyMHZlaGljbGUlMjB0cnVjayUyMGRyaXZpbmd8ZW58MHx8fHwxNzg2NjA5NjczfDA&ixlib=rb-4.1.0&q=85",
+        "description": "White semi truck driving down rural road",
+        "category": "vehicle_details_hero"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1592838064575-70ed626d3a0e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwzfHxmbGVldCUyMHZlaGljbGUlMjB0cnVjayUyMGRyaXZpbmd8ZW58MHx8fHwxNzg2NjA5NjczfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Black truck on road during daytime",
+        "category": "fleet_list_thumbnail"
+      }
+    ],
+    "mechanics": [
+      {
+        "url": "https://images.unsplash.com/photo-1615906655593-ad0386982a0f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwxfHxtZWNoYW5pYyUyMGluc3BlY3RpbmclMjB2ZWhpY2xlJTIwZW5naW5lfGVufDB8fHx8MTc4NjYwOTY3M3ww&ixlib=rb-4.1.0&q=85",
+        "description": "Mechanic working on car engine",
+        "category": "maintenance_allocation_cover"
+      }
+    ],
+    "users": [
+      {
+        "url": "https://images.unsplash.com/photo-1586297135537-94bc9ba060aa?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTF8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBwcm9maWxlJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzg2NjA5Njc0fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Professional woman portrait",
+        "category": "user_avatar_inspector"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1506863530036-1efeddceb993?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTF8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBwcm9maWxlJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzg2NjA5Njc0fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Grayscale photo of woman",
+        "category": "user_avatar_admin"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Prioritize Recharts or standard Shadcn charts for all KPI cost trends. Do not use D3 unless visualizing a highly complex hierarchy.",
+    "Do not center-align layouts. Left-align text for better human readability, particularly in dense dashboards.",
+    "Use Phosphor icons. Command to install: `yarn add @phosphor-icons/react`.",
+    "Ensure `data-testid` is added to all buttons, inputs, links, and major card containers.",
+    "Avoid AI slop and generic UI. Ensure deep Obsidian backgrounds contrasted with Signal Red/Electric Green for precise, technical feeling.",
+    "Apply CSS variables provided in this configuration to `/app/frontend/src/index.css` to override default Shadcn themes.",
+    "Implement Sonner (`yarn add sonner` / Shadcn Sonner component) for all status/toast updates, like checklist completion."
+  ],
+  "universal_guidelines_for_main_agent": [
+    "Avoid generic 'AI slop' aesthetic. Create distinctive frontends with edge and character.",
+    "Use 2-3x more spacing than feels comfortable. Avoid cramped elements.",
+    "Never use pure transparent backgrounds for overlays, modals, or headers.",
+    "Do not apply `transition: all`. Target specific properties like `transition: transform 0.2s ease, opacity 0.2s ease`.",
+    "Never center-align the main App wrapper via `.App { text-align: center; }`.",
+    "Do not use placeholder image services. Use the exact URLs provided in `image_urls`.",
+    "Ensure the UI defaults to the dark theme strategy provided in this document."
+  ]
+}

@@ -1,0 +1,78 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 6% 4%;
+    --foreground: 0 0% 100%;
+    --card: 240 5% 8%;
+    --card-foreground: 0 0% 100%;
+    --popover: 240 5% 8%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 4 100% 59%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4% 12%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 240 4% 12%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 4% 12%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 4 100% 59%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 4% 16%;
+    --input: 240 4% 14%;
+    --ring: 4 100% 59%;
+    --chart-1: 4 100% 59%;
+    --chart-2: 142 71% 45%;
+    --chart-3: 45 100% 51%;
+    --chart-4: 217 91% 60%;
+    --chart-5: 262 83% 58%;
+    --radius: 0.125rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  html, body {
+    @apply bg-background text-foreground;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background-color: #080809;
+  }
+  h1, h2, h3, h4, h5, h6 { font-family: 'Outfit', sans-serif; letter-spacing: -0.02em; }
+  .font-mono, .mono { font-family: 'JetBrains Mono', monospace; }
+  .font-display { font-family: 'Outfit', sans-serif; }
+}
+
+@layer utilities {
+  .overline {
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    color: #A1A1A6;
+  }
+  .grid-borders > * {
+    border-right: 1px solid rgba(39, 39, 42, 0.6);
+    border-bottom: 1px solid rgba(39, 39, 42, 0.6);
+  }
+  .noise-bg {
+    background-image:
+      radial-gradient(1200px 500px at 90% -10%, rgba(255,59,48,0.09), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(52,199,89,0.05), transparent 60%);
+  }
+}
+
+@layer base {
+  [data-debug-wrapper="true"] { display: contents !important; }
+}
+
+::selection { background-color: rgba(255, 59, 48, 0.35); color: white; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0b0b0d; }
+::-webkit-scrollbar-thumb { background: #27272a; border: 2px solid #0b0b0d; }
+::-webkit-scrollbar-thumb:hover { background: #3f3f46; }

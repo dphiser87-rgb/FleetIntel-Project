@@ -1,0 +1,25 @@
+{
+  "summary": "First-finish smoke test on FleetCost Intelligence MVP. Backend auth + core endpoints and end-to-end frontend navigation (login -> dashboard -> fleet -> templates -> maintenance -> reports -> inspection -> logout) all working.",
+  "tested_scope": ["frontend", "backend", "auth", "integration"],
+  "passed": [
+    "POST /api/auth/login with admin returns 200 + token (JWT). Note: response field is 'token' (not access_token).",
+    "GET /api/analytics/kpi returns full KPI payload (total_vehicles=6, cost_per_vehicle=242.5, pending=2, completed=6, utilization=66.7%).",
+    "GET /api/vehicles returns 6 seeded vehicles.",
+    "GET /api/templates returns 1 seeded template 'Standard Pre-Trip Inspection'.",
+    "GET /api/maintenance returns 8 jobs across pending/in_progress/completed statuses.",
+    "Login UI: filling login-email/login-password + login-submit lands on '/' with 'Welcome back' toast.",
+    "Dashboard: all 8 KPI cards present (total-vehicles, maint-cost, cost-per-vehicle, downtime, utilization, fuel, pending, completed) with numeric values; cost trend + category charts rendered.",
+    "Fleet page: 6 view-* cards and 6 inspect-* buttons rendered; add-vehicle-btn present.",
+    "Templates page loads with 'Standard Pre-Trip Inspection' visible.",
+    "Maintenance kanban: column-pending, column-in_progress, column-completed all rendered.",
+    "Reports page: cost trend line + cost-per-vehicle bar chart render.",
+    "Inspection page loads default template with 15 answer-* controls and submit-inspection button.",
+    "Logout via logout-btn redirects to /login (protected routes require re-auth)."
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": "Vehicle model uses 'plate' (not 'license_plate'). Deeper flows not exercised in this first-finish pass: create-vehicle submission, template builder save, full inspect->allocate->maintenance kanban start/complete cycle, and role-based access with non-admin users. Recommend covering in full testing pass."
+}
