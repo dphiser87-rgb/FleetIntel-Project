@@ -257,6 +257,17 @@ class InviteIn(BaseModel):
 class WorkspaceRename(BaseModel):
     name: str
 
+class DriverIn(BaseModel):
+    name: str
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = ""
+    license_number: str
+    license_expiry: str  # YYYY-MM-DD
+    hire_date: Optional[str] = ""
+    assigned_vehicle_id: Optional[str] = None
+    status: Literal["active", "inactive", "on_leave"] = "active"
+    notes: Optional[str] = ""
+
 class OCRIn(BaseModel):
     image_base64: str  # data URL or raw base64
     mode: Literal["plate", "odometer"] = "plate"
@@ -357,9 +368,32 @@ async def login(req: LoginReq2FA):
     if user.get("totp_enabled"):
         if not req.code:
             return {"requires_2fa": True, "email": email}
+        code = req.code.strip()
         totp = pyotp.TOTP(user["totp_secret"])
-        if not totp.verify(req.code, valid_window=1):
-            raise HTTPException(status_code=401, detail="Invalid 2FA code")
+        totp_ok = len(code) == 6 and code.isdigit() and totp.verify(code, valid_window=1)
+        recovery_used = False
+        if not totp_ok:
+            # Try recovery code (>= 8 chars)
+            if len(code) >= 8:
+                codes = user.get("recovery_codes", []) or []
+                matched_idx = None
+                for i, c in enumerate(codes):
+                    if not c.get("used") and c.get("code", "").upper() == code.upper():
+                        matched_idx = i
+                        break
+                if matched_idx is not None:
+                    codes[matched_idx]["used"] = True
+                    codes[matched_idx]["used_at"] = now_iso()
+                    await db.users.update_one({"id": user["id"]}, {"$set": {"recovery_codes": codes}})
+                    recovery_used = True
+                    totp_ok = True
+            if not totp_ok:
+                raise HTTPException(status_code=401, detail="Invalid 2FA code")
+        token = create_access_token(user["id"], user["email"], user["role"])
+        user.pop("password_hash", None); user.pop("_id", None); user.pop("totp_secret", None); user.pop("recovery_codes", None); user.pop("totp_pending_secret", None)
+        resp = {"user": user, "token": token}
+        if recovery_used: resp["recovery_used"] = True
+        return resp
     token = create_access_token(user["id"], user["email"], user["role"])
     user.pop("password_hash", None); user.pop("_id", None); user.pop("totp_secret", None)
     return {"user": user, "token": token}
@@ -387,12 +421,32 @@ async def twofa_enable(req: TwoFAVerify, user: dict = Depends(get_current_user))
     totp = pyotp.TOTP(secret)
     if not totp.verify(req.code, valid_window=1):
         raise HTTPException(status_code=400, detail="Invalid 2FA code")
+    # Generate 8 recovery codes
+    recovery = [{"code": secrets.token_urlsafe(8).replace("_", "").replace("-", "")[:10].upper(), "used": False} for _ in range(8)]
     await db.users.update_one({"id": user["id"]}, {
-        "$set": {"totp_secret": secret, "totp_enabled": True},
+        "$set": {"totp_secret": secret, "totp_enabled": True, "recovery_codes": recovery},
         "$unset": {"totp_pending_secret": ""},
     })
     await log_event(user, "2fa.enabled", "user", user["id"])
-    return {"enabled": True}
+    return {"enabled": True, "recovery_codes": [r["code"] for r in recovery]}
+
+@api.post("/auth/2fa/regenerate-recovery")
+async def twofa_regen_recovery(req: TwoFAVerify, user: dict = Depends(get_current_user)):
+    u = await db.users.find_one({"id": user["id"]})
+    if not u.get("totp_enabled"):
+        raise HTTPException(status_code=400, detail="2FA not enabled")
+    totp = pyotp.TOTP(u["totp_secret"])
+    if not totp.verify(req.code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Invalid 2FA code")
+    recovery = [{"code": secrets.token_urlsafe(8).replace("_", "").replace("-", "")[:10].upper(), "used": False} for _ in range(8)]
+    await db.users.update_one({"id": user["id"]}, {"$set": {"recovery_codes": recovery}})
+    return {"recovery_codes": [r["code"] for r in recovery]}
+
+@api.get("/auth/2fa/recovery-status")
+async def twofa_recovery_status(user: dict = Depends(get_current_user)):
+    u = await db.users.find_one({"id": user["id"]}, {"recovery_codes": 1})
+    codes = (u or {}).get("recovery_codes", [])
+    return {"total": len(codes), "unused": sum(1 for c in codes if not c.get("used"))}
 
 @api.post("/auth/2fa/disable")
 async def twofa_disable(req: TwoFAVerify, user: dict = Depends(get_current_user)):
@@ -800,6 +854,161 @@ async def export_parts(request: Request):
             "low_stock": "yes" if stock <= (p.get("reorder_point", 0) or 0) else "no",
         })
     return _csv_response(rows, ["sku","name","category","supplier","supplier_email","stock","reorder_point","unit_cost","inventory_value","low_stock"], "parts-inventory.csv")
+
+# --- Drivers ---
+@api.get("/drivers")
+async def list_drivers(user: dict = Depends(get_current_user)):
+    return await db.drivers.find(ws_filter(user), {"_id": 0}).sort("name", 1).to_list(1000)
+
+@api.post("/drivers")
+async def create_driver(d: dict, user: dict = Depends(get_current_user)):
+    # Coerce empty-string email to None before Pydantic validation
+    if isinstance(d.get("email"), str) and not d["email"].strip():
+        d["email"] = None
+    driver = DriverIn(**d)
+    doc = driver.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["workspace_id"] = user["workspace_id"]
+    doc["created_at"] = now_iso()
+    await db.drivers.insert_one(doc)
+    await log_event(user, "driver.created", "driver", doc["id"], {"name": doc["name"]})
+    doc.pop("_id", None)
+    return doc
+
+@api.get("/drivers/{did}")
+async def get_driver(did: str, user: dict = Depends(get_current_user)):
+    d = await db.drivers.find_one(ws_filter(user, {"id": did}), {"_id": 0})
+    if not d: raise HTTPException(status_code=404, detail="Not found")
+    return d
+
+@api.patch("/drivers/{did}")
+async def update_driver(did: str, patch: dict, user: dict = Depends(get_current_user)):
+    patch.pop("id", None); patch.pop("_id", None); patch.pop("workspace_id", None)
+    await db.drivers.update_one(ws_filter(user, {"id": did}), {"$set": patch})
+    return await db.drivers.find_one(ws_filter(user, {"id": did}), {"_id": 0})
+
+@api.delete("/drivers/{did}")
+async def delete_driver(did: str, user: dict = Depends(get_current_user)):
+    await db.drivers.delete_one(ws_filter(user, {"id": did}))
+    return {"ok": True}
+
+@api.get("/drivers/{did}/history")
+async def driver_history(did: str, user: dict = Depends(get_current_user)):
+    d = await db.drivers.find_one(ws_filter(user, {"id": did}), {"_id": 0})
+    if not d: raise HTTPException(status_code=404, detail="Not found")
+    if not d.get("assigned_vehicle_id"):
+        return {"driver": d, "vehicle": None, "inspections": [], "maintenance": [], "total_cost": 0}
+    vehicle = await db.vehicles.find_one(ws_filter(user, {"id": d["assigned_vehicle_id"]}), {"_id": 0})
+    inspections = await db.inspections.find(ws_filter(user, {"vehicle_id": d["assigned_vehicle_id"]}), {"_id": 0}).sort("created_at", -1).to_list(200)
+    maint = await db.maintenance.find(ws_filter(user, {"vehicle_id": d["assigned_vehicle_id"]}), {"_id": 0}).sort("created_at", -1).to_list(200)
+    total = sum(m.get("actual_cost", 0) or 0 for m in maint if m.get("status") == "completed")
+    return {"driver": d, "vehicle": vehicle, "inspections": inspections, "maintenance": maint, "total_cost": round(total, 2)}
+
+# --- Investigation panel ---
+@api.get("/investigate/{kpi_key}")
+async def investigate(kpi_key: str, user: dict = Depends(get_current_user)):
+    vehicles = await db.vehicles.find(ws_filter(user), {"_id": 0}).to_list(1000)
+    maint = await db.maintenance.find(ws_filter(user), {"_id": 0}).to_list(2000)
+    vmap = {v["id"]: v for v in vehicles}
+    def vname(vid): return vmap.get(vid, {}).get("name", "?")
+    def vplate(vid): return vmap.get(vid, {}).get("plate", "")
+    completed = [m for m in maint if m.get("status") == "completed"]
+    if kpi_key == "total_maintenance_cost":
+        rows = [{
+            "vehicle": vname(m["vehicle_id"]), "plate": vplate(m["vehicle_id"]),
+            "title": m["title"], "cost": round(m.get("actual_cost", 0) or 0, 2),
+            "priority": m.get("priority", ""), "date": (m.get("completed_at") or m.get("created_at") or "")[:10],
+        } for m in completed]
+        rows.sort(key=lambda x: x["cost"], reverse=True)
+        total = sum(r["cost"] for r in rows)
+        return {"title": "Total maintenance cost", "total": total, "unit": "$", "columns": ["vehicle","plate","title","cost","priority","date"], "rows": rows[:200]}
+    if kpi_key == "cost_per_vehicle":
+        by = {}
+        for m in completed:
+            by.setdefault(m["vehicle_id"], 0)
+            by[m["vehicle_id"]] += m.get("actual_cost", 0) or 0
+        rows = [{"vehicle": vname(vid), "plate": vplate(vid), "cost": round(c, 2), "jobs": sum(1 for m in completed if m["vehicle_id"] == vid)} for vid, c in by.items()]
+        rows.sort(key=lambda x: x["cost"], reverse=True)
+        avg = round(sum(r["cost"] for r in rows) / len(vehicles), 2) if vehicles else 0
+        return {"title": "Cost per vehicle", "total": avg, "unit": "$ avg", "columns": ["vehicle","plate","cost","jobs"], "rows": rows}
+    if kpi_key == "pending_jobs":
+        pend = [m for m in maint if m.get("status") in ("pending", "in_progress")]
+        rows = [{"vehicle": vname(m["vehicle_id"]), "plate": vplate(m["vehicle_id"]),
+                 "title": m["title"], "status": m["status"], "priority": m.get("priority", ""),
+                 "estimated_cost": round(m.get("estimated_cost", 0) or 0, 2),
+                 "created": (m.get("created_at") or "")[:10]} for m in pend]
+        return {"title": "Pending jobs", "total": len(rows), "unit": "jobs", "columns": ["vehicle","plate","title","status","priority","estimated_cost","created"], "rows": rows}
+    if kpi_key == "completed_jobs":
+        rows = [{"vehicle": vname(m["vehicle_id"]), "plate": vplate(m["vehicle_id"]),
+                 "title": m["title"], "cost": round(m.get("actual_cost", 0) or 0, 2),
+                 "downtime": m.get("downtime_hours", 0), "completed": (m.get("completed_at") or "")[:10]} for m in completed]
+        rows.sort(key=lambda x: x["completed"] or "", reverse=True)
+        return {"title": "Completed jobs", "total": len(rows), "unit": "jobs", "columns": ["vehicle","plate","title","cost","downtime","completed"], "rows": rows}
+    if kpi_key == "total_vehicles":
+        rows = [{"name": v["name"], "plate": v["plate"], "make": v.get("make", ""), "model": v.get("model", ""), "status": v.get("status", ""), "odometer": v.get("odometer", 0)} for v in vehicles]
+        return {"title": "Fleet vehicles", "total": len(rows), "unit": "vehicles", "columns": ["name","plate","make","model","status","odometer"], "rows": rows}
+    if kpi_key == "downtime":
+        rows = [{"vehicle": vname(m["vehicle_id"]), "plate": vplate(m["vehicle_id"]),
+                 "title": m["title"], "downtime_hours": m.get("downtime_hours", 0),
+                 "completed": (m.get("completed_at") or "")[:10]} for m in completed if (m.get("downtime_hours") or 0) > 0]
+        rows.sort(key=lambda x: x["downtime_hours"], reverse=True)
+        total = sum(r["downtime_hours"] for r in rows)
+        return {"title": "Downtime hours", "total": total, "unit": "h", "columns": ["vehicle","plate","title","downtime_hours","completed"], "rows": rows}
+    if kpi_key == "fuel_cost":
+        rows = [{"vehicle": v["name"], "plate": v["plate"], "odometer_km": v.get("odometer", 0),
+                 "fuel_rate": v.get("fuel_cost_per_km", 0),
+                 "fuel_cost": round((v.get("odometer", 0) or 0) * (v.get("fuel_cost_per_km", 0) or 0), 2)} for v in vehicles]
+        rows.sort(key=lambda x: x["fuel_cost"], reverse=True)
+        total = sum(r["fuel_cost"] for r in rows)
+        return {"title": "Fuel cost (lifetime)", "total": total, "unit": "$", "columns": ["vehicle","plate","odometer_km","fuel_rate","fuel_cost"], "rows": rows}
+    if kpi_key == "utilization":
+        rows = [{"vehicle": v["name"], "plate": v["plate"], "status": v.get("status", ""), "odometer": v.get("odometer", 0)} for v in vehicles]
+        active = sum(1 for v in vehicles if v.get("status") == "active")
+        return {"title": "Fleet utilization", "total": round(active / len(vehicles) * 100 if vehicles else 0, 1), "unit": "%", "columns": ["vehicle","plate","status","odometer"], "rows": rows}
+    raise HTTPException(status_code=404, detail="Unknown KPI key")
+
+# --- Insurance / Public share link ---
+@api.post("/vehicles/{vid}/share")
+async def create_share_link(vid: str, user: dict = Depends(get_current_user)):
+    v = await db.vehicles.find_one(ws_filter(user, {"id": vid}), {"_id": 0})
+    if not v: raise HTTPException(status_code=404, detail="Not found")
+    if not v.get("share_token"):
+        token = secrets.token_urlsafe(24)
+        await db.vehicles.update_one(ws_filter(user, {"id": vid}), {"$set": {"share_token": token, "share_created_at": now_iso()}})
+    else:
+        token = v["share_token"]
+    await log_event(user, "vehicle.shared", "vehicle", vid, {"plate": v.get("plate")})
+    return {"token": token, "url": f"/public/vehicle/{token}"}
+
+@api.delete("/vehicles/{vid}/share")
+async def revoke_share_link(vid: str, user: dict = Depends(get_current_user)):
+    await db.vehicles.update_one(ws_filter(user, {"id": vid}), {"$unset": {"share_token": "", "share_created_at": ""}})
+    return {"ok": True}
+
+@api.get("/public/vehicle/{token}")
+async def public_vehicle(token: str):
+    v = await db.vehicles.find_one({"share_token": token}, {"_id": 0, "share_token": 0, "workspace_id": 0})
+    if not v: raise HTTPException(status_code=404, detail="Not found or link revoked")
+    workspace_id = (await db.vehicles.find_one({"share_token": token}, {"workspace_id": 1}))["workspace_id"]
+    workspace = await db.workspaces.find_one({"id": workspace_id}, {"_id": 0, "name": 1}) or {"name": "Fleet"}
+    # inspections + safety-relevant maintenance history
+    inspections = await db.inspections.find({"vehicle_id": v["id"]}, {"_id": 0, "workspace_id": 0, "inspector_id": 0}).sort("created_at", -1).to_list(50)
+    # strip photos to keep payload lean
+    for insp in inspections:
+        insp["answers"] = [{k: vv for k, vv in a.items() if k != "photo"} for a in insp.get("answers", [])]
+    maint = await db.maintenance.find({"vehicle_id": v["id"], "status": "completed"}, {"_id": 0, "workspace_id": 0}).sort("completed_at", -1).to_list(100)
+    return {
+        "workspace": workspace,
+        "vehicle": v,
+        "inspections": inspections,
+        "maintenance_history": maint,
+        "summary": {
+            "total_inspections": len(inspections),
+            "total_maintenance": len(maint),
+            "total_maintenance_cost": round(sum(m.get("actual_cost", 0) or 0 for m in maint), 2),
+            "recent_fail_count": sum(insp.get("fail_count", 0) or 0 for insp in inspections[:5]),
+        }
+    }
 
 # --- Bulk CSV import ---
 def _parse_csv(text: str) -> list:

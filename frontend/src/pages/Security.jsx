@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { ShieldCheck, ShieldWarning, QrCode, EnvelopeSimple, ClockCounterClockwise } from "@phosphor-icons/react";
+import { ShieldCheck, ShieldWarning, QrCode, EnvelopeSimple, ClockCounterClockwise, Copy, ArrowsClockwise } from "@phosphor-icons/react";
 import { formatApiErrorDetail } from "@/lib/api";
 
 export default function Security() {
@@ -10,8 +10,13 @@ export default function Security() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [digestSending, setDigestSending] = useState(false);
+  const [recoveryCodes, setRecoveryCodes] = useState(null);
+  const [recoveryStatus, setRecoveryStatus] = useState(null);
 
-  const load = () => api.get("/auth/2fa/status").then(r => setStatus(r.data.enabled));
+  const load = () => {
+    api.get("/auth/2fa/status").then(r => setStatus(r.data.enabled));
+    api.get("/auth/2fa/recovery-status").then(r => setRecoveryStatus(r.data)).catch(() => {});
+  };
   useEffect(() => { load(); }, []);
 
   const startSetup = async () => {
@@ -25,11 +30,23 @@ export default function Security() {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post("/auth/2fa/enable", { code });
-      toast.success("Two-factor enabled");
+      const { data } = await api.post("/auth/2fa/enable", { code });
+      setRecoveryCodes(data.recovery_codes);
+      toast.success("Two-factor enabled — save your recovery codes!");
       setSetup(null); setCode(""); load();
     } catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
     finally { setBusy(false); }
+  };
+
+  const regenerateRecovery = async () => {
+    const c = window.prompt("Enter current 6-digit code to regenerate recovery codes:");
+    if (!c) return;
+    try {
+      const { data } = await api.post("/auth/2fa/regenerate-recovery", { code: c });
+      setRecoveryCodes(data.recovery_codes);
+      toast.success("New recovery codes generated");
+      load();
+    } catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
   };
 
   const disable = async () => {
@@ -98,9 +115,35 @@ export default function Security() {
           {status && (
             <div className="mt-4 space-y-2">
               <div className="text-sm text-muted-foreground">2FA is active. You'll need a 6-digit code on every login.</div>
+              {recoveryStatus && (
+                <div className="text-xs mt-2 border border-border p-3 bg-[#0b0b0d]">
+                  <div className="flex items-center justify-between">
+                    <div><span className="mono text-primary">{recoveryStatus.unused}</span> of <span className="mono">{recoveryStatus.total}</span> recovery codes remaining</div>
+                    <button onClick={regenerateRecovery} className="text-xs uppercase tracking-widest text-primary hover:text-white flex items-center gap-1" data-testid="regen-recovery">
+                      <ArrowsClockwise size={12} /> Regenerate
+                    </button>
+                  </div>
+                </div>
+              )}
               <button onClick={disable} data-testid="disable-2fa" className="border border-border px-4 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
                 Disable 2FA
               </button>
+            </div>
+          )}
+          {recoveryCodes && (
+            <div className="mt-4 border-2 border-primary bg-primary/10 p-4" data-testid="recovery-codes">
+              <div className="flex items-center justify-between mb-3">
+                <div className="overline text-primary">Your recovery codes · save now</div>
+                <button onClick={() => {
+                  navigator.clipboard.writeText(recoveryCodes.join("\n"));
+                  toast.success("Recovery codes copied");
+                }} className="flex items-center gap-1 text-xs uppercase tracking-widest text-primary hover:text-white" data-testid="copy-recovery"><Copy size={12} /> Copy all</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mono text-sm">
+                {recoveryCodes.map(c => <div key={c} className="bg-[#0b0b0d] border border-primary/40 p-2 text-center tracking-widest">{c}</div>)}
+              </div>
+              <div className="text-xs text-muted-foreground mt-3">Each code works exactly once during login when you don't have your authenticator. Store them somewhere safe — we can't show them again.</div>
+              <button onClick={() => setRecoveryCodes(null)} className="mt-3 text-xs uppercase tracking-widest text-white/60 hover:text-white">I've saved them ✓</button>
             </div>
           )}
         </div>

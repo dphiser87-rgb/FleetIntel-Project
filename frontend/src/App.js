@@ -18,6 +18,8 @@ import InspectionReport from "@/pages/InspectionReport";
 import Team from "@/pages/Team";
 import AuditLog from "@/pages/AuditLog";
 import Security from "@/pages/Security";
+import Drivers from "@/pages/Drivers";
+import PublicVehicle from "@/pages/PublicVehicle";
 
 const Protected = ({ children }) => {
   const { user, loading } = useAuth();
@@ -39,6 +41,7 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/public/vehicle/:token" element={<PublicVehicle />} />
             <Route path="/" element={<Protected><Layout /></Protected>}>
               <Route index element={<Dashboard />} />
               <Route path="fleet" element={<Fleet />} />
@@ -50,6 +53,7 @@ function App() {
               <Route path="inspections/:id" element={<InspectionReport />} />
               <Route path="maintenance" element={<Maintenance />} />
               <Route path="parts" element={<Parts />} />
+              <Route path="drivers" element={<Drivers />} />
               <Route path="team" element={<Team />} />
               <Route path="audit" element={<AuditLog />} />
               <Route path="security" element={<Security />} />

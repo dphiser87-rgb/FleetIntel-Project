@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "@/lib/api";
-import { CaretLeft, ClipboardText, Wrench } from "@phosphor-icons/react";
+import { CaretLeft, ClipboardText, Wrench, ShareNetwork, Copy, X as XIcon } from "@phosphor-icons/react";
+import { toast } from "sonner";
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
@@ -10,6 +11,8 @@ export default function VehicleDetail() {
   const [v, setV] = useState(null);
   const [insp, setInsp] = useState([]);
   const [maint, setMaint] = useState([]);
+  const [shareUrl, setShareUrl] = useState(null);
+  const [showShare, setShowShare] = useState(false);
 
   useEffect(() => {
     api.get(`/vehicles/${id}`).then(r => setV(r.data));
@@ -31,6 +34,13 @@ export default function VehicleDetail() {
             <div className="text-sm text-muted-foreground mt-2">{v.year} · {v.make} {v.model} · {v.type}</div>
           </div>
           <div className="flex gap-2">
+            <button onClick={async () => {
+              const { data } = await api.post(`/vehicles/${v.id}/share`);
+              const url = window.location.origin + data.url;
+              setShareUrl(url); setShowShare(true);
+            }} data-testid="share-vehicle-btn" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
+              <ShareNetwork size={14} /> Share for insurance
+            </button>
             <Link to={`/inspection/${v.id}`} className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid="run-inspection-btn">
               <ClipboardText size={14}/> Run inspection
             </Link>
@@ -93,6 +103,34 @@ export default function VehicleDetail() {
           </div>
         </div>
       </div>
+      {showShare && shareUrl && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6" onClick={() => setShowShare(false)}>
+          <div className="bg-[#121214] border border-border max-w-lg w-full p-6" onClick={(e) => e.stopPropagation()} data-testid="share-modal">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <div className="overline">Insurance & compliance</div>
+                <h3 className="font-display font-bold text-2xl mt-1">Read-only public link</h3>
+              </div>
+              <button onClick={() => setShowShare(false)} className="text-muted-foreground hover:text-primary"><XIcon size={20} /></button>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">Anyone with this link can view this vehicle's inspection & maintenance history. No login required. Revoke anytime.</p>
+            <div className="flex gap-2">
+              <input readOnly value={shareUrl} data-testid="share-url" className="flex-1 bg-[#0b0b0d] border border-border px-3 py-2.5 text-xs mono focus:border-primary focus:outline-none" />
+              <button onClick={() => { navigator.clipboard.writeText(shareUrl); toast.success("Link copied"); }} data-testid="copy-share" className="flex items-center gap-1 bg-primary text-primary-foreground px-3 py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">
+                <Copy size={12} /> Copy
+              </button>
+            </div>
+            <div className="flex gap-2 mt-3">
+              <a href={shareUrl} target="_blank" rel="noreferrer" className="flex-1 text-center border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid="open-share">Open in new tab</a>
+              <button onClick={async () => {
+                await api.delete(`/vehicles/${v.id}/share`);
+                toast.success("Link revoked");
+                setShowShare(false); setShareUrl(null);
+              }} data-testid="revoke-share" className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">Revoke</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

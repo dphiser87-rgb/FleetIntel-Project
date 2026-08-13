@@ -6,20 +6,22 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, Legend, CartesianGrid,
 } from "recharts";
 import { ArrowUpRight, TrendUp, Wrench, Truck, ClockCounterClockwise, GasPump, CurrencyDollar, Warning, Package, Crosshair } from "@phosphor-icons/react";
+import InvestigationPanel from "@/components/InvestigationPanel";
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 const COLORS = ["#FF3B30", "#34C759", "#FFCC00", "#3B82F6", "#A855F7"];
 
-const KPI = ({ label, value, icon: Icon, sub, testId }) => (
-  <div className="bg-[#121214] border border-border p-6 hover:border-primary/60 transition-colors" data-testid={testId}>
+const KPI = ({ label, value, icon: Icon, sub, testId, onClick }) => (
+  <button type="button" onClick={onClick} disabled={!onClick} className={`text-left bg-[#121214] border border-border p-6 transition-colors ${onClick ? "hover:border-primary cursor-pointer" : ""}`} data-testid={testId}>
     <div className="flex items-start justify-between">
       <div className="overline">{label}</div>
       {Icon && <Icon size={18} weight="regular" className="text-muted-foreground" />}
     </div>
     <div className="mono text-3xl font-bold mt-4 tracking-tight">{value}</div>
     {sub && <div className="text-xs text-muted-foreground mt-2">{sub}</div>}
-  </div>
+    {onClick && <div className="overline mt-3 text-primary">Investigate →</div>}
+  </button>
 );
 
 export default function Dashboard() {
@@ -46,6 +48,7 @@ export default function Dashboard() {
   }, []);
 
   const nextForecast = forecast.forecast[0];
+  const [investigate, setInvestigate] = useState(null);
 
   return (
     <div className="noise-bg min-h-screen">
@@ -112,14 +115,14 @@ export default function Dashboard() {
           </div>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0 border border-border grid-borders" data-testid="kpi-grid">
-          <KPI label="Total vehicles" value={kpi?.total_vehicles ?? "—"} icon={Truck} sub={`${kpi?.active ?? 0} active · ${kpi?.in_maintenance ?? 0} in maint`} testId="kpi-total-vehicles" />
-          <KPI label="Maintenance cost" value={money(kpi?.total_maintenance_cost)} icon={Wrench} sub={`Parts ${money(kpi?.total_parts_cost)} + labor ${money(kpi?.total_labor_cost)}`} testId="kpi-maint-cost" />
-          <KPI label="Cost per vehicle" value={money(kpi?.cost_per_vehicle)} icon={CurrencyDollar} sub="Lifetime average" testId="kpi-cost-per-vehicle" />
-          <KPI label="Downtime" value={`${kpi?.total_downtime_hours ?? 0}h`} icon={ClockCounterClockwise} sub="Completed jobs" testId="kpi-downtime" />
-          <KPI label="Fleet utilization" value={`${kpi?.utilization_pct ?? 0}%`} icon={TrendUp} sub={`${kpi?.active ?? 0} of ${kpi?.total_vehicles ?? 0} active`} testId="kpi-utilization" />
-          <KPI label="Fuel cost (lifetime)" value={money(kpi?.total_fuel_cost)} icon={GasPump} sub={`${(kpi?.total_km ?? 0).toLocaleString()} km driven`} testId="kpi-fuel" />
-          <KPI label="Pending jobs" value={kpi?.pending_jobs ?? 0} icon={Warning} sub="Requires action" testId="kpi-pending" />
-          <KPI label="Completed jobs" value={kpi?.completed_jobs ?? 0} icon={ArrowUpRight} sub="All time" testId="kpi-completed" />
+          <KPI label="Total vehicles" value={kpi?.total_vehicles ?? "—"} icon={Truck} sub={`${kpi?.active ?? 0} active · ${kpi?.in_maintenance ?? 0} in maint`} testId="kpi-total-vehicles" onClick={() => setInvestigate("total_vehicles")} />
+          <KPI label="Maintenance cost" value={money(kpi?.total_maintenance_cost)} icon={Wrench} sub={`Parts ${money(kpi?.total_parts_cost)} + labor ${money(kpi?.total_labor_cost)}`} testId="kpi-maint-cost" onClick={() => setInvestigate("total_maintenance_cost")} />
+          <KPI label="Cost per vehicle" value={money(kpi?.cost_per_vehicle)} icon={CurrencyDollar} sub="Lifetime average" testId="kpi-cost-per-vehicle" onClick={() => setInvestigate("cost_per_vehicle")} />
+          <KPI label="Downtime" value={`${kpi?.total_downtime_hours ?? 0}h`} icon={ClockCounterClockwise} sub="Completed jobs" testId="kpi-downtime" onClick={() => setInvestigate("downtime")} />
+          <KPI label="Fleet utilization" value={`${kpi?.utilization_pct ?? 0}%`} icon={TrendUp} sub={`${kpi?.active ?? 0} of ${kpi?.total_vehicles ?? 0} active`} testId="kpi-utilization" onClick={() => setInvestigate("utilization")} />
+          <KPI label="Fuel cost (lifetime)" value={money(kpi?.total_fuel_cost)} icon={GasPump} sub={`${(kpi?.total_km ?? 0).toLocaleString()} km driven`} testId="kpi-fuel" onClick={() => setInvestigate("fuel_cost")} />
+          <KPI label="Pending jobs" value={kpi?.pending_jobs ?? 0} icon={Warning} sub="Requires action" testId="kpi-pending" onClick={() => setInvestigate("pending_jobs")} />
+          <KPI label="Completed jobs" value={kpi?.completed_jobs ?? 0} icon={ArrowUpRight} sub="All time" testId="kpi-completed" onClick={() => setInvestigate("completed_jobs")} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -198,6 +201,7 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+      <InvestigationPanel kpiKey={investigate} onClose={() => setInvestigate(null)} />
     </div>
   );
 }
