@@ -5,24 +5,52 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell, Legend, CartesianGrid,
 } from "recharts";
-import { ArrowUpRight, TrendUp, Wrench, Truck, ClockCounterClockwise, GasPump, CurrencyDollar, Warning, Package, Crosshair } from "@phosphor-icons/react";
+import { ArrowUpRight, TrendUp, Wrench, Truck, ClockCounterClockwise, GasPump, CurrencyDollar, Warning, Package, Crosshair, Bell, Gear, Plus, X as XIcon } from "@phosphor-icons/react";
 import InvestigationPanel from "@/components/InvestigationPanel";
+import { RadialBarChart, RadialBar, PolarAngleAxis } from "recharts";
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
-const COLORS = ["#FF3B30", "#34C759", "#FFCC00", "#3B82F6", "#A855F7"];
+const COLORS = ["#34C759", "#FF3B30", "#FFCC00", "#3B82F6", "#A855F7"];
 
-const KPI = ({ label, value, icon: Icon, sub, testId, onClick }) => (
-  <button type="button" onClick={onClick} disabled={!onClick} className={`text-left bg-[#121214] border border-border p-6 transition-colors ${onClick ? "hover:border-primary cursor-pointer" : ""}`} data-testid={testId}>
-    <div className="flex items-start justify-between">
-      <div className="overline">{label}</div>
-      {Icon && <Icon size={18} weight="regular" className="text-muted-foreground" />}
-    </div>
-    <div className="mono text-3xl font-bold mt-4 tracking-tight">{value}</div>
-    {sub && <div className="text-xs text-muted-foreground mt-2">{sub}</div>}
-    {onClick && <div className="overline mt-3 text-primary">Investigate →</div>}
-  </button>
-);
+const ALL_TILES = [
+  { key: "total_vehicles", label: "Total vehicles", icon: Truck, get: k => k?.total_vehicles ?? 0, sub: k => `${k?.active ?? 0} active · ${k?.in_maintenance ?? 0} in maint`, max: k => k?.total_vehicles ?? 10, higher_better: true },
+  { key: "total_maintenance_cost", label: "Maintenance cost", icon: Wrench, get: k => k?.total_maintenance_cost ?? 0, sub: k => `Parts ${money(k?.total_parts_cost)} + labor ${money(k?.total_labor_cost)}`, max: () => 10000, money: true, higher_better: false },
+  { key: "cost_per_vehicle", label: "Cost per vehicle", icon: CurrencyDollar, get: k => k?.cost_per_vehicle ?? 0, sub: () => "Lifetime average", max: () => 2000, money: true, higher_better: false },
+  { key: "downtime", label: "Downtime", icon: ClockCounterClockwise, get: k => k?.total_downtime_hours ?? 0, sub: () => "Completed jobs", suffix: "h", max: () => 100, higher_better: false },
+  { key: "utilization", label: "Fleet utilization", icon: TrendUp, get: k => k?.utilization_pct ?? 0, sub: k => `${k?.active ?? 0} of ${k?.total_vehicles ?? 0} active`, suffix: "%", max: () => 100, higher_better: true },
+  { key: "fuel_cost", label: "Fuel cost (lifetime)", icon: GasPump, get: k => k?.total_fuel_cost ?? 0, sub: k => `${(k?.total_km ?? 0).toLocaleString()} km driven`, max: () => 500000, money: true, higher_better: false },
+  { key: "pending_jobs", label: "Pending jobs", icon: Warning, get: k => k?.pending_jobs ?? 0, sub: () => "Requires action", max: () => 10, higher_better: false },
+  { key: "completed_jobs", label: "Completed jobs", icon: ArrowUpRight, get: k => k?.completed_jobs ?? 0, sub: () => "All time", max: () => 20, higher_better: true },
+];
+
+const DEFAULT_TILES = ["total_vehicles", "total_maintenance_cost", "cost_per_vehicle", "downtime", "utilization", "fuel_cost", "pending_jobs", "completed_jobs"];
+
+const GaugeTile = ({ tile, kpi, onClick }) => {
+  const val = tile.get(kpi);
+  const max = tile.max(kpi);
+  const pct = Math.min(100, Math.max(0, (val / max) * 100 || 0));
+  // Color logic: for "higher is better" green when high, red when low; else reverse
+  const color = tile.higher_better ? (pct >= 66 ? "#34C759" : pct >= 33 ? "#FFCC00" : "#FF3B30") : (pct <= 33 ? "#34C759" : pct <= 66 ? "#FFCC00" : "#FF3B30");
+  const display = tile.money ? money(val) : `${typeof val === "number" ? val.toLocaleString() : val}${tile.suffix || ""}`;
+  return (
+    <button type="button" onClick={onClick} className="text-left bg-[#121214] border border-border p-6 hover:border-primary transition-colors" data-testid={`kpi-${tile.key}`}>
+      <div className="flex items-start justify-between">
+        <div className="overline">{tile.label}</div>
+        <tile.icon size={18} className="text-muted-foreground" />
+      </div>
+      <div className="mono text-2xl font-bold mt-3">{display}</div>
+      <div className="mt-3 relative flex items-center justify-center" style={{ height: 90 }}>
+        <RadialBarChart width={140} height={90} innerRadius={38} outerRadius={55} data={[{ v: pct }]} startAngle={180} endAngle={0}>
+          <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
+          <RadialBar dataKey="v" cornerRadius={4} fill={color} background={{ fill: "#27272a" }} />
+        </RadialBarChart>
+      </div>
+      <div className="text-xs text-muted-foreground">{tile.sub(kpi)}</div>
+      <div className="overline mt-2 text-primary">Investigate →</div>
+    </button>
+  );
+};
 
 export default function Dashboard() {
   const [kpi, setKpi] = useState(null);
@@ -49,16 +77,45 @@ export default function Dashboard() {
 
   const nextForecast = forecast.forecast[0];
   const [investigate, setInvestigate] = useState(null);
+  const [liveAlerts, setLiveAlerts] = useState(null);
+  const [showConfig, setShowConfig] = useState(false);
+  const [tileKeys, setTileKeys] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("fleetintel_tiles") || "null") || DEFAULT_TILES; }
+    catch { return DEFAULT_TILES; }
+  });
+  const saveTiles = (keys) => { setTileKeys(keys); localStorage.setItem("fleetintel_tiles", JSON.stringify(keys)); };
+  const activeTiles = ALL_TILES.filter(t => tileKeys.includes(t.key));
+
+  useEffect(() => { api.get("/alerts").then(r => setLiveAlerts(r.data)).catch(() => {}); }, []);
 
   return (
     <div className="noise-bg min-h-screen">
+      {liveAlerts && (liveAlerts.total > 0) && (
+        <div className="bg-[#0b0b0d] border-b border-border px-8 py-3 flex items-center gap-6 flex-wrap" data-testid="live-alerts-bar">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+            <span className="text-xs uppercase tracking-widest text-primary font-bold">Live alerts</span>
+          </div>
+          <div className="text-sm"><span className="text-primary font-bold mono">{liveAlerts.critical}</span> <span className="text-muted-foreground">critical</span> · <span className="text-[#FFCC00] font-bold mono">{liveAlerts.warnings}</span> <span className="text-muted-foreground">warnings</span> · <span className="mono">{liveAlerts.total}</span> total</div>
+          <div className="flex items-center gap-3 ml-auto flex-wrap">
+            {Object.entries(liveAlerts.buckets).filter(([, n]) => n > 0).map(([k, n]) => (
+              <div key={k} className="flex items-center gap-1 text-xs" data-testid={`bucket-${k}`}>
+                <span className="mono text-primary font-bold">{n}</span>
+                <span className="text-muted-foreground">{k.replace(/_/g, " ")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <header className="border-b border-border px-8 py-6 flex items-end justify-between">
         <div>
           <div className="overline">Command center</div>
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="dashboard-title">Fleet Operations</h1>
         </div>
         <div className="flex gap-2">
-          <Link to="/fleet" className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors" data-testid="link-fleet">View fleet</Link>
+          <button onClick={() => setShowConfig(true)} data-testid="configure-tiles" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
+            <Gear size={14} /> Configure tiles
+          </button>
           <Link to="/maintenance" className="bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors" data-testid="link-maintenance">Maintenance board</Link>
         </div>
       </header>
@@ -114,15 +171,10 @@ export default function Dashboard() {
             <Link to="/reports" className="overline hover:text-primary">See full forecast →</Link>
           </div>
         )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0 border border-border grid-borders" data-testid="kpi-grid">
-          <KPI label="Total vehicles" value={kpi?.total_vehicles ?? "—"} icon={Truck} sub={`${kpi?.active ?? 0} active · ${kpi?.in_maintenance ?? 0} in maint`} testId="kpi-total-vehicles" onClick={() => setInvestigate("total_vehicles")} />
-          <KPI label="Maintenance cost" value={money(kpi?.total_maintenance_cost)} icon={Wrench} sub={`Parts ${money(kpi?.total_parts_cost)} + labor ${money(kpi?.total_labor_cost)}`} testId="kpi-maint-cost" onClick={() => setInvestigate("total_maintenance_cost")} />
-          <KPI label="Cost per vehicle" value={money(kpi?.cost_per_vehicle)} icon={CurrencyDollar} sub="Lifetime average" testId="kpi-cost-per-vehicle" onClick={() => setInvestigate("cost_per_vehicle")} />
-          <KPI label="Downtime" value={`${kpi?.total_downtime_hours ?? 0}h`} icon={ClockCounterClockwise} sub="Completed jobs" testId="kpi-downtime" onClick={() => setInvestigate("downtime")} />
-          <KPI label="Fleet utilization" value={`${kpi?.utilization_pct ?? 0}%`} icon={TrendUp} sub={`${kpi?.active ?? 0} of ${kpi?.total_vehicles ?? 0} active`} testId="kpi-utilization" onClick={() => setInvestigate("utilization")} />
-          <KPI label="Fuel cost (lifetime)" value={money(kpi?.total_fuel_cost)} icon={GasPump} sub={`${(kpi?.total_km ?? 0).toLocaleString()} km driven`} testId="kpi-fuel" onClick={() => setInvestigate("fuel_cost")} />
-          <KPI label="Pending jobs" value={kpi?.pending_jobs ?? 0} icon={Warning} sub="Requires action" testId="kpi-pending" onClick={() => setInvestigate("pending_jobs")} />
-          <KPI label="Completed jobs" value={kpi?.completed_jobs ?? 0} icon={ArrowUpRight} sub="All time" testId="kpi-completed" onClick={() => setInvestigate("completed_jobs")} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="kpi-grid">
+          {activeTiles.map(t => (
+            <GaugeTile key={t.key} tile={t} kpi={kpi} onClick={() => setInvestigate(t.key === "total_maintenance_cost" ? "total_maintenance_cost" : t.key)} />
+          ))}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -202,6 +254,38 @@ export default function Dashboard() {
         </div>
       </div>
       <InvestigationPanel kpiKey={investigate} onClose={() => setInvestigate(null)} />
+      {showConfig && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6" onClick={() => setShowConfig(false)}>
+          <div className="bg-[#121214] border border-border max-w-lg w-full p-6" onClick={(e) => e.stopPropagation()} data-testid="tile-config">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <div className="overline">Tile configuration</div>
+                <h3 className="font-display font-bold text-2xl mt-1">Choose your KPIs</h3>
+              </div>
+              <button onClick={() => setShowConfig(false)} className="text-muted-foreground hover:text-primary"><XIcon size={20} /></button>
+            </div>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {ALL_TILES.map(t => {
+                const on = tileKeys.includes(t.key);
+                return (
+                  <label key={t.key} className={`flex items-center gap-3 border p-3 cursor-pointer ${on ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`} data-testid={`tile-toggle-${t.key}`}>
+                    <input type="checkbox" checked={on} onChange={(e) => saveTiles(e.target.checked ? [...tileKeys, t.key] : tileKeys.filter(k => k !== t.key))} className="accent-primary" />
+                    <t.icon size={18} className="text-muted-foreground" />
+                    <div>
+                      <div className="text-sm">{t.label}</div>
+                      <div className="text-xs text-muted-foreground">{t.higher_better ? "Higher is better" : "Lower is better"}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex gap-2 mt-4 pt-4 border-t border-border">
+              <button onClick={() => saveTiles(DEFAULT_TILES)} className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid="reset-tiles">Reset to default</button>
+              <button onClick={() => setShowConfig(false)} className="ml-auto bg-primary text-primary-foreground px-4 py-2 text-xs uppercase tracking-widest hover:bg-primary/90" data-testid="done-tiles">Done</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

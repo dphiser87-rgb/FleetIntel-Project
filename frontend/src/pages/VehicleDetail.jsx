@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "@/lib/api";
-import { CaretLeft, ClipboardText, Wrench, ShareNetwork, Copy, X as XIcon } from "@phosphor-icons/react";
+import { CaretLeft, ClipboardText, Wrench, ShareNetwork, Copy, X as XIcon, Warning as WarningIcon, ClockCounterClockwise } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -13,12 +13,35 @@ export default function VehicleDetail() {
   const [maint, setMaint] = useState([]);
   const [shareUrl, setShareUrl] = useState(null);
   const [showShare, setShowShare] = useState(false);
+  const [timeline, setTimeline] = useState([]);
+  const [showIncident, setShowIncident] = useState(false);
+  const [incForm, setIncForm] = useState({ kind: "damage", severity: "minor", occurred_at: new Date().toISOString().slice(0, 16), location: "", description: "", reported_cost: 0, photos: [] });
 
   useEffect(() => {
     api.get(`/vehicles/${id}`).then(r => setV(r.data));
     api.get(`/inspections`, { params: { vehicle_id: id } }).then(r => setInsp(r.data));
     api.get(`/maintenance`).then(r => setMaint(r.data.filter(m => m.vehicle_id === id)));
+    api.get(`/vehicles/${id}/timeline`).then(r => setTimeline(r.data));
   }, [id]);
+
+  const submitIncident = async (e) => {
+    e.preventDefault();
+    try {
+      const payload = { ...incForm, vehicle_id: id, occurred_at: new Date(incForm.occurred_at).toISOString(), reported_cost: Number(incForm.reported_cost) || 0 };
+      await api.post("/incidents", payload);
+      toast.success("Incident reported");
+      setShowIncident(false);
+      setIncForm({ kind: "damage", severity: "minor", occurred_at: new Date().toISOString().slice(0, 16), location: "", description: "", reported_cost: 0, photos: [] });
+      const t = await api.get(`/vehicles/${id}/timeline`);
+      setTimeline(t.data);
+    } catch { toast.error("Failed"); }
+  };
+
+  const addPhoto = (file) => {
+    const r = new FileReader();
+    r.onloadend = () => setIncForm(f => ({ ...f, photos: [...f.photos, r.result] }));
+    r.readAsDataURL(file);
+  };
 
   if (!v) return <div className="p-12 text-muted-foreground">Loading vehicle…</div>;
   const totalCost = maint.filter(m => m.status === "completed").reduce((s, m) => s + (m.actual_cost || 0), 0);
@@ -34,6 +57,9 @@ export default function VehicleDetail() {
             <div className="text-sm text-muted-foreground mt-2">{v.year} · {v.make} {v.model} · {v.type}</div>
           </div>
           <div className="flex gap-2">
+            <button onClick={() => setShowIncident(true)} data-testid="report-incident-btn" className="flex items-center gap-2 border border-primary/40 text-primary px-3 py-2 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground">
+              <WarningIcon size={14} weight="bold" /> Report incident
+            </button>
             <button onClick={async () => {
               const { data } = await api.post(`/vehicles/${v.id}/share`);
               const url = window.location.origin + data.url;
@@ -88,6 +114,28 @@ export default function VehicleDetail() {
         </div>
 
         <div className="space-y-6">
+          <div className="bg-[#121214] border border-border p-6" data-testid="vehicle-timeline">
+            <div className="flex items-center gap-2 mb-4">
+              <ClockCounterClockwise size={20} className="text-primary" />
+              <div>
+                <div className="overline">Full history</div>
+                <h3 className="font-display text-xl font-bold">Timeline</h3>
+              </div>
+            </div>
+            <div className="relative space-y-3 max-h-96 overflow-y-auto pr-2">
+              {timeline.map((e, i) => (
+                <div key={i} className="border-l-2 border-primary/40 pl-3">
+                  <div className="overline">{e.type}</div>
+                  <div className="text-sm mt-0.5">{e.title}</div>
+                  {e.by && <div className="text-xs text-muted-foreground mt-1">by {e.by}</div>}
+                  {e.meta?.cost != null && <div className="mono text-xs mt-1">${e.meta.cost.toLocaleString()}</div>}
+                  {e.meta?.description && <div className="text-xs text-muted-foreground mt-1">{e.meta.description}</div>}
+                  <div className="text-[10px] mono text-muted-foreground mt-1">{(e.at || "").slice(0, 16).replace("T", " ")}</div>
+                </div>
+              ))}
+              {timeline.length === 0 && <div className="text-sm text-muted-foreground text-center py-6">No events yet.</div>}
+            </div>
+          </div>
           <div className="bg-[#121214] border border-border p-6">
             <div className="overline">Recent inspections</div>
             <div className="mt-4 space-y-3">
@@ -103,6 +151,65 @@ export default function VehicleDetail() {
           </div>
         </div>
       </div>
+      {showIncident && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6" onClick={() => setShowIncident(false)}>
+          <form onSubmit={submitIncident} className="bg-[#121214] border border-border max-w-lg w-full p-6" onClick={(e) => e.stopPropagation()} data-testid="incident-form">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <div className="overline">Insurance evidence</div>
+                <h3 className="font-display font-bold text-2xl mt-1">Report an incident</h3>
+              </div>
+              <button type="button" onClick={() => setShowIncident(false)} className="text-muted-foreground hover:text-primary"><XIcon size={20} /></button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="overline block mb-1">Kind</label>
+                <select value={incForm.kind} onChange={(e) => setIncForm({...incForm, kind: e.target.value})} data-testid="incident-kind" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                  {["accident","damage","breakdown","citation","other"].map(k => <option key={k}>{k}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="overline block mb-1">Severity</label>
+                <select value={incForm.severity} onChange={(e) => setIncForm({...incForm, severity: e.target.value})} data-testid="incident-severity" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                  {["minor","moderate","severe"].map(k => <option key={k}>{k}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="overline block mb-1">When</label>
+                <input type="datetime-local" value={incForm.occurred_at} onChange={(e) => setIncForm({...incForm, occurred_at: e.target.value})} className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+              </div>
+              <div>
+                <label className="overline block mb-1">Location</label>
+                <input value={incForm.location} onChange={(e) => setIncForm({...incForm, location: e.target.value})} className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+              </div>
+              <div className="col-span-2">
+                <label className="overline block mb-1">Description</label>
+                <textarea required rows={3} value={incForm.description} onChange={(e) => setIncForm({...incForm, description: e.target.value})} data-testid="incident-desc" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+              </div>
+              <div>
+                <label className="overline block mb-1">Estimated cost</label>
+                <input type="number" value={incForm.reported_cost} onChange={(e) => setIncForm({...incForm, reported_cost: e.target.value})} className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+              </div>
+              <div>
+                <label className="overline block mb-1">Photo evidence</label>
+                <label className="cursor-pointer border border-border px-3 py-2 text-xs text-muted-foreground hover:border-primary hover:text-primary block text-center" data-testid="incident-photo">
+                  + Add photo ({incForm.photos.length})
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => e.target.files?.[0] && addPhoto(e.target.files[0])} />
+                </label>
+              </div>
+            </div>
+            {incForm.photos.length > 0 && (
+              <div className="flex gap-2 mt-3 overflow-x-auto">
+                {incForm.photos.map((p, i) => <img key={i} src={p} alt="" className="w-16 h-16 object-cover border border-border" />)}
+              </div>
+            )}
+            <div className="flex gap-2 mt-4 pt-4 border-t border-border">
+              <button type="submit" data-testid="submit-incident" className="bg-primary text-primary-foreground px-4 py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">Report incident</button>
+              <button type="button" onClick={() => setShowIncident(false)} className="border border-border px-4 py-2.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
       {showShare && shareUrl && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6" onClick={() => setShowShare(false)}>
           <div className="bg-[#121214] border border-border max-w-lg w-full p-6" onClick={(e) => e.stopPropagation()} data-testid="share-modal">

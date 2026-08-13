@@ -290,6 +290,7 @@ class InspectionIn(BaseModel):
 class MaintenanceIn(BaseModel):
     vehicle_id: str
     inspection_id: Optional[str] = None
+    driver_id: Optional[str] = None
     title: str
     description: Optional[str] = ""
     priority: Literal["low", "medium", "high", "critical"] = "medium"
@@ -298,6 +299,17 @@ class MaintenanceIn(BaseModel):
     assigned_to: Optional[str] = None  # mechanic user id
     parts_cost: float = 0
     labor_cost: float = 0
+
+class IncidentIn(BaseModel):
+    vehicle_id: str
+    driver_id: Optional[str] = None
+    kind: Literal["accident", "damage", "breakdown", "citation", "other"] = "damage"
+    severity: Literal["minor", "moderate", "severe"] = "minor"
+    occurred_at: str  # ISO datetime
+    location: Optional[str] = ""
+    description: str
+    photos: List[str] = []  # base64 data URLs
+    reported_cost: float = 0
 
 class MaintenanceUpdate(BaseModel):
     status: Optional[Literal["pending", "in_progress", "completed", "cancelled"]] = None
@@ -1009,6 +1021,98 @@ async def public_vehicle(token: str):
             "recent_fail_count": sum(insp.get("fail_count", 0) or 0 for insp in inspections[:5]),
         }
     }
+
+# --- Unified alerts + Timeline + Incidents ---
+@api.get("/alerts")
+async def unified_alerts(user: dict = Depends(get_current_user)):
+    from datetime import datetime as _dt
+    parts = await db.parts.find(ws_filter(user), {"_id": 0}).to_list(1000)
+    low_stock = [p for p in parts if (p.get("stock", 0) or 0) <= (p.get("reorder_point", 0) or 0)]
+    drivers = await db.drivers.find(ws_filter(user), {"_id": 0}).to_list(1000)
+    expiring = []
+    for d in drivers:
+        try:
+            days = (_dt.strptime(d["license_expiry"], "%Y-%m-%d").date() - _dt.now().date()).days
+            if days <= 30:
+                expiring.append({"driver_id": d["id"], "name": d["name"], "days": days, "expiry": d["license_expiry"]})
+        except Exception: pass
+    maint = await db.maintenance.find(ws_filter(user), {"_id": 0}).to_list(1000)
+    pending = [m for m in maint if m.get("status") in ("pending", "in_progress")]
+    critical = [m for m in maint if m.get("priority") == "critical" and m.get("status") != "completed"]
+    incidents = await db.incidents.find(ws_filter(user), {"_id": 0}).sort("occurred_at", -1).to_list(200)
+    open_incidents = [i for i in incidents if i.get("severity") in ("moderate", "severe")]
+    # anomalies (reuse quick logic)
+    completed = [m for m in maint if m.get("status") == "completed"]
+    by_v = {}
+    for m in completed:
+        d = m.get("completed_at") or m.get("created_at") or ""
+        mo = d[:7]
+        if not mo: continue
+        by_v.setdefault(m["vehicle_id"], {}).setdefault(mo, 0)
+        by_v[m["vehicle_id"]][mo] += m.get("actual_cost", 0) or 0
+    anomalies = 0
+    for vid, months in by_v.items():
+        if len(months) < 3: continue
+        vals = [v for _, v in sorted(months.items())]
+        latest = vals[-1]; hist = vals[:-1]
+        mean = sum(hist) / len(hist)
+        std = (sum((x - mean) ** 2 for x in hist) / len(hist)) ** 0.5
+        if std > 0 and latest > mean + 1.5 * std: anomalies += 1
+    critical_count = len(critical) + len(open_incidents) + sum(1 for e in expiring if e["days"] < 0)
+    warning_count = anomalies + len(low_stock) + sum(1 for e in expiring if 0 <= e["days"] <= 30)
+    return {
+        "critical": critical_count,
+        "warnings": warning_count,
+        "total": critical_count + warning_count,
+        "buckets": {
+            "maintenance_critical": len(critical),
+            "cost_anomalies": anomalies,
+            "license_expiring": len(expiring),
+            "pending_jobs": len(pending),
+            "low_stock_parts": len(low_stock),
+            "open_incidents": len(open_incidents),
+        },
+        "details": {
+            "expiring_drivers": expiring[:10],
+            "critical_jobs": [{"id": m["id"], "title": m["title"], "vehicle_id": m["vehicle_id"]} for m in critical[:10]],
+            "open_incidents": [{"id": i["id"], "description": i["description"][:60], "severity": i["severity"], "vehicle_id": i["vehicle_id"]} for i in open_incidents[:10]],
+        }
+    }
+
+@api.get("/vehicles/{vid}/timeline")
+async def vehicle_timeline(vid: str, user: dict = Depends(get_current_user)):
+    events = []
+    async for i in db.inspections.find(ws_filter(user, {"vehicle_id": vid}), {"_id": 0}):
+        events.append({"type": "inspection", "at": i.get("created_at"), "title": f"Inspection · {i.get('fail_count', 0)} failed", "by": i.get("inspector_name"), "meta": {"id": i["id"], "fail_count": i.get("fail_count", 0)}})
+    async for m in db.maintenance.find(ws_filter(user, {"vehicle_id": vid}), {"_id": 0}):
+        events.append({"type": "maintenance", "at": m.get("created_at"), "title": m.get("title", ""), "by": None, "meta": {"id": m["id"], "status": m.get("status"), "cost": m.get("actual_cost") or m.get("estimated_cost") or 0, "priority": m.get("priority")}})
+    async for inc in db.incidents.find(ws_filter(user, {"vehicle_id": vid}), {"_id": 0}):
+        events.append({"type": "incident", "at": inc.get("occurred_at"), "title": f"{inc.get('kind', '').title()} · {inc.get('severity')}", "by": None, "meta": {"id": inc["id"], "description": inc.get("description", "")[:120], "severity": inc.get("severity")}})
+    events.sort(key=lambda e: e["at"] or "", reverse=True)
+    return events
+
+@api.get("/incidents")
+async def list_incidents(vehicle_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    q = ws_filter(user, {"vehicle_id": vehicle_id} if vehicle_id else {})
+    return await db.incidents.find(q, {"_id": 0}).sort("occurred_at", -1).to_list(500)
+
+@api.post("/incidents")
+async def create_incident(inc: IncidentIn, user: dict = Depends(get_current_user)):
+    doc = inc.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["workspace_id"] = user["workspace_id"]
+    doc["reporter_id"] = user["id"]
+    doc["reporter_name"] = user["name"]
+    doc["created_at"] = now_iso()
+    await db.incidents.insert_one(doc)
+    await log_event(user, "incident.reported", "incident", doc["id"], {"kind": doc["kind"], "severity": doc["severity"]})
+    doc.pop("_id", None)
+    return doc
+
+@api.delete("/incidents/{iid}")
+async def delete_incident(iid: str, user: dict = Depends(get_current_user)):
+    await db.incidents.delete_one(ws_filter(user, {"id": iid}))
+    return {"ok": True}
 
 # --- Bulk CSV import ---
 def _parse_csv(text: str) -> list:

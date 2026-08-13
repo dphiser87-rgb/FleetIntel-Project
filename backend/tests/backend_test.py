@@ -241,3 +241,122 @@ class TestTwoFactor:
                 fresh = pyotp.TOTP(secret).now()
                 requests.post(f"{API}/auth/2fa/disable", headers=auth_headers, json={"code": fresh})
         assert not errors, "; ".join(errors)
+
+
+# -------------------------- iteration 4: new features --------------------------
+# Configurable KPI tiles are client-side (localStorage) so covered by UI tests.
+# Backend: /api/alerts, /api/vehicles/{id}/timeline, /api/incidents, driver_id on /api/maintenance
+
+class TestUnifiedAlerts:
+    def test_alerts_shape(self, auth_headers):
+        r = requests.get(f"{API}/alerts", headers=auth_headers)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        for f in ("critical", "warnings", "total", "buckets", "details"):
+            assert f in d, f"missing {f}: {list(d.keys())}"
+        for b in ("maintenance_critical", "cost_anomalies", "license_expiring",
+                  "pending_jobs", "low_stock_parts", "open_incidents"):
+            assert b in d["buckets"], f"missing bucket {b}"
+        assert isinstance(d["critical"], int)
+        assert isinstance(d["warnings"], int)
+
+
+class TestVehicleTimeline:
+    def test_timeline_ok(self, auth_headers):
+        vs = requests.get(f"{API}/vehicles", headers=auth_headers).json()
+        assert vs
+        vid = vs[0]["id"]
+        r = requests.get(f"{API}/vehicles/{vid}/timeline", headers=auth_headers)
+        assert r.status_code == 200, r.text
+        events = r.json()
+        assert isinstance(events, list)
+        # allowed event types when present
+        for e in events:
+            assert e["type"] in ("inspection", "maintenance", "incident"), e
+            assert "at" in e and "title" in e and "meta" in e
+
+
+class TestIncidents:
+    def _vehicle_id(self, headers):
+        return requests.get(f"{API}/vehicles", headers=headers).json()[0]["id"]
+
+    def _driver_id(self, headers):
+        ds = requests.get(f"{API}/drivers", headers=headers).json()
+        return ds[0]["id"] if ds else None
+
+    def test_incident_crud_and_timeline(self, auth_headers):
+        vid = self._vehicle_id(auth_headers)
+        did = self._driver_id(auth_headers)
+        from datetime import datetime
+        payload = {
+            "vehicle_id": vid,
+            "driver_id": did,
+            "kind": "damage",
+            "severity": "moderate",
+            "occurred_at": datetime.utcnow().isoformat(),
+            "location": "TEST_LOC",
+            "description": "TEST_INCIDENT description",
+            "reported_cost": 123.45,
+        }
+        r = requests.post(f"{API}/incidents", headers=auth_headers, json=payload)
+        assert r.status_code in (200, 201), r.text
+        inc = r.json()
+        assert inc["vehicle_id"] == vid
+        assert inc["severity"] == "moderate"
+        assert inc.get("driver_id") == did
+        iid = inc["id"]
+
+        # list contains it
+        lr = requests.get(f"{API}/incidents", headers=auth_headers)
+        assert lr.status_code == 200
+        assert any(i["id"] == iid for i in lr.json())
+
+        # scoped by vehicle_id
+        lr2 = requests.get(f"{API}/incidents?vehicle_id={vid}", headers=auth_headers)
+        assert lr2.status_code == 200
+        assert any(i["id"] == iid for i in lr2.json())
+
+        # appears in vehicle timeline
+        tr = requests.get(f"{API}/vehicles/{vid}/timeline", headers=auth_headers)
+        assert tr.status_code == 200
+        assert any(e["type"] == "incident" and e["meta"].get("id") == iid for e in tr.json())
+
+        # delete
+        dr = requests.delete(f"{API}/incidents/{iid}", headers=auth_headers)
+        assert dr.status_code in (200, 204)
+
+        lr3 = requests.get(f"{API}/incidents", headers=auth_headers)
+        assert not any(i["id"] == iid for i in lr3.json())
+
+
+class TestMaintenanceDriverSplit:
+    def test_create_maintenance_with_driver_id(self, auth_headers):
+        vid = requests.get(f"{API}/vehicles", headers=auth_headers).json()[0]["id"]
+        drivers = requests.get(f"{API}/drivers", headers=auth_headers).json()
+        if not drivers:
+            pytest.skip("no drivers seeded")
+        did = drivers[0]["id"]
+        payload = {
+            "vehicle_id": vid,
+            "driver_id": did,
+            "title": "TEST_M_driver_split",
+            "description": "TEST",
+            "priority": "medium",
+            "estimated_cost": 250.0,
+            "estimated_hours": 2,
+        }
+        r = requests.post(f"{API}/maintenance", headers=auth_headers, json=payload)
+        assert r.status_code in (200, 201), r.text
+        created = r.json()
+        mid = created["id"]
+        assert created.get("driver_id") == did, f"driver_id missing on create response: {created}"
+
+        # GET list must retain driver_id
+        lr = requests.get(f"{API}/maintenance", headers=auth_headers)
+        assert lr.status_code == 200
+        found = [m for m in lr.json() if m["id"] == mid]
+        assert found and found[0].get("driver_id") == did, f"driver_id missing on list: {found}"
+
+        # cleanup
+        requests.delete(f"{API}/maintenance/{mid}", headers=auth_headers)
+
