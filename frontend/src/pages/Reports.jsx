@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, API } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line, Legend, ComposedChart, Area } from "recharts";
+import { DownloadSimple } from "@phosphor-icons/react";
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
@@ -30,9 +31,17 @@ export default function Reports() {
 
   return (
     <div className="noise-bg min-h-screen">
-      <header className="border-b border-border px-8 py-6">
-        <div className="overline">Analytics</div>
-        <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="reports-title">Reports</h1>
+      <header className="border-b border-border px-8 py-6 flex items-end justify-between flex-wrap gap-4">
+        <div>
+          <div className="overline">Analytics</div>
+          <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="reports-title">Reports</h1>
+        </div>
+        <button data-testid="export-maintenance-csv" onClick={() => {
+          const token = localStorage.getItem("token");
+          window.open(`${API}/export/maintenance.csv?token=${encodeURIComponent(token)}`, "_blank");
+        }} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
+          <DownloadSimple size={14} weight="bold" /> Export ledger CSV
+        </button>
       </header>
 
       <div className="p-8 space-y-6">

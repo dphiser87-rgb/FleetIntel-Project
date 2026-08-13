@@ -127,6 +127,24 @@ def ws_filter(user: dict, extra: dict = None) -> dict:
     if extra: q.update(extra)
     return q
 
+async def log_event(user: dict, action: str, entity_type: str, entity_id: str = "", meta: dict = None):
+    """Record an audit event for the workspace."""
+    try:
+        await db.audit_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "workspace_id": user.get("workspace_id", DEFAULT_WORKSPACE_ID),
+            "user_id": user.get("id", ""),
+            "user_name": user.get("name", ""),
+            "user_email": user.get("email", ""),
+            "action": action,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "meta": meta or {},
+            "at": now_iso(),
+        })
+    except Exception as e:
+        logger.error(f"audit log failed: {e}")
+
 def hash_pw(pw: str) -> str:
     return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 
@@ -311,6 +329,7 @@ async def register(req: RegisterReq):
 
     if req.invite_code:
         await db.invites.update_one({"code": req.invite_code}, {"$set": {"used_by": user["id"], "used_at": now_iso()}})
+        await log_event(user, "invite.accepted", "user", user["id"], {"email": user["email"], "role": user["role"]})
 
     token = create_access_token(user["id"], user["email"], user["role"])
     user.pop("password_hash", None); user.pop("_id", None)
@@ -352,6 +371,7 @@ async def create_vehicle(v: VehicleIn, user: dict = Depends(get_current_user)):
     doc["workspace_id"] = user["workspace_id"]
     doc["created_at"] = now_iso()
     await db.vehicles.insert_one(doc)
+    await log_event(user, "vehicle.created", "vehicle", doc["id"], {"name": doc["name"], "plate": doc["plate"]})
     doc.pop("_id", None)
     return doc
 
@@ -385,6 +405,7 @@ async def create_template(t: TemplateIn, user: dict = Depends(get_current_user))
     doc["created_by"] = user["id"]
     doc["created_at"] = now_iso()
     await db.templates.insert_one(doc)
+    await log_event(user, "template.created", "template", doc["id"], {"name": doc["name"]})
     doc.pop("_id", None)
     return doc
 
@@ -451,6 +472,7 @@ async def create_maintenance(m: MaintenanceIn, user: dict = Depends(get_current_
     doc["downtime_hours"] = 0
     await db.maintenance.insert_one(doc)
     await db.vehicles.update_one(ws_filter(user, {"id": doc["vehicle_id"]}), {"$set": {"status": "maintenance"}})
+    await log_event(user, "maintenance.created", "maintenance", doc["id"], {"title": doc["title"], "priority": doc["priority"]})
     doc.pop("_id", None)
     return doc
 
@@ -468,6 +490,8 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
     if upd.get("status") == "in_progress":
         upd["started_at"] = now_iso()
     await db.maintenance.update_one(ws_filter(user, {"id": mid}), {"$set": upd})
+    if upd.get("status"):
+        await log_event(user, f"maintenance.{upd['status']}", "maintenance", mid, {"title": job.get("title", ""), "actual_cost": upd.get("actual_cost")})
     return await db.maintenance.find_one(ws_filter(user, {"id": mid}), {"_id": 0})
 
 @api.delete("/maintenance/{mid}")
@@ -620,6 +644,7 @@ async def adjust_part(pid: str, adj: PartAdjust, user: dict = Depends(get_curren
         "delta": adj.delta, "reason": adj.reason or "", "by": user["id"], "at": now_iso()
     })
     updated = await db.parts.find_one(ws_filter(user, {"id": pid}), {"_id": 0})
+    await log_event(user, "part.adjusted", "part", pid, {"name": part.get("name"), "delta": adj.delta, "new_stock": new_stock})
     # Trigger auto-reorder email if we JUST crossed below threshold
     is_below = new_stock <= (part.get("reorder_point", 0) or 0)
     if was_above and is_below:
@@ -630,6 +655,83 @@ async def adjust_part(pid: str, adj: PartAdjust, user: dict = Depends(get_curren
 async def delete_part(pid: str, user: dict = Depends(get_current_user)):
     await db.parts.delete_one(ws_filter(user, {"id": pid}))
     return {"ok": True}
+
+# --- Audit log ---
+@api.get("/audit")
+async def audit_list(limit: int = 200, user: dict = Depends(get_current_user)):
+    events = await db.audit_log.find(ws_filter(user), {"_id": 0}).sort("at", -1).to_list(limit)
+    return events
+
+# --- CSV export ---
+def _csv_response(rows: list, header: list, filename: str) -> StreamingResponse:
+    import csv
+    buf = io.StringIO()
+    writer = csv.writer(buf, quoting=csv.QUOTE_MINIMAL)
+    writer.writerow(header)
+    for r in rows:
+        writer.writerow([r.get(h, "") for h in header])
+    buf.seek(0)
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+def _csv_export_dep(request: Request):
+    """Auth dependency that accepts ?token= for direct download links."""
+    return None
+
+@api.get("/export/maintenance.csv")
+async def export_maintenance(request: Request):
+    token = request.query_params.get("token")
+    if token:
+        try:
+            payload = jwt.decode(token, jwt_secret(), algorithms=[JWT_ALGO])
+            user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+            if not user: raise HTTPException(status_code=401, detail="User not found")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    else:
+        user = await get_current_user(request)
+    jobs = await db.maintenance.find(ws_filter(user), {"_id": 0}).sort("created_at", -1).to_list(5000)
+    vehicles = {v["id"]: v for v in await db.vehicles.find(ws_filter(user), {"_id": 0}).to_list(1000)}
+    rows = []
+    for j in jobs:
+        v = vehicles.get(j.get("vehicle_id"), {})
+        rows.append({
+            "job_id": j.get("id", ""), "created_at": j.get("created_at", ""),
+            "completed_at": j.get("completed_at", ""), "vehicle": v.get("name", ""),
+            "plate": v.get("plate", ""), "title": j.get("title", ""),
+            "priority": j.get("priority", ""), "status": j.get("status", ""),
+            "parts_cost": j.get("parts_cost", 0), "labor_cost": j.get("labor_cost", 0),
+            "actual_cost": j.get("actual_cost", 0), "estimated_cost": j.get("estimated_cost", 0),
+            "downtime_hours": j.get("downtime_hours", 0),
+        })
+    return _csv_response(rows, ["job_id","created_at","completed_at","vehicle","plate","title","priority","status","parts_cost","labor_cost","actual_cost","estimated_cost","downtime_hours"], "maintenance-ledger.csv")
+
+@api.get("/export/parts.csv")
+async def export_parts(request: Request):
+    token = request.query_params.get("token")
+    if token:
+        try:
+            payload = jwt.decode(token, jwt_secret(), algorithms=[JWT_ALGO])
+            user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+            if not user: raise HTTPException(status_code=401, detail="User not found")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    else:
+        user = await get_current_user(request)
+    parts = await db.parts.find(ws_filter(user), {"_id": 0}).sort("name", 1).to_list(5000)
+    rows = []
+    for p in parts:
+        stock = p.get("stock", 0) or 0
+        unit = p.get("unit_cost", 0) or 0
+        rows.append({
+            "sku": p.get("sku", ""), "name": p.get("name", ""),
+            "category": p.get("category", ""), "supplier": p.get("supplier", ""),
+            "supplier_email": p.get("supplier_email", ""),
+            "stock": stock, "reorder_point": p.get("reorder_point", 0),
+            "unit_cost": unit, "inventory_value": round(stock * unit, 2),
+            "low_stock": "yes" if stock <= (p.get("reorder_point", 0) or 0) else "no",
+        })
+    return _csv_response(rows, ["sku","name","category","supplier","supplier_email","stock","reorder_point","unit_cost","inventory_value","low_stock"], "parts-inventory.csv")
 
 # --- Workspace / Team / Invites ---
 @api.get("/workspace")
@@ -659,6 +761,7 @@ async def create_invite(req: InviteIn, user: dict = Depends(get_current_user)):
         "created_at": now_iso(), "used_by": None, "used_at": None,
     }
     await db.invites.insert_one(doc)
+    await log_event(user, "invite.created", "invite", doc["id"], {"email": req.email, "role": req.role})
     doc.pop("_id", None)
     return doc
 

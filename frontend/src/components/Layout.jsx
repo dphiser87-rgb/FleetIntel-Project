@@ -2,7 +2,7 @@ import React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree,
+  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise,
 } from "@phosphor-icons/react";
 
 const nav = [
@@ -12,6 +12,7 @@ const nav = [
   { to: "/maintenance", label: "Maintenance", icon: Wrench, id: "nav-maintenance" },
   { to: "/parts", label: "Parts", icon: Package, id: "nav-parts" },
   { to: "/team", label: "Team", icon: UsersThree, id: "nav-team" },
+  { to: "/audit", label: "Activity", icon: ClockCounterClockwise, id: "nav-audit" },
   { to: "/reports", label: "Reports", icon: ChartBar, id: "nav-reports" },
 ];
 

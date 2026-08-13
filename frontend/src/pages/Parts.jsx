@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Minus, Warning, Package, Trash } from "@phosphor-icons/react";
+import { Plus, Minus, Warning, Package, Trash, DownloadSimple } from "@phosphor-icons/react";
+import { api, API } from "@/lib/api";
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
@@ -56,6 +56,12 @@ export default function Parts() {
           </div>
           <button data-testid="add-part-btn" onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
             <Plus size={14} weight="bold" /> Add part
+          </button>
+          <button data-testid="export-parts-csv" onClick={() => {
+            const token = localStorage.getItem("token");
+            window.open(`${API}/export/parts.csv?token=${encodeURIComponent(token)}`, "_blank");
+          }} className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
+            <DownloadSimple size={14} /> Export CSV
           </button>
         </div>
       </header>
