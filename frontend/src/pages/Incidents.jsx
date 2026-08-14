@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Warning, DownloadSimple, Trash, PencilSimple, X as XIcon, MagnifyingGlass } from "@phosphor-icons/react";
+import { Warning, DownloadSimple, Trash, PencilSimple, X as XIcon, MagnifyingGlass, CaretLeft, CaretRight, Image as ImageIcon } from "@phosphor-icons/react";
 
 const SEVERITY_STYLES = {
   severe: "border-primary text-primary bg-primary/10",
@@ -30,6 +30,9 @@ export default function Incidents() {
   const [driverId, setDriverId] = useState("all");
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState(null);
+  const [lightbox, setLightbox] = useState(null); // { photos: [], index: 0, incident: {} }
+  const lightboxRef = useRef(null);
+  useEffect(() => { if (lightbox && lightboxRef.current) lightboxRef.current.focus(); }, [lightbox?.incident?.id]);
 
   const load = async () => {
     const [i, d] = await Promise.all([api.get("/incidents"), api.get("/drivers")]);
@@ -178,6 +181,18 @@ export default function Incidents() {
                         {i.reported_cost > 0 && <span className="mono">· {money(i.reported_cost)}</span>}
                       </div>
                       {i.resolution_notes && <div className="mt-2 text-xs text-muted-foreground italic border-l-2 border-primary/40 pl-2">Resolution: {i.resolution_notes}</div>}
+                      {(i.photos || []).length > 0 && (
+                        <div className="mt-2 flex gap-2 flex-wrap" data-testid={`incident-photos-${i.id}`}>
+                          {i.photos.slice(0, 4).map((p, pi) => (
+                            <button key={pi} type="button" onClick={() => setLightbox({ photos: i.photos, index: pi, incident: i })} className="relative w-14 h-14 border border-border hover:border-primary overflow-hidden group" data-testid={`photo-thumb-${i.id}-${pi}`}>
+                              <img src={p} alt="" className="w-full h-full object-cover" />
+                              {pi === 3 && i.photos.length > 4 && (
+                                <div className="absolute inset-0 bg-black/70 flex items-center justify-center text-xs mono text-white">+{i.photos.length - 4}</div>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="flex flex-col gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => setEditing({ ...i, driver_id: i.driver_id || "", resolution_notes: i.resolution_notes || "" })} data-testid={`edit-incident-${i.id}`} className="text-muted-foreground hover:text-primary p-1"><PencilSimple size={14} /></button>
@@ -273,6 +288,33 @@ export default function Incidents() {
               <button type="button" onClick={() => setEditing(null)} className="border border-border px-4 py-2.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">Cancel</button>
             </div>
           </form>
+        </div>
+      )}
+      {lightbox && (
+        <div className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-6" onClick={() => setLightbox(null)} data-testid="photo-lightbox" onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") setLightbox(l => l && ({ ...l, index: (l.index - 1 + l.photos.length) % l.photos.length }));
+          if (e.key === "ArrowRight") setLightbox(l => l && ({ ...l, index: (l.index + 1) % l.photos.length }));
+          if (e.key === "Escape") setLightbox(null);
+        }} tabIndex={0} ref={lightboxRef}>
+          <button onClick={(e) => { e.stopPropagation(); setLightbox(null); }} className="absolute top-6 right-6 text-white hover:text-primary z-10" data-testid="lightbox-close"><XIcon size={28} /></button>
+          <button onClick={(e) => { e.stopPropagation(); setLightbox(l => ({ ...l, index: (l.index - 1 + l.photos.length) % l.photos.length })); }} className="absolute left-4 md:left-8 text-white hover:text-primary p-3 bg-black/50 rounded-full disabled:opacity-30" disabled={lightbox.photos.length < 2} data-testid="lightbox-prev">
+            <CaretLeft size={28} weight="bold" />
+          </button>
+          <div className="max-w-5xl w-full max-h-full flex flex-col items-center gap-4" onClick={(e) => e.stopPropagation()}>
+            <img src={lightbox.photos[lightbox.index]} alt="" className="max-h-[80vh] max-w-full object-contain border border-border" data-testid="lightbox-image" />
+            <div className="text-center text-white space-y-1">
+              <div className="overline text-white/70">
+                <span className={`px-2 py-0.5 border ${SEVERITY_STYLES[lightbox.incident.severity]}`}>{lightbox.incident.severity}</span>
+                <span className="ml-2">{lightbox.incident.kind}</span>
+                <span className="ml-2 mono">{(lightbox.incident.occurred_at || "").slice(0, 16).replace("T", " ")}</span>
+              </div>
+              <div className="text-sm max-w-2xl mx-auto">{lightbox.incident.description}</div>
+              <div className="mono text-xs text-white/60" data-testid="lightbox-counter">{lightbox.index + 1} / {lightbox.photos.length}</div>
+            </div>
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); setLightbox(l => ({ ...l, index: (l.index + 1) % l.photos.length })); }} className="absolute right-4 md:right-8 text-white hover:text-primary p-3 bg-black/50 rounded-full disabled:opacity-30" disabled={lightbox.photos.length < 2} data-testid="lightbox-next">
+            <CaretRight size={28} weight="bold" />
+          </button>
         </div>
       )}
     </div>

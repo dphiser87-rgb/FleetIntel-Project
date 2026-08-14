@@ -6,3 +6,10 @@ crons:
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
+
+  - name: fleet-health-digest
+    description: "Emails each workspace owner a weekly list of at-risk vehicles with top health-score factors"
+    cron: "0 14 * * 1"
+    endpoint: "{{BASE_URL}}/api/cron/health-digest"
+    method: POST
+    enabled: true

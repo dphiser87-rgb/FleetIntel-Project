@@ -1171,76 +1171,115 @@ async def delete_incident(iid: str, user: dict = Depends(get_current_user)):
 @api.get("/analytics/fleet-health")
 async def fleet_health(user: dict = Depends(get_current_user)):
     """Returns per-vehicle health score (0-100) and contributing factors."""
-    from datetime import datetime as _dt
-    vehicles = await db.vehicles.find(ws_filter(user), {"_id": 0}).to_list(1000)
-    all_insp = await db.inspections.find(ws_filter(user), {"_id": 0}).to_list(2000)
-    all_maint = await db.maintenance.find(ws_filter(user), {"_id": 0}).to_list(2000)
-    all_inc = await db.incidents.find(ws_filter(user), {"_id": 0}).to_list(2000)
-    drivers = await db.drivers.find(ws_filter(user), {"_id": 0}).to_list(1000)
-    now = _dt.now(timezone.utc)
-    ninety_days = now - timedelta(days=90)
-    def _parse(d):
-        try: return _dt.fromisoformat(d.replace("Z", "+00:00")) if d else None
-        except Exception: return None
+    return await _compute_fleet_health(user["workspace_id"])
+
+@api.get("/analytics/vehicle/{vid}/health-trend")
+async def vehicle_health_trend(vid: str, days: int = 30, user: dict = Depends(get_current_user)):
+    """Backfilled daily health score for a single vehicle across the last N days."""
+    days = max(7, min(days, 180))
+    v = await db.vehicles.find_one(ws_filter(user, {"id": vid}), {"_id": 0})
+    if not v:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    insp = await db.inspections.find(ws_filter(user, {"vehicle_id": vid}), {"_id": 0}).to_list(2000)
+    maint = await db.maintenance.find(ws_filter(user, {"vehicle_id": vid}), {"_id": 0}).to_list(2000)
+    inc = await db.incidents.find(ws_filter(user, {"vehicle_id": vid}), {"_id": 0}).to_list(2000)
+    drivers = await db.drivers.find(ws_filter(user, {"assigned_vehicle_id": vid}), {"_id": 0}).to_list(50)
+    driver = drivers[0] if drivers else None
+    now = datetime.now(timezone.utc)
+    trend = []
+    for delta in range(days - 1, -1, -1):
+        as_of = now - timedelta(days=delta)
+        r = _score_vehicle(v, insp, maint, inc, driver, as_of=as_of)
+        trend.append({"date": as_of.date().isoformat(), "score": r["score"], "status": r["status"]})
+    return {"vehicle_id": vid, "name": v.get("name"), "plate": v.get("plate"), "trend": trend}
+
+async def _compute_fleet_health(workspace_id: str):
+    """Shared computation used by endpoint, trend, and health digest cron."""
+    ws = {"workspace_id": workspace_id}
+    vehicles = await db.vehicles.find(ws, {"_id": 0}).to_list(1000)
+    all_insp = await db.inspections.find(ws, {"_id": 0}).to_list(2000)
+    all_maint = await db.maintenance.find(ws, {"_id": 0}).to_list(2000)
+    all_inc = await db.incidents.find(ws, {"_id": 0}).to_list(2000)
+    drivers = await db.drivers.find(ws, {"_id": 0}).to_list(1000)
     driver_by_vehicle = {}
     for d in drivers:
         if d.get("assigned_vehicle_id"):
             driver_by_vehicle[d["assigned_vehicle_id"]] = d
+    now = datetime.now(timezone.utc)
     results = []
     for v in vehicles:
-        vid = v["id"]
-        score = 100
-        factors = []
-        # Inspection fails in last 90 days
-        recent_fails = sum(i.get("fail_count", 0) for i in all_insp if i.get("vehicle_id") == vid and (_parse(i.get("created_at")) or now) >= ninety_days)
-        if recent_fails > 0:
-            deduction = min(30, recent_fails * 8)
-            score -= deduction
-            factors.append({"key": "inspection_fails", "label": f"{recent_fails} failed inspection item(s) in 90d", "impact": -deduction})
-        # Maintenance backlog
-        pending = [m for m in all_maint if m.get("vehicle_id") == vid and m.get("status") in ("pending", "in_progress")]
-        critical_pending = [m for m in pending if m.get("priority") == "critical"]
-        if critical_pending:
-            score -= 20
-            factors.append({"key": "critical_maintenance", "label": f"{len(critical_pending)} critical maintenance open", "impact": -20})
-        if pending:
-            deduction = min(20, len(pending) * 4)
-            score -= deduction
-            factors.append({"key": "pending_maintenance", "label": f"{len(pending)} pending maintenance job(s)", "impact": -deduction})
-        # Recent incidents
-        vinc = [i for i in all_inc if i.get("vehicle_id") == vid and (_parse(i.get("occurred_at")) or now) >= ninety_days]
-        sev_weight = {"severe": 20, "moderate": 12, "minor": 4}
-        inc_deduction = 0
-        for i in vinc:
-            inc_deduction += sev_weight.get(i.get("severity"), 4)
-        inc_deduction = min(35, inc_deduction)
-        if inc_deduction > 0:
-            score -= inc_deduction
-            factors.append({"key": "incidents", "label": f"{len(vinc)} incident(s) in 90d", "impact": -inc_deduction})
-        # Driver license
-        drv = driver_by_vehicle.get(vid)
-        if drv and drv.get("license_expiry"):
-            try:
-                days = (_dt.strptime(drv["license_expiry"], "%Y-%m-%d").date() - now.date()).days
-                if days < 0:
-                    score -= 20
-                    factors.append({"key": "license_expired", "label": f"Driver license expired ({drv['name']})", "impact": -20})
-                elif days <= 30:
-                    score -= 8
-                    factors.append({"key": "license_expiring", "label": f"Driver license expires in {days}d", "impact": -8})
-            except Exception: pass
-        score = max(0, min(100, score))
-        status = "healthy" if score >= 80 else "watch" if score >= 55 else "at_risk"
-        results.append({
-            "vehicle_id": vid,
-            "name": v.get("name"),
-            "plate": v.get("plate"),
-            "score": score,
-            "status": status,
-            "factors": factors,
-        })
+        results.append(_score_vehicle(v, all_insp, all_maint, all_inc, driver_by_vehicle.get(v["id"]), as_of=now))
     results.sort(key=lambda r: r["score"])  # worst first
     return results
+
+def _score_vehicle(v: dict, insp_list: list, maint_list: list, inc_list: list, driver: Optional[dict], as_of: datetime):
+    """Deterministic health score (0-100) for a vehicle at a point in time."""
+    vid = v["id"]
+    ninety = as_of - timedelta(days=90)
+    def _parse(d):
+        try: return datetime.fromisoformat(d.replace("Z", "+00:00")) if d else None
+        except Exception: return None
+    score = 100
+    factors = []
+    # Inspection fails in the 90 days preceding as_of (and before as_of)
+    recent_fails = sum(
+        (i.get("fail_count", 0) or 0)
+        for i in insp_list
+        if i.get("vehicle_id") == vid and (_parse(i.get("created_at")) or as_of) <= as_of
+        and (_parse(i.get("created_at")) or as_of) >= ninety
+    )
+    if recent_fails > 0:
+        deduction = min(30, recent_fails * 8)
+        score -= deduction
+        factors.append({"key": "inspection_fails", "label": f"{recent_fails} failed inspection item(s) in 90d", "impact": -deduction})
+    # Maintenance backlog open at as_of (created before as_of, not completed before as_of)
+    def _open_at(m):
+        created = _parse(m.get("created_at")) or as_of
+        if created > as_of: return False
+        completed = _parse(m.get("completed_at"))
+        if m.get("status") == "completed" and completed and completed <= as_of:
+            return False
+        # cancelled counts as not-open only after cancel time; treat as closed if status cancelled
+        if m.get("status") == "cancelled":
+            return False
+        return True
+    pending = [m for m in maint_list if m.get("vehicle_id") == vid and _open_at(m)]
+    critical_pending = [m for m in pending if m.get("priority") == "critical"]
+    if critical_pending:
+        score -= 20
+        factors.append({"key": "critical_maintenance", "label": f"{len(critical_pending)} critical maintenance open", "impact": -20})
+    if pending:
+        deduction = min(20, len(pending) * 4)
+        score -= deduction
+        factors.append({"key": "pending_maintenance", "label": f"{len(pending)} pending maintenance job(s)", "impact": -deduction})
+    # Recent incidents in the 90 days preceding as_of
+    vinc = [i for i in inc_list if i.get("vehicle_id") == vid and (_parse(i.get("occurred_at")) or as_of) <= as_of and (_parse(i.get("occurred_at")) or as_of) >= ninety]
+    sev_weight = {"severe": 20, "moderate": 12, "minor": 4}
+    inc_deduction = min(35, sum(sev_weight.get(i.get("severity"), 4) for i in vinc))
+    if inc_deduction > 0:
+        score -= inc_deduction
+        factors.append({"key": "incidents", "label": f"{len(vinc)} incident(s) in 90d", "impact": -inc_deduction})
+    # Driver license
+    if driver and driver.get("license_expiry"):
+        try:
+            days_left = (datetime.strptime(driver["license_expiry"], "%Y-%m-%d").date() - as_of.date()).days
+            if days_left < 0:
+                score -= 20
+                factors.append({"key": "license_expired", "label": f"Driver license expired ({driver['name']})", "impact": -20})
+            elif days_left <= 30:
+                score -= 8
+                factors.append({"key": "license_expiring", "label": f"Driver license expires in {days_left}d", "impact": -8})
+        except Exception: pass
+    score = max(0, min(100, score))
+    status = "healthy" if score >= 80 else "watch" if score >= 55 else "at_risk"
+    return {
+        "vehicle_id": vid,
+        "name": v.get("name"),
+        "plate": v.get("plate"),
+        "score": score,
+        "status": status,
+        "factors": factors,
+    }
 
 # --- Bulk CSV import ---
 def _parse_csv(text: str) -> list:
@@ -1509,6 +1548,71 @@ async def send_digest_now(user: dict = Depends(get_current_user)):
     """Manual trigger of the weekly digest for this workspace."""
     email_id = await _send_workspace_digest(user["workspace_id"])
     await log_event(user, "digest.sent", "workspace", user["workspace_id"], {"email_id": email_id})
+    return {"sent": bool(email_id), "email_id": email_id}
+
+async def _send_health_digest(workspace_id: str) -> Optional[str]:
+    """Emails the workspace owner a list of at-risk & watch vehicles with top factors."""
+    ws = await db.workspaces.find_one({"id": workspace_id}, {"_id": 0}) or {"id": workspace_id, "name": "FleetIntel Workspace"}
+    owner = await db.users.find_one({"id": ws.get("owner_id")}, {"_id": 0, "email": 1, "name": 1}) if ws.get("owner_id") else None
+    if not owner:
+        owner = await db.users.find_one({"workspace_id": workspace_id, "role": "admin"}, {"_id": 0, "email": 1, "name": 1})
+    if not owner:
+        logger.warning(f"health digest for {workspace_id}: no owner/admin to email")
+        return None
+    scores = await _compute_fleet_health(workspace_id)
+    at_risk = [s for s in scores if s["status"] in ("at_risk", "watch")]
+    subject = f"Fleet health · {len(at_risk)} vehicle(s) need attention"
+    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
+    def _row(s: dict) -> str:
+        colour = "#dc2626" if s["status"] == "at_risk" else "#d97706"
+        label = "AT RISK" if s["status"] == "at_risk" else "WATCH"
+        factors_html = "".join(
+            f'<div style="font-size:12px;color:#475569;margin-top:2px">• {escape(f["label"])} <span style="color:#dc2626">({f["impact"]})</span></div>'
+            for f in s["factors"][:3]
+        )
+        return (
+            f'<tr><td style="padding:12px;border-bottom:1px solid #e2e8f0">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center">'
+            f'<div><strong>{escape(s["name"] or "")}</strong> <span style="color:#64748b;font-family:monospace;font-size:12px">{escape(s["plate"] or "")}</span></div>'
+            f'<div><span style="background:{colour};color:#fff;padding:2px 8px;font-size:10px;letter-spacing:0.1em">{label} · {s["score"]}</span></div>'
+            f'</div>{factors_html}</td></tr>'
+        )
+    rows_html = "".join(_row(s) for s in at_risk[:20]) or '<tr><td style="padding:12px;color:#64748b">All vehicles healthy this week.</td></tr>'
+    html = (
+        f'<table role="presentation" width="100%" style="max-width:640px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:3px solid #34C759">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape(from_name)}</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:22px">Fleet health digest</h1>'
+        f'<div style="color:#64748b;margin-top:4px">{escape(ws.get("name", "Workspace"))}</div></td></tr>'
+        f'<tr><td style="padding:24px">'
+        f'<p style="margin:0 0 16px 0">Here are the vehicles trending below 80 this week. Address these before they escalate to failure.</p>'
+        f'<table role="presentation" width="100%" style="border-collapse:collapse;border:1px solid #e2e8f0">{rows_html}</table>'
+        f'<p style="margin:20px 0 0 0;font-size:12px;color:#888">Sent by {escape(from_name)}. We never ask for your password or card details by email.</p>'
+        f'</td></tr></table>'
+    )
+    return await send_email(to=owner["email"], subject=subject, html=html)
+
+@api.post("/cron/health-digest")
+async def cron_health_digest(request: Request):
+    auth = request.headers.get("Authorization", "")
+    expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    if not expected or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    async def _run():
+        workspaces = await db.workspaces.find({}, {"_id": 0}).to_list(1000)
+        for ws in workspaces:
+            try:
+                await _send_health_digest(ws["id"])
+            except Exception as e:
+                logger.error(f"health digest for {ws.get('id')} failed: {e}")
+    asyncio.create_task(_run())
+    return {"ok": True, "queued": True}
+
+@api.post("/workspace/send-health-digest")
+async def send_health_digest_now(user: dict = Depends(get_current_user)):
+    """Manual trigger of the health digest for this workspace."""
+    email_id = await _send_health_digest(user["workspace_id"])
+    await log_event(user, "health_digest.sent", "workspace", user["workspace_id"], {"email_id": email_id})
     return {"sent": bool(email_id), "email_id": email_id}
 
 # --- Workspace / Team / Invites ---

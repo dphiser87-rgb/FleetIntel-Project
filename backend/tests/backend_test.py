@@ -486,3 +486,94 @@ class TestIncidentsEnrichment:
                 assert "driver_name" in row and row["driver_name"], f"missing driver_name: {row}"
         finally:
             requests.delete(f"{API}/incidents/{iid}", headers=auth_headers)
+
+
+
+# ---------------- Iteration 6: Vehicle Health Trend + Health Digest ----------------
+class TestVehicleHealthTrend:
+    def test_default_30_days(self, auth_headers):
+        vids = requests.get(f"{API}/vehicles", headers=auth_headers).json()
+        assert vids, "no vehicles seeded"
+        vid = vids[0]["id"]
+        r = requests.get(f"{API}/analytics/vehicle/{vid}/health-trend", headers=auth_headers)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        for k in ("vehicle_id", "name", "plate", "trend"):
+            assert k in data
+        assert data["vehicle_id"] == vid
+        assert isinstance(data["trend"], list) and len(data["trend"]) == 30
+        for p in data["trend"]:
+            assert "date" in p and "score" in p and "status" in p
+            assert 0 <= p["score"] <= 100
+            assert p["status"] in ("healthy", "watch", "at_risk")
+
+    def test_days_clamped_low(self, auth_headers):
+        vid = requests.get(f"{API}/vehicles", headers=auth_headers).json()[0]["id"]
+        r = requests.get(f"{API}/analytics/vehicle/{vid}/health-trend", headers=auth_headers, params={"days": 1})
+        assert r.status_code == 200
+        assert len(r.json()["trend"]) == 7  # clamped to min 7
+
+    def test_days_clamped_high(self, auth_headers):
+        vid = requests.get(f"{API}/vehicles", headers=auth_headers).json()[0]["id"]
+        r = requests.get(f"{API}/analytics/vehicle/{vid}/health-trend", headers=auth_headers, params={"days": 500})
+        assert r.status_code == 200
+        assert len(r.json()["trend"]) == 180  # clamped to max 180
+
+    def test_unknown_vehicle_404(self, auth_headers):
+        r = requests.get(f"{API}/analytics/vehicle/does-not-exist-xyz/health-trend", headers=auth_headers)
+        assert r.status_code == 404
+
+    def test_trend_last_matches_fleet_health(self, auth_headers):
+        fh = requests.get(f"{API}/analytics/fleet-health", headers=auth_headers).json()
+        assert fh, "no fleet-health rows"
+        target = fh[0]
+        vid = target["vehicle_id"]
+        tr = requests.get(f"{API}/analytics/vehicle/{vid}/health-trend", headers=auth_headers).json()
+        assert tr["trend"][-1]["score"] == target["score"], (
+            f"mismatch: trend[-1]={tr['trend'][-1]} vs fleet-health={target}"
+        )
+
+    def test_requires_auth(self):
+        r = requests.get(f"{API}/analytics/vehicle/any/health-trend")
+        assert r.status_code in (401, 403)
+
+
+class TestHealthDigest:
+    def test_manual_send_requires_auth(self):
+        r = requests.post(f"{API}/workspace/send-health-digest")
+        assert r.status_code in (401, 403)
+
+    def test_manual_send_admin(self, auth_headers):
+        r = requests.post(f"{API}/workspace/send-health-digest", headers=auth_headers)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert "sent" in d and "email_id" in d
+        # In dev/mock resend, sent should be True and email_id present
+        assert d["sent"] is True
+        assert d["email_id"]
+
+    def test_cron_no_auth(self):
+        r = requests.post(f"{API}/cron/health-digest")
+        assert r.status_code == 401
+
+    def test_cron_wrong_secret(self):
+        r = requests.post(f"{API}/cron/health-digest", headers={"Authorization": "Bearer wrong-secret"})
+        assert r.status_code == 401
+
+    def test_cron_correct_secret(self):
+        secret = os.environ.get("WEBHOOK_CRON_SECRET")
+        if not secret:
+            # read from backend/.env
+            try:
+                with open("/app/backend/.env") as f:
+                    for line in f:
+                        if line.startswith("WEBHOOK_CRON_SECRET"):
+                            secret = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            break
+            except Exception:
+                pass
+        assert secret, "WEBHOOK_CRON_SECRET not available"
+        r = requests.post(f"{API}/cron/health-digest", headers={"Authorization": f"Bearer {secret}"})
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d.get("ok") is True and d.get("queued") is True

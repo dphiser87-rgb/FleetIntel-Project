@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "@/lib/api";
-import { CaretLeft, ClipboardText, Wrench, ShareNetwork, Copy, X as XIcon, Warning as WarningIcon, ClockCounterClockwise } from "@phosphor-icons/react";
+import { CaretLeft, ClipboardText, Wrench, ShareNetwork, Copy, X as XIcon, Warning as WarningIcon, ClockCounterClockwise, Heartbeat } from "@phosphor-icons/react";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, CartesianGrid } from "recharts";
 import { toast } from "sonner";
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -15,25 +16,50 @@ export default function VehicleDetail() {
   const [showShare, setShowShare] = useState(false);
   const [timeline, setTimeline] = useState([]);
   const [showIncident, setShowIncident] = useState(false);
-  const [incForm, setIncForm] = useState({ kind: "damage", severity: "minor", occurred_at: new Date().toISOString().slice(0, 16), location: "", description: "", reported_cost: 0, photos: [] });
+  const [drivers, setDrivers] = useState([]);
+  const [healthTrend, setHealthTrend] = useState(null);
+  const [incForm, setIncForm] = useState({ kind: "damage", severity: "minor", occurred_at: new Date().toISOString().slice(0, 16), location: "", description: "", reported_cost: 0, photos: [], driver_id: "" });
 
   useEffect(() => {
     api.get(`/vehicles/${id}`).then(r => setV(r.data));
     api.get(`/inspections`, { params: { vehicle_id: id } }).then(r => setInsp(r.data));
     api.get(`/maintenance`).then(r => setMaint(r.data.filter(m => m.vehicle_id === id)));
     api.get(`/vehicles/${id}/timeline`).then(r => setTimeline(r.data));
+    api.get(`/drivers`).then(r => setDrivers(r.data)).catch(() => {});
+    api.get(`/analytics/vehicle/${id}/health-trend`, { params: { days: 30 } }).then(r => setHealthTrend(r.data)).catch(() => {});
   }, [id]);
+
+  const assignedDriver = useMemo(() => drivers.find(d => d.assigned_vehicle_id === id) || null, [drivers, id]);
+  const currentScore = healthTrend?.trend?.[healthTrend.trend.length - 1];
+  const scoreColor = currentScore ? (currentScore.status === "healthy" ? "#34C759" : currentScore.status === "watch" ? "#FFCC00" : "#FF3B30") : "#34C759";
+
+  // Sync auto-assigned driver into the incident form if drivers load AFTER the modal is opened
+  useEffect(() => {
+    if (showIncident && assignedDriver && !incForm.driver_id) {
+      setIncForm(f => ({ ...f, driver_id: assignedDriver.id }));
+    }
+  }, [showIncident, assignedDriver, incForm.driver_id]);
+
+  const openIncidentModal = () => {
+    // Auto-assign driver from the vehicle's currently assigned driver
+    setIncForm(f => ({ ...f, driver_id: assignedDriver ? assignedDriver.id : "" }));
+    setShowIncident(true);
+  };
 
   const submitIncident = async (e) => {
     e.preventDefault();
     try {
-      const payload = { ...incForm, vehicle_id: id, occurred_at: new Date(incForm.occurred_at).toISOString(), reported_cost: Number(incForm.reported_cost) || 0 };
+      const payload = { ...incForm, vehicle_id: id, driver_id: incForm.driver_id || null, occurred_at: new Date(incForm.occurred_at).toISOString(), reported_cost: Number(incForm.reported_cost) || 0 };
       await api.post("/incidents", payload);
       toast.success("Incident reported");
       setShowIncident(false);
-      setIncForm({ kind: "damage", severity: "minor", occurred_at: new Date().toISOString().slice(0, 16), location: "", description: "", reported_cost: 0, photos: [] });
-      const t = await api.get(`/vehicles/${id}/timeline`);
+      setIncForm({ kind: "damage", severity: "minor", occurred_at: new Date().toISOString().slice(0, 16), location: "", description: "", reported_cost: 0, photos: [], driver_id: "" });
+      const [t, ht] = await Promise.all([
+        api.get(`/vehicles/${id}/timeline`),
+        api.get(`/analytics/vehicle/${id}/health-trend`, { params: { days: 30 } }).catch(() => null),
+      ]);
       setTimeline(t.data);
+      if (ht) setHealthTrend(ht.data);
     } catch { toast.error("Failed"); }
   };
 
@@ -57,7 +83,7 @@ export default function VehicleDetail() {
             <div className="text-sm text-muted-foreground mt-2">{v.year} · {v.make} {v.model} · {v.type}</div>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setShowIncident(true)} data-testid="report-incident-btn" className="flex items-center gap-2 border border-primary/40 text-primary px-3 py-2 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground">
+            <button onClick={openIncidentModal} data-testid="report-incident-btn" className="flex items-center gap-2 border border-primary/40 text-primary px-3 py-2 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground">
               <WarningIcon size={14} weight="bold" /> Report incident
             </button>
             <button onClick={async () => {
@@ -111,6 +137,38 @@ export default function VehicleDetail() {
               {maint.length === 0 && <div className="text-sm text-muted-foreground py-4">No maintenance records.</div>}
             </div>
           </div>
+
+          {healthTrend && (
+            <div className="bg-[#121214] border border-border p-6" data-testid="health-trend-card">
+              <div className="flex items-end justify-between mb-4 flex-wrap gap-3">
+                <div className="flex items-center gap-3">
+                  <Heartbeat size={22} className="text-primary" />
+                  <div>
+                    <div className="overline">Predictive signal</div>
+                    <h3 className="font-display text-2xl font-bold tracking-tight mt-1">Health trend (30d)</h3>
+                  </div>
+                </div>
+                {currentScore && (
+                  <div className="text-right">
+                    <div className="overline">Current score</div>
+                    <div className="mono text-3xl font-bold mt-1" style={{ color: scoreColor }} data-testid="current-health-score">{currentScore.score}</div>
+                    <div className="overline mt-1" style={{ color: scoreColor }}>{currentScore.status.replace("_", " ")}</div>
+                  </div>
+                )}
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={healthTrend.trend} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
+                  <CartesianGrid stroke="#27272a" strokeDasharray="3 3" />
+                  <XAxis dataKey="date" stroke="#636366" tick={{ fontSize: 10, fontFamily: "JetBrains Mono" }} tickFormatter={(d) => d.slice(5)} />
+                  <YAxis domain={[0, 100]} stroke="#636366" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }} />
+                  <Tooltip contentStyle={{ background: "#0b0b0d", border: "1px solid #27272a", fontFamily: "JetBrains Mono", fontSize: 12 }} />
+                  <ReferenceLine y={80} stroke="#34C759" strokeDasharray="4 4" label={{ value: "Healthy", fill: "#34C759", fontSize: 10 }} />
+                  <ReferenceLine y={55} stroke="#FF3B30" strokeDasharray="4 4" label={{ value: "At risk", fill: "#FF3B30", fontSize: 10 }} />
+                  <Line type="monotone" dataKey="score" stroke={scoreColor} strokeWidth={2.5} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">
@@ -172,6 +230,16 @@ export default function VehicleDetail() {
                 <label className="overline block mb-1">Severity</label>
                 <select value={incForm.severity} onChange={(e) => setIncForm({...incForm, severity: e.target.value})} data-testid="incident-severity" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
                   {["minor","moderate","severe"].map(k => <option key={k}>{k}</option>)}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="overline block mb-1 flex items-center justify-between">
+                  <span>Driver</span>
+                  {assignedDriver && incForm.driver_id === assignedDriver.id && <span className="text-[10px] text-primary normal-case tracking-normal">· auto-filled from vehicle</span>}
+                </label>
+                <select value={incForm.driver_id} onChange={(e) => setIncForm({...incForm, driver_id: e.target.value})} data-testid="incident-driver" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                  <option value="">Unassigned</option>
+                  {drivers.map(d => <option key={d.id} value={d.id}>{d.name}{d.assigned_vehicle_id === id ? " · assigned to this vehicle" : ""}</option>)}
                 </select>
               </div>
               <div>

@@ -67,7 +67,14 @@
 - **Fleet Health Score**: GET `/api/analytics/fleet-health` blends inspection fails, maintenance backlog, incidents (90d), driver license expiry into 0-100 score with factor breakdown; Fleet page shows health pill + factors, sorts worst-first by default
 - **Incidents Index Page**: New `/incidents` route + sidebar link — stats bar, severity/kind/driver/search filters, driver breakdown, CSV export
 
+## Implemented (2026-02-14 iteration 6 — 4 additional features)
+- **Vehicle Health Trend**: `_score_vehicle` refactored to accept `as_of`; new endpoint `GET /api/analytics/vehicle/{vid}/health-trend?days=30` backfills daily score from history. VehicleDetail renders recharts LineChart with ReferenceLines at 80/55 and current-score readout.
+- **Incident Photos Lightbox**: `/incidents` rows show thumbnail strip (4 max + "+N" badge); full-screen viewer with next/prev buttons, ArrowLeft/Right keys, Esc to close, counter "N / M".
+- **Auto-Assign Driver**: Report-incident modal on VehicleDetail pre-selects the vehicle's currently-assigned driver and shows an "auto-filled from vehicle" hint; syncs when drivers load after modal opens.
+- **Health Alerts (weekly digest)**: `_send_health_digest` composes a Resend email of at-risk/watch vehicles with top 3 factors each; scheduled by `.emergent/crons.yml → fleet-health-digest`; manual trigger via `POST /api/workspace/send-health-digest`.
+
 ## Backlog / Next (P1/P2)
-- P2: Refactor server.py (~1900 lines) into routers/ (auth, fleet, incidents, analytics, prefs)
-- P2: Consolidate Dashboard alert rendering into single AlertsPanel component
-- P2: Aggregate incidents enrichment via $lookup once fleet scales past a few hundred rows
+- P1: Refactor server.py (~2020 lines) into routers/ (auth, fleet, incidents, analytics, prefs, digests)
+- P2: Aggregate incidents enrichment via `$lookup` once fleet scales past a few hundred rows
+- P2: Persist daily health snapshots so trend survives event deletions
+- P2: Configurable digest frequency + recipient list per workspace
