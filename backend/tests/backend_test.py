@@ -14,7 +14,7 @@ import pytest
 import requests
 import pyotp
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://kpi-tracker-106.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://fleet-intel-preview.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 ADMIN_EMAIL = "dphiser87@gmail.com"

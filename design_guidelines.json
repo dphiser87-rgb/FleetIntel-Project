@@ -1,127 +1,196 @@
 {
-  "project_name": "FleetCost Intelligence - SaaS Platform",
-  "theme_strategy": "dark",
-  "archetype": "The Performance Pro mixed with Swiss Brutalism (Authority, Precision, Elite Operation)",
+  "project_name": "FleetIntel",
+  "theme_architecture": {
+    "description": "A vibrant, energetic SaaS cost intelligence platform transitioning from Dark 'Swiss Brutalism' to a bright, culturally resonant 'African-energy' theme. The architecture uses a base vibrant theme with CSS variable swapping at runtime via a workspace-level country picker (e.g., data-country=\"NG\").",
+    "implementation_strategy": "Use Tailwind CSS + shadcn/ui. Define base tokens (electric-blue/teal/lime) in `:root`. Override these tokens in `[data-country=\"XX\"]` selectors for ~20 countries. Currency formatting must map dynamically to the selected country state."
+  },
   "typography": {
     "headings": {
-      "family": "Outfit",
-      "weights": ["400", "700", "900"],
-      "rules": "MUST use tracking-tight or tracking-tighter for headings > 32px. DO NOT use Inter for headings. Use fluid scaling, maximum text-6xl for main dashboard hero."
+      "font_family": "'Cabinet Grotesk', sans-serif",
+      "weights": ["700", "800"],
+      "usage": "Dashboard titles, KPI values, hero section. Use tracking-tight for impactful sizes."
     },
     "body": {
-      "family": "IBM Plex Sans",
+      "font_family": "'Plus Jakarta Sans', sans-serif",
       "weights": ["400", "500", "600"],
-      "rules": "Use for paragraphs, standard labels, and inputs. Ensure leading-relaxed for long text."
-    },
-    "data_and_mono": {
-      "family": "JetBrains Mono",
-      "weights": ["400", "700"],
-      "rules": "CRITICAL: Use for all KPIs, currency values, cost trends, metric data, and vehicle IDs. Overlines must be uppercase, text-xs, tracking-[0.2em]."
+      "usage": "Data tables, sidebars, forms, tooltips, general UI text."
     }
   },
   "colors": {
-    "background": {
-      "default": "#080809",
-      "surface": "#121214",
-      "surface_hover": "#1A1A1D"
+    "base_theme": {
+      "background": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "primary": "#0EA5E9",
+      "secondary": "#14B8A6",
+      "accent": "#84CC16",
+      "text_primary": "#0F172A",
+      "text_secondary": "#64748B",
+      "border": "#E2E8F0"
     },
-    "primary": {
-      "default": "#FF3B30",
-      "hover": "#FF5248",
-      "foreground": "#FFFFFF"
-    },
-    "status": {
-      "maintenance": "#FFCC00",
-      "active": "#34C759",
-      "idle": "#8E8E93"
-    },
-    "text": {
-      "primary": "#FFFFFF",
-      "secondary": "#A1A1A6",
-      "muted": "#636366"
-    },
-    "border": {
-      "default": "#27272A",
-      "focus": "#FF3B30"
-    },
-    "forbidden_colors": ["#1B93A4", "teal green", "teal blue", "#000000"]
+    "flavors": {
+      "NG": {
+        "country": "Nigeria",
+        "currency": "₦",
+        "primary": "#008753",
+        "primary_foreground": "#FFFFFF",
+        "secondary": "#E8F5E9",
+        "accent": "#4CAF50",
+        "chart_palette": ["#008753", "#4CAF50", "#81C784", "#C8E6C9", "#2E7D32"],
+        "pattern_description": "Green-white-green energy; subtle woven linear textures."
+      },
+      "KE": {
+        "country": "Kenya",
+        "currency": "KSh",
+        "primary": "#BB0000",
+        "primary_foreground": "#FFFFFF",
+        "secondary": "#000000",
+        "accent": "#006600",
+        "chart_palette": ["#BB0000", "#000000", "#006600", "#F4C430", "#8B0000"],
+        "pattern_description": "Maasai-inspired red/black/green accents with geometric borders."
+      },
+      "ZA": {
+        "country": "South Africa",
+        "currency": "R",
+        "primary": "#007749",
+        "primary_foreground": "#FFFFFF",
+        "secondary": "#FFB81C",
+        "accent": "#E03C31",
+        "chart_palette": ["#007749", "#FFB81C", "#E03C31", "#001489", "#000000"],
+        "pattern_description": "Vibrant structural lines and multicolour flag geometry."
+      },
+      "GH": {
+        "country": "Ghana",
+        "currency": "GH₵",
+        "primary": "#FCD116",
+        "primary_foreground": "#000000",
+        "secondary": "#CE1126",
+        "accent": "#006B3F",
+        "chart_palette": ["#FCD116", "#CE1126", "#006B3F", "#000000", "#FFD700"],
+        "pattern_description": "Black star motifs mixed with rich gold and red overlays."
+      },
+      "EG": {
+        "country": "Egypt",
+        "currency": "E£",
+        "primary": "#C09300",
+        "primary_foreground": "#000000",
+        "secondary": "#CE1126",
+        "accent": "#000000",
+        "chart_palette": ["#C09300", "#CE1126", "#000000", "#EEDC82", "#8B0000"],
+        "pattern_description": "Eagle motifs, geometric gold accents on white."
+      },
+      "MA": {
+        "country": "Morocco",
+        "currency": "MAD",
+        "primary": "#C1272D",
+        "primary_foreground": "#FFFFFF",
+        "secondary": "#006233",
+        "accent": "#FACC15",
+        "chart_palette": ["#C1272D", "#006233", "#FACC15", "#8B0000", "#22C55E"],
+        "pattern_description": "Star-pentagram outlines and mosaic geometric textures."
+      },
+      "TZ": {
+        "country": "Tanzania",
+        "currency": "TSh",
+        "primary": "#1EB53A",
+        "primary_foreground": "#FFFFFF",
+        "secondary": "#00A3E0",
+        "accent": "#FCD116",
+        "chart_palette": ["#1EB53A", "#00A3E0", "#FCD116", "#000000", "#4CAF50"],
+        "pattern_description": "Diagonal sweeps of blue, yellow, and green."
+      },
+      "ET": {
+        "country": "Ethiopia",
+        "currency": "Br",
+        "primary": "#078930",
+        "primary_foreground": "#FFFFFF",
+        "secondary": "#FCD116",
+        "accent": "#DA121A",
+        "chart_palette": ["#078930", "#FCD116", "#DA121A", "#00A3E0", "#FFD700"],
+        "pattern_description": "Star emblem geometry and vivid green/yellow/red bands."
+      },
+      "UG": {
+        "country": "Uganda",
+        "currency": "UGX",
+        "primary": "#000000",
+        "primary_foreground": "#FFFFFF",
+        "secondary": "#FCD116",
+        "accent": "#D90000",
+        "chart_palette": ["#000000", "#FCD116", "#D90000", "#4CAF50", "#FFD700"],
+        "pattern_description": "Crested crane textures and bold black/yellow/red stripes."
+      },
+      "RW": {
+        "country": "Rwanda",
+        "currency": "FRw",
+        "primary": "#00A1DE",
+        "primary_foreground": "#FFFFFF",
+        "secondary": "#FAD201",
+        "accent": "#20603D",
+        "chart_palette": ["#00A1DE", "#FAD201", "#20603D", "#4CAF50", "#81C784"],
+        "pattern_description": "Sun motif in yellow with vivid sky blue backgrounds."
+      }
+    }
   },
   "visual_enhancers": {
-    "surfaces": "Use 'Grid Borders' strategy. Expose the skeleton with `border-collapse` layout. Data cards should have `border-r border-b border-border/40`. No drop-shadows on standard cards; rely on 1px solid strokes to separate elements.",
-    "glassmorphism": "Only for sticky headers/floating nav. Use `backdrop-blur-xl bg-[#080809]/80` with a sharp 1px bottom border. NEVER use pure transparency.",
-    "radii": "Sharp edges. Use `rounded-none` or `rounded-sm` (max 2-4px) for all components to enforce the industrial/technical feel.",
-    "motion": "Fast, precise micro-interactions. Hover states should feature a slight lift (`-translate-y-1`) or a 1px border color transition to primary. Avoid bouncy animations."
+    "corners": "Friendly, modern curves. `rounded-2xl` for main cards and dashboard tiles. `rounded-xl` for inner widgets and buttons.",
+    "shadows": "Replace harsh borders with soft, ambient lighting: `shadow-[0_8px_30px_rgb(0,0,0,0.04)]` on cards. Hover lift expands shadow.",
+    "glassmorphism": "Subtle `backdrop-blur-xl bg-white/70` for sticky headers or dropdowns. CRITICAL: Never fully transparent if content is underneath. Always 1px inner border to retain shape.",
+    "textures": "Map country specific flavors to subtle SVG geometric patterns or CSS linear gradients on the Dashboard Hero or Sidebar."
   },
   "components": {
-    "buttons": "Sharp edges (`rounded-none`). Primary buttons use solid background, secondary buttons use transparent background with 1px solid border. Always configure explicit hover states (`hover:bg-primary/90 hover:text-white`).",
-    "dashboard_cards": "Flat background (`bg-[#121214]`), 1px subtle border. No shadow by default. Organize KPIs densely. Use monospaced fonts for large metric numbers.",
-    "kanban_board": "Ordered workflow columns (Pending, Inspecting, Maintenance, Done). Cards act as scanning surfaces (minmal data: ID, Title, Status Badge, Monospaced Cost). Show column WIP limits. Use badges for live states.",
-    "data_tables": "Dense layout. Use Shadcn Table. Monospaced numbers for costs. Left-align most text, right-align currency/numbers.",
-    "checklist_builder": "Multi-section form using Shadcn inputs. Use stark contrast for active/inactive items. Use `sonner` for toast notifications when checklist templates are saved."
+    "hero": "Vibrant intro section. Displays greeting, overarching KPI summaries (cost per vehicle, downtime). Features an atmospheric background layer driven by the country's flavor.",
+    "sidebar": "Clean left-nav container. Might adopt a very faint tint of the country's primary color (`bg-primary/5`).",
+    "cards": "Generous padding (`p-6` to `p-8`). Solid white base (`bg-white`) to ground the vibrant charts and metrics.",
+    "charts": "Playful data-viz via Recharts. Bar charts must have rounded tops `radius={[6, 6, 0, 0]}`. Pie charts with distinct padding. Chart colors bound to CSS variables `var(--chart-1)`.",
+    "kanban": "Maintenance board with columns for 'To Do', 'In Progress', 'Done'. Cards feature colored edge-tags for priority."
   },
-  "layouts": {
-    "dashboard": "Mode B (High Density Grid). Base grid: `grid-cols-1 md:grid-cols-3 lg:grid-cols-4`, tight gaps (`gap-4` or `gap-6`). Every pixel utilized. Summary KPI `col-span-1`, Main Cost Chart `col-span-2 row-span-2`.",
-    "vehicle_details": "Bento Grid approach. A large hero cell for vehicle image + specs, adjacent cells for cost history and maintenance logs.",
-    "spacing": "Generous spacing philosophy outside of the dense data grid. Use `p-6` or `p-8` for container internal padding. Avoid tight text collisions."
+  "grids_and_layouts": {
+    "bento_dashboard": "Use a 4-column grid (`grid-cols-1 md:grid-cols-2 lg:grid-cols-4`). Span main analytics (e.g. Health Trend) across 2 or 3 columns.",
+    "spacing": "Generous Spacing Philosophy: Use `gap-6` or `gap-8` between widgets. Padding within containers should be high.",
+    "alignment": "Left-align dense tabular data and text. Maintain optical balance with icons."
   },
-  "icons_and_assets": {
-    "library": "@phosphor-icons/react",
-    "instructions": "Use for dense dashboards. Sharp, technical aesthetic."
+  "motion": {
+    "hover_states": "Cards subtly elevate: `-translate-y-1` and shadow deepens. Buttons scale lightly: `active:scale-95 transition-transform`.",
+    "chart_animations": "Enable default Recharts entry animations. Add staggered fade-ins to dashboard widgets on mount."
   },
   "accessibility": {
-    "contrast": "Text below 18px requires 4.5:1. Interactive elements need 3:1 against background. Use text-shadow if placing text over images.",
-    "focus": "Focus states must have HIGHER contrast, e.g., `focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background`.",
-    "testing": "All interactive elements MUST include a `data-testid` attribute (e.g., `data-testid='allocate-mechanic-button'`)."
+    "contrast": "Ensure primary colors meet 4.5:1 ratio against white. For yellow/gold primary (e.g. Ghana), force `text-black` on buttons.",
+    "focus": "All interactives MUST use `focus:ring-2 focus:ring-primary focus:ring-offset-2`.",
+    "testing": "All interactive and key informational elements MUST include a `data-testid` attribute (e.g., `data-testid=\"country-picker-select\"`)."
   },
-  "image_urls": {
-    "fleet_vehicles": [
+  "media": {
+    "image_urls": [
       {
-        "url": "https://images.unsplash.com/photo-1695222833131-54ee679ae8e5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHw0fHxmbGVldCUyMHZlaGljbGUlMjB0cnVjayUyMGRyaXZpbmd8ZW58MHx8fHwxNzg2NjA5NjczfDA&ixlib=rb-4.1.0&q=85",
-        "description": "White semi truck driving down rural road",
-        "category": "vehicle_details_hero"
+        "url": "https://images.unsplash.com/photo-1695395860103-38d172403a46?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwyfHxhZnJpY2FuJTIwdHJ1Y2slMjBkcml2ZXJ8ZW58MHx8fHwxNzg2NjkwMTcwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "African truck driver in vehicle",
+        "category": "driver_avatar_placeholder"
       },
       {
-        "url": "https://images.unsplash.com/photo-1592838064575-70ed626d3a0e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwzfHxmbGVldCUyMHZlaGljbGUlMjB0cnVjayUyMGRyaXZpbmd8ZW58MHx8fHwxNzg2NjA5NjczfDA&ixlib=rb-4.1.0&q=85",
-        "description": "Black truck on road during daytime",
-        "category": "fleet_list_thumbnail"
-      }
-    ],
-    "mechanics": [
-      {
-        "url": "https://images.unsplash.com/photo-1615906655593-ad0386982a0f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwxfHxtZWNoYW5pYyUyMGluc3BlY3RpbmclMjB2ZWhpY2xlJTIwZW5naW5lfGVufDB8fHx8MTc4NjYwOTY3M3ww&ixlib=rb-4.1.0&q=85",
-        "description": "Mechanic working on car engine",
-        "category": "maintenance_allocation_cover"
-      }
-    ],
-    "users": [
-      {
-        "url": "https://images.unsplash.com/photo-1586297135537-94bc9ba060aa?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTF8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBwcm9maWxlJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzg2NjA5Njc0fDA&ixlib=rb-4.1.0&q=85",
-        "description": "Professional woman portrait",
-        "category": "user_avatar_inspector"
+        "url": "https://images.pexels.com/photos/33623771/pexels-photo-33623771.jpeg",
+        "description": "Aerial view of fleet vehicles",
+        "category": "fleet_overview_hero"
       },
       {
-        "url": "https://images.unsplash.com/photo-1506863530036-1efeddceb993?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTF8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBwcm9maWxlJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzg2NjA5Njc0fDA&ixlib=rb-4.1.0&q=85",
-        "description": "Grayscale photo of woman",
-        "category": "user_avatar_admin"
+        "url": "https://images.unsplash.com/photo-1775259332438-7ab777d2622c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxNzV8MHwxfHNlYXJjaHwyfHxhZnJpY2FuJTIwZ2VvbWV0cmljJTIwcGF0dGVybiUyMHRleHR1cmV8ZW58MHx8fHwxNzg2NjkwMTcwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Intricate geometric mosaic tile pattern for African textures",
+        "category": "country_pattern_texture"
       }
     ]
   },
-  "instructions_to_main_agent": [
-    "Prioritize Recharts or standard Shadcn charts for all KPI cost trends. Do not use D3 unless visualizing a highly complex hierarchy.",
-    "Do not center-align layouts. Left-align text for better human readability, particularly in dense dashboards.",
-    "Use Phosphor icons. Command to install: `yarn add @phosphor-icons/react`.",
-    "Ensure `data-testid` is added to all buttons, inputs, links, and major card containers.",
-    "Avoid AI slop and generic UI. Ensure deep Obsidian backgrounds contrasted with Signal Red/Electric Green for precise, technical feeling.",
-    "Apply CSS variables provided in this configuration to `/app/frontend/src/index.css` to override default Shadcn themes.",
-    "Implement Sonner (`yarn add sonner` / Shadcn Sonner component) for all status/toast updates, like checklist completion."
-  ],
-  "universal_guidelines_for_main_agent": [
-    "Avoid generic 'AI slop' aesthetic. Create distinctive frontends with edge and character.",
-    "Use 2-3x more spacing than feels comfortable. Avoid cramped elements.",
-    "Never use pure transparent backgrounds for overlays, modals, or headers.",
-    "Do not apply `transition: all`. Target specific properties like `transition: transform 0.2s ease, opacity 0.2s ease`.",
-    "Never center-align the main App wrapper via `.App { text-align: center; }`.",
-    "Do not use placeholder image services. Use the exact URLs provided in `image_urls`.",
-    "Ensure the UI defaults to the dark theme strategy provided in this document."
+  "instructions_to_main_agent": "1. Strip all references to the old 'Swiss Brutalism' dark theme (remove #080809 bg, sharp grid borders). Replace with the vibrant light-base architecture. 2. Build a Workspace Settings/Header dropdown to select the Country. This must change a React state that applies `data-country={countryCode}` to the root HTML or App wrapper. 3. Define the CSS variable map in index.css covering :root (base vibrant) and [data-country=\"XX\"] overrides. 4. Build the KPI dashboard (9 tiles), vehicle checklist, maintenance kanban, drivers list, parts inventory, and incidents. 5. Integrate Recharts mapping to var(--chart-1)...var(--chart-5). 6. Format all costs dynamically based on the selected country currency symbol. 7. Use Lucide-react icons, NOT emojis. 8. Add `data-testid` to all interactive elements.",
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates what users call the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition. Eg: transition: all. Always add transitions for specific interactive elements.",
+    "You MUST NOT center align the app container, ie do not add .App { text-align: center; }.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "Main agent relies on these image URLs. Missing categories = main agent will use placeholder text which is FORBIDDEN.",
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Use sonner for toasts, located in /app/src/components/ui/sonner.js (or .jsx)."
   ]
 }
