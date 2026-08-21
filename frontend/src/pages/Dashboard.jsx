@@ -1,54 +1,204 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { Link } from "react-router-dom";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell, Legend, CartesianGrid,
 } from "recharts";
-import { ArrowUpRight, TrendUp, Wrench, Truck, ClockCounterClockwise, GasPump, CurrencyDollar, Warning, Package, Crosshair, Bell, Gear, Plus, X as XIcon } from "@phosphor-icons/react";
-import InvestigationPanel from "@/components/InvestigationPanel";
+import {
+  ArrowUpRight, TrendUp, Wrench, Truck, ClockCounterClockwise, GasPump, CurrencyDollar,
+  Warning, Package, Crosshair, Gear, X as XIcon, Siren, IdentificationBadge, Heartbeat,
+  UsersThree, FolderSimple, CaretLeft, Wallet,
+} from "@phosphor-icons/react";
+import InvestigationHub from "@/components/investigation/InvestigationHub";
+import GroupManager from "@/components/GroupManager";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { RadialBarChart, RadialBar, PolarAngleAxis } from "recharts";
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 const COLORS = ["#34C759", "#FF3B30", "#FFCC00", "#3B82F6", "#A855F7"];
+const CHART = {
+  green: "hsl(var(--chart-1))",
+  red: "hsl(var(--chart-2))",
+  gold: "hsl(var(--chart-3))",
+  blue: "hsl(var(--chart-4))",
+  purple: "hsl(var(--chart-5))",
+};
 
+const MAX_TILES = 10;
+
+// breakdown: "both" (vehicle + group), "group" (group only), or null (no drill-down breakdown)
 const ALL_TILES = [
-  { key: "total_vehicles", label: "Total vehicles", icon: Truck, get: k => k?.total_vehicles ?? 0, sub: k => `${k?.active ?? 0} active · ${k?.in_maintenance ?? 0} in maint`, max: k => k?.total_vehicles ?? 10, higher_better: true },
-  { key: "total_maintenance_cost", label: "Maintenance cost", icon: Wrench, get: k => k?.total_maintenance_cost ?? 0, sub: k => `Parts ${money(k?.total_parts_cost)} + labor ${money(k?.total_labor_cost)}`, max: () => 10000, money: true, higher_better: false },
-  { key: "cost_per_vehicle", label: "Cost per vehicle", icon: CurrencyDollar, get: k => k?.cost_per_vehicle ?? 0, sub: () => "Lifetime average", max: () => 2000, money: true, higher_better: false },
-  { key: "downtime", label: "Downtime", icon: ClockCounterClockwise, get: k => k?.total_downtime_hours ?? 0, sub: () => "Completed jobs", suffix: "h", max: () => 100, higher_better: false },
-  { key: "utilization", label: "Fleet utilization", icon: TrendUp, get: k => k?.utilization_pct ?? 0, sub: k => `${k?.active ?? 0} of ${k?.total_vehicles ?? 0} active`, suffix: "%", max: () => 100, higher_better: true },
-  { key: "fuel_cost", label: "Fuel cost (lifetime)", icon: GasPump, get: k => k?.total_fuel_cost ?? 0, sub: k => `${(k?.total_km ?? 0).toLocaleString()} km driven`, max: () => 500000, money: true, higher_better: false },
-  { key: "pending_jobs", label: "Pending jobs", icon: Warning, get: k => k?.pending_jobs ?? 0, sub: () => "Requires action", max: () => 10, higher_better: false },
-  { key: "completed_jobs", label: "Completed jobs", icon: ArrowUpRight, get: k => k?.completed_jobs ?? 0, sub: () => "All time", max: () => 20, higher_better: true },
+  { key: "total_fleet_cost", label: "Total fleet cost", icon: Wallet, color: CHART.gold, get: k => k?.total_fleet_cost ?? 0, sub: () => "Maintenance + fuel + downtime", max: () => 15000, money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "total_vehicles", label: "Total vehicles", icon: Truck, color: CHART.green, get: k => k?.total_vehicles ?? 0, sub: k => `${k?.active ?? 0} active · ${k?.in_maintenance ?? 0} in maint`, max: k => k?.total_vehicles ?? 10, higher_better: true, breakdown: "group", investigate: true },
+  { key: "total_maintenance_cost", label: "Maintenance cost", icon: Wrench, color: CHART.gold, get: k => k?.total_maintenance_cost ?? 0, sub: k => `Parts ${money(k?.total_parts_cost)} + labor ${money(k?.total_labor_cost)}`, max: () => 10000, money: true, higher_better: false, breakdown: "both", investigate: true, spark: t => t.map(x => x.total) },
+  { key: "cost_per_vehicle", label: "Cost per vehicle", icon: CurrencyDollar, color: CHART.gold, get: k => k?.cost_per_vehicle ?? 0, sub: () => "Lifetime average", max: () => 2000, money: true, higher_better: false, breakdown: null, investigate: true },
+  { key: "downtime_cost", label: "Downtime cost", icon: ClockCounterClockwise, color: CHART.blue, get: k => k?.total_downtime_cost ?? 0, sub: k => `${k?.total_downtime_hours ?? 0}h across the fleet`, max: () => 5000, money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "utilization", label: "Fleet utilization", icon: TrendUp, color: CHART.green, get: k => k?.utilization_pct ?? 0, sub: k => `${k?.active ?? 0} of ${k?.total_vehicles ?? 0} active`, suffix: "%", max: () => 100, higher_better: true, breakdown: null, investigate: true },
+  { key: "fuel_cost", label: "Fuel cost", icon: GasPump, color: CHART.gold, get: k => k?.total_fuel_cost ?? 0, sub: () => "Logged fuel transactions", max: () => 10000, money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "pending_jobs", label: "Pending jobs", icon: Warning, color: CHART.red, get: k => k?.pending_jobs ?? 0, sub: () => "Requires action", max: () => 10, higher_better: false, breakdown: "both", investigate: true },
+  { key: "completed_jobs", label: "Completed jobs", icon: ArrowUpRight, color: CHART.blue, get: k => k?.completed_jobs ?? 0, sub: () => "All time", max: () => 20, higher_better: true, breakdown: "both", investigate: true },
+  { key: "open_incidents", label: "Open incidents", icon: Siren, color: CHART.red, get: k => k?.open_incidents ?? 0, sub: () => "Moderate or severe severity", max: () => 5, higher_better: false, breakdown: null, investigate: false, link: "/incidents" },
+  { key: "low_stock_parts", label: "Low stock parts", icon: Package, color: CHART.red, get: k => k?.low_stock_parts ?? 0, sub: () => "At or below reorder point", max: () => 10, higher_better: false, breakdown: null, investigate: false, link: "/parts" },
+  { key: "license_expiring", label: "Licenses expiring", icon: IdentificationBadge, color: CHART.red, get: k => k?.license_expiring ?? 0, sub: () => "Within 30 days", max: () => 5, higher_better: false, breakdown: null, investigate: false, link: "/drivers" },
+  { key: "cost_anomalies", label: "Cost anomalies", icon: TrendUp, color: CHART.red, get: k => k?.cost_anomalies ?? 0, sub: () => "Above normal spend band", max: () => 5, higher_better: false, breakdown: null, investigate: false, link: "/reports" },
+  { key: "fleet_health_avg", label: "Avg fleet health", icon: Heartbeat, color: CHART.purple, get: k => k?.fleet_health_avg ?? 0, sub: () => "Composite score across fleet", suffix: "%", max: () => 100, higher_better: true, breakdown: null, investigate: false, link: "/fleet" },
+  { key: "active_drivers", label: "Active drivers", icon: UsersThree, color: CHART.green, get: k => k?.active_drivers ?? 0, sub: k => `of ${k?.total_drivers ?? 0} total`, max: k => k?.total_drivers || 10, higher_better: true, breakdown: null, investigate: false, link: "/drivers" },
+  { key: "parts_inventory_value", label: "Parts inventory value", icon: Package, color: CHART.gold, get: k => k?.parts_inventory_value ?? 0, sub: () => "Stock on hand × unit cost", max: () => 20000, money: true, higher_better: true, breakdown: null, investigate: false, link: "/parts" },
 ];
 
-const DEFAULT_TILES = ["total_vehicles", "total_maintenance_cost", "cost_per_vehicle", "downtime", "utilization", "fuel_cost", "pending_jobs", "completed_jobs"];
+const DEFAULT_TILES = ["total_fleet_cost", "total_vehicles", "total_maintenance_cost", "cost_per_vehicle", "downtime_cost", "utilization", "fuel_cost", "pending_jobs", "completed_jobs"];
+const defaultConfigs = () => DEFAULT_TILES.map(key => ({ key, threshold: null, view_by: "none", group_id: null }));
 
-const GaugeTile = ({ tile, kpi, onClick }) => {
+const gaugeColor = (tile, val, pct, threshold) => {
+  if (threshold != null && !Number.isNaN(threshold)) {
+    const bad = tile.higher_better ? val < threshold : val > threshold;
+    return bad ? CHART.red : CHART.green;
+  }
+  return tile.higher_better
+    ? (pct >= 66 ? CHART.green : pct >= 33 ? CHART.gold : CHART.red)
+    : (pct <= 33 ? CHART.green : pct <= 66 ? CHART.gold : CHART.red);
+};
+
+const GaugeTile = ({ tile, kpi, cfg, trend, onClick, onGear }) => {
   const val = tile.get(kpi);
   const max = tile.max(kpi);
   const pct = Math.min(100, Math.max(0, (val / max) * 100 || 0));
-  // Color logic: for "higher is better" green when high, red when low; else reverse
-  const color = tile.higher_better ? (pct >= 66 ? "#34C759" : pct >= 33 ? "#FFCC00" : "#FF3B30") : (pct <= 33 ? "#34C759" : pct <= 66 ? "#FFCC00" : "#FF3B30");
+  const color = gaugeColor(tile, val, pct, cfg?.threshold);
   const display = tile.money ? money(val) : `${typeof val === "number" ? val.toLocaleString() : val}${tile.suffix || ""}`;
+  const sparkData = tile.spark ? tile.spark(trend) : null;
+  const viewByLabel = cfg?.view_by === "vehicle" ? "By vehicle" : cfg?.view_by === "group" ? "By group" : null;
+
+  const Wrapper = tile.link ? Link : "button";
+  const wrapperProps = tile.link ? { to: tile.link } : { type: "button", onClick };
+
   return (
-    <button type="button" onClick={onClick} className="text-left bg-[#121214] border border-border p-6 hover:border-primary transition-colors" data-testid={`kpi-${tile.key}`}>
-      <div className="flex items-start justify-between">
-        <div className="overline">{tile.label}</div>
-        <tile.icon size={18} className="text-muted-foreground" />
-      </div>
-      <div className="mono text-2xl font-bold mt-3">{display}</div>
-      <div className="mt-3 relative flex items-center justify-center" style={{ height: 90 }}>
-        <RadialBarChart width={140} height={90} innerRadius={38} outerRadius={55} data={[{ v: pct }]} startAngle={180} endAngle={0}>
-          <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
-          <RadialBar dataKey="v" cornerRadius={4} fill={color} background={{ fill: "#27272a" }} />
-        </RadialBarChart>
-      </div>
-      <div className="text-xs text-muted-foreground">{tile.sub(kpi)}</div>
-      <div className="overline mt-2 text-primary">Investigate →</div>
-    </button>
+    <div className="relative bg-[#121214] border border-border overflow-hidden group" style={{ borderLeft: `3px solid ${tile.color}` }} data-testid={`kpi-${tile.key}`}>
+      <button
+        type="button"
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onGear(); }}
+        data-testid={`kpi-gear-${tile.key}`}
+        title="Configure tile"
+        className="absolute top-3 right-3 z-10 p-1.5 text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        <Gear size={16} />
+      </button>
+      <Wrapper {...wrapperProps} className="block text-left w-full p-6 hover:bg-white/[0.02] transition-colors">
+        <div className="flex items-start gap-3">
+          <div className="w-8 h-8 flex items-center justify-center shrink-0" style={{ background: `${tile.color}1a`, border: `1px solid ${tile.color}66` }}>
+            <tile.icon size={16} style={{ color: tile.color }} />
+          </div>
+          <div className="min-w-0 pt-0.5">
+            <div className="overline truncate">{tile.label}</div>
+            {viewByLabel && <div className="text-[10px] mono uppercase tracking-widest text-muted-foreground mt-0.5">{viewByLabel}</div>}
+          </div>
+        </div>
+        <div className="mono text-2xl font-bold mt-3">{display}</div>
+        {sparkData && sparkData.length > 1 ? (
+          <div style={{ height: 28 }} className="mt-2 -mx-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={sparkData.map(v => ({ v }))}>
+                <Line type="monotone" dataKey="v" stroke={tile.color} strokeWidth={1.5} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ) : null}
+        <div className="mt-3 relative flex items-center justify-center" style={{ height: 90 }}>
+          <RadialBarChart width={140} height={90} innerRadius={38} outerRadius={55} data={[{ v: pct }]} startAngle={180} endAngle={0}>
+            <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
+            <RadialBar dataKey="v" cornerRadius={4} fill={color} background={{ fill: "#27272a" }} />
+          </RadialBarChart>
+        </div>
+        <div className="text-xs text-muted-foreground">{tile.sub(kpi)}</div>
+        <div className="overline mt-2" style={{ color: tile.color }}>
+          {tile.link ? "View details →" : "Investigate →"}
+        </div>
+      </Wrapper>
+    </div>
+  );
+};
+
+const TileGearSheet = ({ tile, cfg, groups, onClose, onSave }) => {
+  const [threshold, setThreshold] = useState(cfg?.threshold ?? "");
+  const [viewBy, setViewBy] = useState(cfg?.view_by ?? "none");
+
+  useEffect(() => {
+    setThreshold(cfg?.threshold ?? "");
+    setViewBy(cfg?.view_by ?? "none");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-sync local edit state only when the sheet is opened for a different tile
+  }, [tile?.key]);
+
+  if (!tile) return null;
+
+  const save = () => {
+    onSave({
+      key: tile.key,
+      threshold: threshold === "" ? null : Number(threshold),
+      view_by: viewBy,
+      group_id: null,
+    });
+    onClose();
+  };
+
+  return (
+    <Sheet open={!!tile} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="right" className="border-border bg-[#0b0b0d] w-full sm:max-w-md" data-testid="tile-gear-sheet">
+        <SheetHeader>
+          <div className="overline">Tile settings</div>
+          <SheetTitle className="font-display text-2xl">{tile.label}</SheetTitle>
+          <SheetDescription>Set an alert threshold and how drill-down data is grouped.</SheetDescription>
+        </SheetHeader>
+
+        <div className="mt-6 space-y-6">
+          <div>
+            <label className="overline block mb-2">
+              Alert threshold {tile.higher_better ? "(flag if below)" : "(flag if above)"}
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={threshold}
+                onChange={(e) => setThreshold(e.target.value)}
+                placeholder={tile.money ? "e.g. 5000" : "e.g. 80"}
+                data-testid="tile-threshold-input"
+                className="w-full bg-[#121214] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              />
+              {threshold !== "" && (
+                <button onClick={() => setThreshold("")} className="text-muted-foreground hover:text-primary p-1" title="Clear threshold" data-testid="tile-threshold-clear">
+                  <XIcon size={16} />
+                </button>
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground mt-2">
+              When set, the gauge turns red once this tile crosses the threshold instead of using the default scale.
+            </div>
+          </div>
+
+          {tile.breakdown && (
+            <div>
+              <label className="overline block mb-2">Investigate — view by</label>
+              <select
+                value={viewBy}
+                onChange={(e) => setViewBy(e.target.value)}
+                data-testid="tile-viewby-select"
+                className="w-full bg-[#121214] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              >
+                <option value="none">Flat list</option>
+                {tile.breakdown === "both" && <option value="vehicle">By vehicle</option>}
+                <option value="group">By group{groups.length === 0 ? " (no groups yet)" : ""}</option>
+              </select>
+              <div className="text-xs text-muted-foreground mt-2">Changes how rows are grouped when you click "Investigate" on this tile.</div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2 mt-8 pt-4 border-t border-border">
+          <button onClick={onClose} className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid="tile-gear-cancel">Cancel</button>
+          <button onClick={save} className="ml-auto bg-primary text-primary-foreground px-4 py-2 text-xs uppercase tracking-widest hover:bg-primary/90" data-testid="tile-gear-save">Save</button>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 };
 
@@ -61,6 +211,12 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState([]);
   const [forecast, setForecast] = useState({ history: [], forecast: [] });
   const [anomalies, setAnomalies] = useState([]);
+  const [drivers, setDrivers] = useState([]);
+  const [parts, setParts] = useState([]);
+  const [health, setHealth] = useState([]);
+  const [groups, setGroups] = useState([]);
+
+  const loadGroups = () => api.get("/vehicle-groups").then(r => setGroups(r.data || [])).catch(() => {});
 
   useEffect(() => {
     Promise.all([
@@ -72,27 +228,69 @@ export default function Dashboard() {
       api.get("/parts/alerts").then(r => setAlerts(r.data)),
       api.get("/analytics/forecast").then(r => setForecast(r.data)),
       api.get("/analytics/anomalies").then(r => setAnomalies(r.data)),
+      api.get("/drivers").then(r => setDrivers(r.data || [])),
+      api.get("/parts").then(r => setParts(r.data || [])),
+      api.get("/analytics/fleet-health").then(r => setHealth(r.data || [])),
+      loadGroups(),
     ]).catch(() => {});
   }, []);
 
   const nextForecast = forecast.forecast[0];
-  const [investigate, setInvestigate] = useState(null);
+  const [investigate, setInvestigate] = useState(null); // { key, groupBy }
   const [liveAlerts, setLiveAlerts] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
-  const [tileKeys, setTileKeys] = useState(DEFAULT_TILES);
-  const saveTiles = (keys) => {
-    setTileKeys(keys);
-    api.put("/users/me/prefs", { dashboard_tiles: keys }).catch(() => {});
+  const [configView, setConfigView] = useState("tiles"); // "tiles" | "groups"
+  const [gearTileKey, setGearTileKey] = useState(null);
+  const [tileConfigs, setTileConfigs] = useState(defaultConfigs());
+
+  const saveTiles = (configs) => {
+    setTileConfigs(configs);
+    api.put("/users/me/prefs", { dashboard_tiles: configs }).catch(() => {});
   };
-  const activeTiles = ALL_TILES.filter(t => tileKeys.includes(t.key));
+
+  const cfgMap = useMemo(() => Object.fromEntries(tileConfigs.map(c => [c.key, c])), [tileConfigs]);
+  const activeTiles = ALL_TILES.filter(t => cfgMap[t.key]);
+  const atCap = tileConfigs.length >= MAX_TILES;
 
   useEffect(() => { api.get("/alerts").then(r => setLiveAlerts(r.data)).catch(() => {}); }, []);
   useEffect(() => {
     api.get("/users/me/prefs").then(r => {
       const saved = r.data?.dashboard_tiles;
-      if (Array.isArray(saved) && saved.length > 0) setTileKeys(saved);
+      if (Array.isArray(saved) && saved.length > 0) {
+        // Backward-compat: older prefs stored plain string keys instead of config objects.
+        const normalized = saved.map(t => (typeof t === "string" ? { key: t, threshold: null, view_by: "none", group_id: null } : t))
+          .filter(t => ALL_TILES.some(at => at.key === t.key));
+        if (normalized.length > 0) setTileConfigs(normalized);
+      }
     }).catch(() => {});
   }, []);
+
+  const activeDrivers = drivers.filter(d => d.status === "active").length;
+  const partsValue = parts.reduce((s, p) => s + (p.stock || 0) * (p.unit_cost || 0), 0);
+  const healthAvg = health.length ? Math.round(health.reduce((s, h) => s + (h.score || 0), 0) / health.length) : 0;
+
+  const metrics = kpi ? {
+    ...kpi,
+    open_incidents: liveAlerts?.buckets?.open_incidents ?? 0,
+    low_stock_parts: liveAlerts?.buckets?.low_stock_parts ?? 0,
+    license_expiring: liveAlerts?.buckets?.license_expiring ?? 0,
+    cost_anomalies: liveAlerts?.buckets?.cost_anomalies ?? 0,
+    fleet_health_avg: healthAvg,
+    active_drivers: activeDrivers,
+    total_drivers: drivers.length,
+    parts_inventory_value: partsValue,
+  } : null;
+
+  const gearTile = gearTileKey ? ALL_TILES.find(t => t.key === gearTileKey) : null;
+
+  const toggleTile = (key, on) => {
+    if (on) {
+      if (atCap) return;
+      saveTiles([...tileConfigs, { key, threshold: null, view_by: "none", group_id: null }]);
+    } else {
+      saveTiles(tileConfigs.filter(c => c.key !== key));
+    }
+  };
 
   return (
     <div className="noise-bg min-h-screen">
@@ -113,13 +311,13 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-      <header className="border-b border-border px-8 py-6 flex items-end justify-between">
+      <header className="border-b border-border px-8 py-6 flex items-end justify-between flex-wrap gap-4">
         <div>
           <div className="overline">Command center</div>
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="dashboard-title">Fleet Operations</h1>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setShowConfig(true)} data-testid="configure-tiles" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
+          <button onClick={() => { setConfigView("tiles"); setShowConfig(true); }} data-testid="configure-tiles" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
             <Gear size={14} /> Configure tiles
           </button>
           <Link to="/maintenance" className="bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors" data-testid="link-maintenance">Maintenance board</Link>
@@ -178,9 +376,20 @@ export default function Dashboard() {
           </div>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="kpi-grid">
-          {activeTiles.map(t => (
-            <GaugeTile key={t.key} tile={t} kpi={kpi} onClick={() => setInvestigate(t.key === "total_maintenance_cost" ? "total_maintenance_cost" : t.key)} />
-          ))}
+          {activeTiles.map(t => {
+            const cfg = cfgMap[t.key];
+            return (
+              <GaugeTile
+                key={t.key}
+                tile={t}
+                kpi={metrics}
+                cfg={cfg}
+                trend={trend}
+                onClick={() => t.investigate && setInvestigate({ key: t.key, label: t.label, groupBy: cfg?.view_by !== "none" ? cfg?.view_by : null })}
+                onGear={() => setGearTileKey(t.key)}
+              />
+            );
+          })}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -199,9 +408,9 @@ export default function Dashboard() {
                 <YAxis stroke="#636366" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }} />
                 <Tooltip contentStyle={{ background: "#0b0b0d", border: "1px solid #27272a", fontFamily: "JetBrains Mono", fontSize: 12 }} />
                 <Legend wrapperStyle={{ fontSize: 12, fontFamily: "IBM Plex Sans" }} />
-                <Line type="monotone" dataKey="parts" stroke="#FFCC00" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="labor" stroke="#34C759" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="total" stroke="#FF3B30" strokeWidth={2.5} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="parts" stroke={CHART.gold} strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="labor" stroke={CHART.green} strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="total" stroke={CHART.red} strokeWidth={2.5} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -231,7 +440,7 @@ export default function Dashboard() {
                 <XAxis dataKey="vehicle" stroke="#636366" tick={{ fontSize: 11 }} />
                 <YAxis stroke="#636366" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }} />
                 <Tooltip contentStyle={{ background: "#0b0b0d", border: "1px solid #27272a", fontSize: 12 }} />
-                <Bar dataKey="cost" fill="#FF3B30" />
+                <Bar dataKey="cost" fill={CHART.red} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -259,39 +468,70 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
-      <InvestigationPanel kpiKey={investigate} onClose={() => setInvestigate(null)} />
-      {showConfig && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6" onClick={() => setShowConfig(false)}>
-          <div className="bg-[#121214] border border-border max-w-lg w-full p-6" onClick={(e) => e.stopPropagation()} data-testid="tile-config">
-            <div className="flex items-start justify-between mb-4">
-              <div>
+
+      <InvestigationHub root={investigate} groups={groups} onClose={() => setInvestigate(null)} />
+
+      <TileGearSheet
+        tile={gearTile}
+        cfg={gearTile ? cfgMap[gearTile.key] : null}
+        groups={groups}
+        onClose={() => setGearTileKey(null)}
+        onSave={(newCfg) => saveTiles(tileConfigs.map(c => (c.key === newCfg.key ? newCfg : c)))}
+      />
+
+      <Sheet open={showConfig} onOpenChange={setShowConfig}>
+        <SheetContent side="right" className="border-border bg-[#0b0b0d] w-full sm:max-w-lg flex flex-col" data-testid="tile-config">
+          {configView === "tiles" ? (
+            <>
+              <SheetHeader>
                 <div className="overline">Tile configuration</div>
-                <h3 className="font-display font-bold text-2xl mt-1">Choose your KPIs</h3>
+                <SheetTitle className="font-display text-2xl">Choose your KPIs</SheetTitle>
+                <SheetDescription>
+                  Up to {MAX_TILES} tiles at once — {tileConfigs.length}/{MAX_TILES} selected{atCap ? ". Remove one to add another." : "."}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="space-y-2 mt-4 flex-1 overflow-y-auto pr-1">
+                {ALL_TILES.map(t => {
+                  const on = !!cfgMap[t.key];
+                  const disabled = !on && atCap;
+                  return (
+                    <label key={t.key} className={`flex items-center gap-3 border p-3 ${disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"} ${on ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`} data-testid={`tile-toggle-${t.key}`}>
+                      <input type="checkbox" checked={on} disabled={disabled} onChange={(e) => toggleTile(t.key, e.target.checked)} className="accent-primary" />
+                      <div className="w-6 h-6 flex items-center justify-center shrink-0" style={{ background: `${t.color}1a`, border: `1px solid ${t.color}66` }}>
+                        <t.icon size={13} style={{ color: t.color }} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-sm">{t.label}</div>
+                        <div className="text-xs text-muted-foreground">{t.higher_better ? "Higher is better" : "Lower is better"}</div>
+                      </div>
+                    </label>
+                  );
+                })}
               </div>
-              <button onClick={() => setShowConfig(false)} className="text-muted-foreground hover:text-primary"><XIcon size={20} /></button>
-            </div>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {ALL_TILES.map(t => {
-                const on = tileKeys.includes(t.key);
-                return (
-                  <label key={t.key} className={`flex items-center gap-3 border p-3 cursor-pointer ${on ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`} data-testid={`tile-toggle-${t.key}`}>
-                    <input type="checkbox" checked={on} onChange={(e) => saveTiles(e.target.checked ? [...tileKeys, t.key] : tileKeys.filter(k => k !== t.key))} className="accent-primary" />
-                    <t.icon size={18} className="text-muted-foreground" />
-                    <div>
-                      <div className="text-sm">{t.label}</div>
-                      <div className="text-xs text-muted-foreground">{t.higher_better ? "Higher is better" : "Lower is better"}</div>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
-            <div className="flex gap-2 mt-4 pt-4 border-t border-border">
-              <button onClick={() => saveTiles(DEFAULT_TILES)} className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid="reset-tiles">Reset to default</button>
-              <button onClick={() => setShowConfig(false)} className="ml-auto bg-primary text-primary-foreground px-4 py-2 text-xs uppercase tracking-widest hover:bg-primary/90" data-testid="done-tiles">Done</button>
-            </div>
-          </div>
-        </div>
-      )}
+              <div className="flex gap-2 mt-4 pt-4 border-t border-border">
+                <button onClick={() => saveTiles(defaultConfigs())} className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid="reset-tiles">Reset to default</button>
+                <button onClick={() => setConfigView("groups")} className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid="manage-groups">
+                  <FolderSimple size={14} /> Manage groups
+                </button>
+                <button onClick={() => setShowConfig(false)} className="ml-auto bg-primary text-primary-foreground px-4 py-2 text-xs uppercase tracking-widest hover:bg-primary/90" data-testid="done-tiles">Done</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <SheetHeader>
+                <button onClick={() => setConfigView("tiles")} className="flex items-center gap-1 overline hover:text-primary mb-2 w-fit" data-testid="back-to-tiles">
+                  <CaretLeft size={12} /> Back to tiles
+                </button>
+                <SheetTitle className="font-display text-2xl">Vehicle groups</SheetTitle>
+                <SheetDescription>Used by tiles configured to "view by group" — organize vehicles into fleets like Regional or Long-haul.</SheetDescription>
+              </SheetHeader>
+              <div className="mt-4 flex-1 overflow-y-auto pr-1">
+                <GroupManager groups={groups} onChange={loadGroups} />
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

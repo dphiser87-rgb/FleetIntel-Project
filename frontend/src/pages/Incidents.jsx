@@ -32,6 +32,7 @@ export default function Incidents() {
   const [editing, setEditing] = useState(null);
   const [lightbox, setLightbox] = useState(null); // { photos: [], index: 0, incident: {} }
   const lightboxRef = useRef(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- re-focus only when the open incident changes, not on every lightbox field (e.g. photo index navigation)
   useEffect(() => { if (lightbox && lightboxRef.current) lightboxRef.current.focus(); }, [lightbox?.incident?.id]);
 
   const load = async () => {

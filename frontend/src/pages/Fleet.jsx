@@ -27,15 +27,22 @@ const HealthPill = ({ score, status }) => {
 export default function Fleet() {
   const [vehicles, setVehicles] = useState([]);
   const [health, setHealth] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [sortBy, setSortBy] = useState("health");
-  const [form, setForm] = useState({ name: "", plate: "", make: "", model: "", year: 2023, type: "truck", odometer: 0, fuel_cost_per_km: 0.35 });
+  const [form, setForm] = useState({ name: "", plate: "", make: "", model: "", year: 2023, type: "truck", odometer: 0, fuel_cost_per_km: 0.35, group_id: "" });
 
   const load = async () => {
-    const [v, h] = await Promise.all([api.get("/vehicles"), api.get("/analytics/fleet-health").catch(() => ({ data: [] }))]);
-    setVehicles(v.data); setHealth(h.data || []);
+    const [v, h, g] = await Promise.all([
+      api.get("/vehicles"),
+      api.get("/analytics/fleet-health").catch(() => ({ data: [] })),
+      api.get("/vehicle-groups").catch(() => ({ data: [] })),
+    ]);
+    setVehicles(v.data); setHealth(h.data || []); setGroups(g.data || []);
   };
   useEffect(() => { load(); }, []);
+
+  const groupMap = useMemo(() => Object.fromEntries(groups.map(g => [g.id, g])), [groups]);
 
   const healthMap = useMemo(() => Object.fromEntries(health.map(h => [h.vehicle_id, h])), [health]);
   const sortedVehicles = useMemo(() => {
@@ -50,10 +57,10 @@ export default function Fleet() {
   const save = async (e) => {
     e.preventDefault();
     try {
-      await api.post("/vehicles", { ...form, year: Number(form.year), odometer: Number(form.odometer), fuel_cost_per_km: Number(form.fuel_cost_per_km) });
+      await api.post("/vehicles", { ...form, year: Number(form.year), odometer: Number(form.odometer), fuel_cost_per_km: Number(form.fuel_cost_per_km), group_id: form.group_id || null });
       toast.success("Vehicle added");
       setShowAdd(false);
-      setForm({ name: "", plate: "", make: "", model: "", year: 2023, type: "truck", odometer: 0, fuel_cost_per_km: 0.35 });
+      setForm({ name: "", plate: "", make: "", model: "", year: 2023, type: "truck", odometer: 0, fuel_cost_per_km: 0.35, group_id: "" });
       load();
     } catch { toast.error("Failed to add vehicle"); }
   };
@@ -129,6 +136,13 @@ export default function Fleet() {
               {["truck","van","car","bus","trailer"].map(t => <option key={t}>{t}</option>)}
             </select>
           </div>
+          <div>
+            <label className="overline block mb-1">Group</label>
+            <select value={form.group_id} onChange={set("group_id")} data-testid="v-group" className="w-full bg-[#121214] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+              <option value="">No group</option>
+              {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+          </div>
           <div className="col-span-2 lg:col-span-4 flex gap-2">
             <button type="submit" data-testid="save-vehicle" className="bg-primary px-4 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">Save vehicle</button>
             <button type="button" onClick={() => setShowAdd(false)} className="border border-border px-4 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">Cancel</button>
@@ -165,6 +179,9 @@ export default function Fleet() {
                   <div className="text-right">
                     <div className="mono text-sm">{(v.odometer || 0).toLocaleString()} km</div>
                     <div className="overline mt-1">{v.type}</div>
+                    {groupMap[v.group_id] && (
+                      <div className="text-[10px] mono uppercase tracking-widest text-[#3B82F6] mt-1">{groupMap[v.group_id].name}</div>
+                    )}
                   </div>
                 </div>
                 {h && h.factors.length > 0 && (
