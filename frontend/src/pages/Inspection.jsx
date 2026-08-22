@@ -2,10 +2,17 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { CaretLeft, CheckCircle, XCircle, Wrench, Camera } from "@phosphor-icons/react";
+import { CaretLeft, CheckCircle, XCircle, Wrench, Camera, MapPin, Warning } from "@phosphor-icons/react";
+import SignaturePad from "@/components/SignaturePad";
+
+// Mirrors maintenance.category — reused so a defect type maps directly onto the existing
+// maintenance taxonomy instead of inventing a second, unrelated one.
+const DEFECT_TYPES = ["tyres", "engine", "brakes", "electrical", "bodywork", "general"];
 
 export default function Inspection() {
-  const { vehicleId } = useParams();
+  const { targetType = "vehicle", vehicleId: routeVehicleId, id: routeId } = useParams();
+  const vehicleId = routeVehicleId || routeId; // both route shapes resolve to the same param name inside this component
+  const isVehicle = targetType === "vehicle";
   const navigate = useNavigate();
   const [vehicle, setVehicle] = useState(null);
   const [templates, setTemplates] = useState([]);
@@ -18,15 +25,31 @@ export default function Inspection() {
   const [inspection, setInspection] = useState(null);
   const [alloc, setAlloc] = useState({ title: "", description: "", priority: "medium", estimated_cost: 0, estimated_hours: 0, parts_cost: 0, labor_cost: 0, assigned_to: "" });
   const [mechanics, setMechanics] = useState([]);
+  const [signature, setSignature] = useState(null);
+  const [location, setLocation] = useState({ status: "idle", latitude: null, longitude: null });
+  const clientSubmissionId = React.useRef(crypto.randomUUID()).current;
+
+  const captureLocation = () => {
+    if (!navigator.geolocation) { setLocation({ status: "unavailable" }); return; }
+    setLocation({ status: "capturing" });
+    // getCurrentPosition triggers the browser's native "Allow location access?" prompt itself.
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setLocation({ status: "captured", latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      (err) => setLocation({ status: err.code === err.PERMISSION_DENIED ? "denied" : "unavailable" }),
+      { timeout: 8000 }
+    );
+  };
 
   useEffect(() => {
-    api.get(`/vehicles/${vehicleId}`).then(r => { setVehicle(r.data); setOdometer(r.data.odometer || 0); });
+    const fetchTarget = isVehicle ? api.get(`/vehicles/${vehicleId}`) : api.get(`/assets/${vehicleId}`);
+    fetchTarget.then(r => { setVehicle(r.data); setOdometer(r.data.odometer || 0); });
     api.get("/templates").then(r => {
-      setTemplates(r.data);
-      if (r.data[0]) setTemplateId(r.data[0].id);
+      const matching = r.data.filter(t => (t.type || "vehicle") === targetType);
+      setTemplates(matching);
+      if (matching[0]) setTemplateId(matching[0].id);
     });
-    api.get("/users").then(r => setMechanics(r.data.filter(u => u.role === "mechanic")));
-  }, [vehicleId]);
+    if (isVehicle) api.get("/users").then(r => setMechanics(r.data.filter(u => u.role === "mechanic")));
+  }, [vehicleId, targetType, isVehicle]);
 
   useEffect(() => {
     if (templateId) api.get(`/templates/${templateId}`).then(r => setTemplate(r.data));
@@ -34,6 +57,7 @@ export default function Inspection() {
 
   const setAnswer = (itemId, value) => setAnswers({ ...answers, [itemId]: { ...(answers[itemId] || {}), value } });
   const setAnswerNote = (itemId, note) => setAnswers({ ...answers, [itemId]: { ...(answers[itemId] || {}), note } });
+  const setAnswerDefectType = (itemId, defect_type) => setAnswers({ ...answers, [itemId]: { ...(answers[itemId] || {}), defect_type } });
   const setAnswerPhoto = (itemId, file) => {
     if (!file) return;
     const reader = new FileReader();
@@ -43,23 +67,56 @@ export default function Inspection() {
 
   const failCount = Object.values(answers).filter(a => String(a.value).toLowerCase() === "fail").length;
 
+  // Every defect is a hard stop until type, photo, and note are all present — not a soft warning.
+  const defectValidationErrors = template
+    ? template.sections.flatMap(s => s.items)
+        .filter(it => String((answers[it.id] || {}).value).toLowerCase() === "fail")
+        .map(it => {
+          const a = answers[it.id] || {};
+          const missing = [];
+          if (!a.defect_type) missing.push("defect type");
+          if (!a.photo) missing.push("photo");
+          if (!a.note || !a.note.trim()) missing.push("note");
+          return missing.length ? { item: it, missing } : null;
+        })
+        .filter(Boolean)
+    : [];
+
+  const odometerMissing = isVehicle && (odometer === "" || odometer === null || Number(odometer) <= 0);
+
   const submit = async () => {
     if (!template) return;
+    if (odometerMissing) { toast.error("Odometer reading is required before submitting"); return; }
+    if (!signature) { toast.error("Signature is required before submitting"); return; }
+    if (defectValidationErrors.length > 0) {
+      const first = defectValidationErrors[0];
+      toast.error(`"${first.item.label}" is marked as a defect but is missing ${first.missing.join(", ")}`);
+      return;
+    }
     const payload = {
       template_id: template.id,
-      vehicle_id: vehicleId,
-      odometer: Number(odometer) || null,
+      ...(isVehicle ? { vehicle_id: vehicleId } : { asset_id: vehicleId }),
+      odometer: isVehicle ? (Number(odometer) || null) : null,
       notes,
-      answers: Object.entries(answers).map(([item_id, a]) => ({ item_id, value: String(a.value || ""), note: a.note || "", photo: a.photo || null })),
+      answers: Object.entries(answers).map(([item_id, a]) => ({ item_id, value: String(a.value || ""), note: a.note || "", photo: a.photo || null, defect_type: a.defect_type || null })),
+      completed_at: new Date().toISOString(),
+      signature,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      location_status: location.status === "captured" ? "captured" : location.status === "denied" ? "denied" : location.status === "unavailable" ? "unavailable" : "not_attempted",
+      client_submission_id: clientSubmissionId,
     };
     try {
       const { data } = await api.post("/inspections", payload);
       setInspection(data);
       toast.success(`Inspection complete · ${failCount} failed items`);
-      setAlloc({ ...alloc, title: `Repair from inspection · ${vehicle?.name}`, description: `${failCount} failed items on ${new Date().toLocaleDateString()}` });
-      if (failCount > 0) setStep("allocate");
-      else setTimeout(() => navigate(`/fleet/${vehicleId}`), 1000);
-    } catch { toast.error("Failed to save inspection"); }
+      if (isVehicle && failCount > 0) {
+        setAlloc({ ...alloc, title: `Repair from inspection · ${vehicle?.name}`, description: `${failCount} failed items on ${new Date().toLocaleDateString()}` });
+        setStep("allocate");
+      } else {
+        setTimeout(() => navigate(isVehicle ? `/fleet/${vehicleId}` : "/assets"), 1000);
+      }
+    } catch { toast.error("Failed to save inspection — retry is safe, it won't create a duplicate"); }
   };
 
   const allocate = async () => {
@@ -86,10 +143,10 @@ export default function Inspection() {
   return (
     <div className="noise-bg min-h-screen pb-24">
       <header className="border-b border-border px-8 py-6">
-        <Link to={`/fleet/${vehicleId}`} className="overline flex items-center gap-1 mb-3 hover:text-primary"><CaretLeft size={12}/> Back to vehicle</Link>
+        <Link to={isVehicle ? `/fleet/${vehicleId}` : "/assets"} className="overline flex items-center gap-1 mb-3 hover:text-primary"><CaretLeft size={12}/> Back to {isVehicle ? "vehicle" : "assets"}</Link>
         <div className="flex items-end justify-between flex-wrap gap-4">
           <div>
-            <div className="overline">{vehicle.plate} · {vehicle.name}</div>
+            <div className="overline">{isVehicle ? `${vehicle.plate} · ${vehicle.name}` : `${vehicle.identifier || vehicle.kind} · ${vehicle.name}`}</div>
             <h1 className="font-display font-black text-4xl tracking-tight mt-1">{step === "inspect" ? "Digital inspection" : "Allocate for maintenance"}</h1>
           </div>
           <div className="mono text-xs text-muted-foreground">
@@ -108,28 +165,30 @@ export default function Inspection() {
               {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </div>
-          <div>
-            <label className="overline block mb-2">Odometer (km)</label>
-            <div className="flex gap-1">
-              <input type="number" value={odometer} onChange={(e) => setOdometer(e.target.value)} data-testid="inspection-odometer"
-                className="flex-1 bg-[#121214] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none" />
-              <label className="cursor-pointer border border-border px-3 py-2.5 text-xs text-muted-foreground hover:border-primary hover:text-primary flex items-center gap-1" data-testid="scan-odometer" title="Scan odometer from photo">
-                <Camera size={14} /> Scan
-                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
-                  const file = e.target.files?.[0]; if (!file) return;
-                  const reader = new FileReader();
-                  reader.onloadend = async () => {
-                    try {
-                      const { data } = await api.post("/ocr", { image_base64: reader.result, mode: "odometer" });
-                      setOdometer(data.value);
-                      toast.success(`Odometer: ${data.value}`);
-                    } catch { toast.error("OCR failed"); }
-                  };
-                  reader.readAsDataURL(file);
-                }} />
-              </label>
+          {isVehicle && (
+            <div>
+              <label className="overline block mb-2">Odometer (km) <span className="text-primary">*</span></label>
+              <div className="flex gap-1">
+                <input type="number" value={odometer} onChange={(e) => setOdometer(e.target.value)} data-testid="inspection-odometer"
+                  className={`flex-1 bg-[#121214] border px-3 py-2.5 text-sm focus:outline-none ${odometerMissing ? "border-primary" : "border-border focus:border-primary"}`} />
+                <label className="cursor-pointer border border-border px-3 py-2.5 text-xs text-muted-foreground hover:border-primary hover:text-primary flex items-center gap-1" data-testid="scan-odometer" title="Scan odometer from photo">
+                  <Camera size={14} /> Scan
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
+                    const file = e.target.files?.[0]; if (!file) return;
+                    const reader = new FileReader();
+                    reader.onloadend = async () => {
+                      try {
+                        const { data } = await api.post("/ocr", { image_base64: reader.result, mode: "odometer" });
+                        setOdometer(data.value);
+                        toast.success(`Odometer: ${data.value}`);
+                      } catch { toast.error("OCR failed"); }
+                    };
+                    reader.readAsDataURL(file);
+                  }} />
+                </label>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {template && template.sections.map((sec, si) => (
@@ -141,40 +200,58 @@ export default function Inspection() {
             <div className="divide-y divide-border">
               {sec.items.map((it) => {
                 const a = answers[it.id] || {};
+                const isFail = String(a.value).toLowerCase() === "fail";
                 return (
-                  <div key={it.id} className="p-4 flex items-center gap-4 flex-wrap" data-testid={`answer-${it.id}`}>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm">{it.label}{it.required && <span className="text-primary">*</span>}</div>
+                  <div key={it.id} className="p-4" data-testid={`answer-${it.id}`}>
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm">{it.label}{it.required && <span className="text-primary">*</span>}</div>
+                      </div>
+                      {it.type === "boolean" && (
+                        <div className="flex gap-2">
+                          <button onClick={() => setAnswer(it.id, "pass")} className={`flex items-center gap-1 px-3 py-1.5 text-xs uppercase tracking-widest border ${a.value === "pass" ? "border-[#34C759] text-[#34C759] bg-[#34C759]/10" : "border-border text-muted-foreground hover:border-[#34C759] hover:text-[#34C759]"}`}>
+                            <CheckCircle size={12} weight="bold" /> Pass
+                          </button>
+                          <button onClick={() => setAnswer(it.id, "fail")} className={`flex items-center gap-1 px-3 py-1.5 text-xs uppercase tracking-widest border ${isFail ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:border-primary hover:text-primary"}`}>
+                            <XCircle size={12} weight="bold" /> Fail
+                          </button>
+                        </div>
+                      )}
+                      {it.type === "rating" && (
+                        <div className="flex gap-1">
+                          {[1,2,3,4,5].map(n => (
+                            <button key={n} onClick={() => setAnswer(it.id, String(n))}
+                              className={`w-8 h-8 border text-xs mono ${String(a.value) === String(n) ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:border-primary"}`}>{n}</button>
+                          ))}
+                        </div>
+                      )}
+                      {(it.type === "text" || it.type === "number") && (
+                        <input type={it.type === "number" ? "number" : "text"} value={a.value || ""} onChange={(e) => setAnswer(it.id, e.target.value)}
+                          className="w-64 bg-[#0b0b0d] border border-border px-2 py-1.5 text-sm focus:border-primary focus:outline-none" />
+                      )}
+                      {!isFail && (
+                        <input value={a.note || ""} onChange={(e) => setAnswerNote(it.id, e.target.value)} placeholder="Note…"
+                          className="w-full sm:w-56 bg-[#0b0b0d] border border-border px-2 py-1.5 text-xs focus:border-primary focus:outline-none" />
+                      )}
                     </div>
-                    {it.type === "boolean" && (
-                      <div className="flex gap-2">
-                        <button onClick={() => setAnswer(it.id, "pass")} className={`flex items-center gap-1 px-3 py-1.5 text-xs uppercase tracking-widest border ${a.value === "pass" ? "border-[#34C759] text-[#34C759] bg-[#34C759]/10" : "border-border text-muted-foreground hover:border-[#34C759] hover:text-[#34C759]"}`}>
-                          <CheckCircle size={12} weight="bold" /> Pass
-                        </button>
-                        <button onClick={() => setAnswer(it.id, "fail")} className={`flex items-center gap-1 px-3 py-1.5 text-xs uppercase tracking-widest border ${a.value === "fail" ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:border-primary hover:text-primary"}`}>
-                          <XCircle size={12} weight="bold" /> Fail
-                        </button>
+
+                    {isFail && (
+                      <div className="mt-3 pl-0 sm:pl-4 border-l-2 border-primary/40 flex flex-wrap items-start gap-2" data-testid={`defect-capture-${it.id}`}>
+                        <select value={a.defect_type || ""} onChange={(e) => setAnswerDefectType(it.id, e.target.value)}
+                          className={`px-2 py-1.5 text-xs uppercase tracking-widest bg-[#0b0b0d] border focus:outline-none ${!a.defect_type ? "border-primary text-primary" : "border-border"}`}
+                          data-testid={`defect-type-${it.id}`}>
+                          <option value="">Defect type *</option>
+                          {DEFECT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                        <input value={a.note || ""} onChange={(e) => setAnswerNote(it.id, e.target.value)} placeholder="Describe the defect… *"
+                          className={`flex-1 min-w-[180px] bg-[#0b0b0d] border px-2 py-1.5 text-xs focus:outline-none ${!(a.note && a.note.trim()) ? "border-primary" : "border-border"}`} />
+                        <label className={`cursor-pointer border px-2 py-1.5 text-xs ${!a.photo ? "border-primary text-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary"}`} data-testid={`photo-${it.id}`}>
+                          {a.photo ? "Photo ✓" : "+ Photo (required)"}
+                          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => setAnswerPhoto(it.id, e.target.files?.[0])} />
+                        </label>
+                        {a.photo && <img src={a.photo} alt="defect preview" className="w-16 h-16 object-cover border border-border" />}
                       </div>
                     )}
-                    {it.type === "rating" && (
-                      <div className="flex gap-1">
-                        {[1,2,3,4,5].map(n => (
-                          <button key={n} onClick={() => setAnswer(it.id, String(n))}
-                            className={`w-8 h-8 border text-xs mono ${String(a.value) === String(n) ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:border-primary"}`}>{n}</button>
-                        ))}
-                      </div>
-                    )}
-                    {(it.type === "text" || it.type === "number") && (
-                      <input type={it.type === "number" ? "number" : "text"} value={a.value || ""} onChange={(e) => setAnswer(it.id, e.target.value)}
-                        className="w-64 bg-[#0b0b0d] border border-border px-2 py-1.5 text-sm focus:border-primary focus:outline-none" />
-                    )}
-                    <input value={a.note || ""} onChange={(e) => setAnswerNote(it.id, e.target.value)} placeholder="Note…"
-                      className="w-full sm:w-56 bg-[#0b0b0d] border border-border px-2 py-1.5 text-xs focus:border-primary focus:outline-none" />
-                    <label className="cursor-pointer border border-border px-2 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-primary" data-testid={`photo-${it.id}`}>
-                      {a.photo ? "Photo ✓" : "+ Photo"}
-                      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => setAnswerPhoto(it.id, e.target.files?.[0])} />
-                    </label>
-                    {a.photo && <img src={a.photo} alt="preview" className="w-16 h-16 object-cover border border-border" />}
                   </div>
                 );
               })}
@@ -188,11 +265,51 @@ export default function Inspection() {
             className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
         </div>
 
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-[#121214] border border-border p-6">
+            <label className="overline block mb-2">Location captured</label>
+            {location.status === "captured" ? (
+              <div className="flex items-center gap-2 text-sm mono text-[#34C759]">
+                <MapPin size={14} weight="bold" /> {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
+              </div>
+            ) : (
+              <div>
+                <button type="button" onClick={captureLocation} data-testid="capture-location" className="flex items-center gap-2 text-xs uppercase tracking-widest border border-border px-3 py-2 hover:border-primary hover:text-primary">
+                  <MapPin size={14} /> {location.status === "capturing" ? "Capturing…" : location.status === "denied" || location.status === "unavailable" ? "Retry" : "Capture location"}
+                </button>
+                {location.status === "denied" && <div className="text-xs text-primary mt-2">Location permission denied</div>}
+                {location.status === "unavailable" && <div className="text-xs text-primary mt-2">GPS unavailable on this device</div>}
+              </div>
+            )}
+          </div>
+          <div className="bg-[#121214] border border-border p-6">
+            <label className="overline block mb-2">Signature *</label>
+            <SignaturePad onChange={setSignature} />
+          </div>
+        </div>
+
+        {(odometerMissing || !signature || defectValidationErrors.length > 0) && (
+          <div className="flex items-start gap-2 text-xs text-primary bg-primary/10 border border-primary/30 px-3 py-2">
+            <Warning size={14} className="mt-0.5 shrink-0" />
+            <span>
+              Before you can submit: {[
+                odometerMissing && "odometer reading",
+                !signature && "signature",
+                defectValidationErrors.length > 0 && "defect type/photo/note on every failed item",
+              ].filter(Boolean).join(", ")}.
+              {defectValidationErrors.length > 0 && (
+                <> {defectValidationErrors.map(({ item, missing }) => `"${item.label}" is missing ${missing.join(", ")}`).join("; ")}.</>
+              )}
+            </span>
+          </div>
+        )}
+
         <div className="flex items-center justify-between border-t border-border pt-6">
           <div className="mono text-sm">
             <span className="text-primary text-lg font-bold">{failCount}</span> failed / {Object.keys(answers).length} answered
           </div>
-          <button data-testid="submit-inspection" onClick={submit} className="flex items-center gap-2 bg-primary px-6 py-3 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
+          <button data-testid="submit-inspection" onClick={submit} disabled={odometerMissing || !signature || defectValidationErrors.length > 0}
+            className="flex items-center gap-2 bg-primary px-6 py-3 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed">
             Complete inspection{failCount > 0 && " & allocate"}
           </button>
         </div>

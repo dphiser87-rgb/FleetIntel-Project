@@ -13,3 +13,10 @@ crons:
     endpoint: "{{BASE_URL}}/api/cron/health-digest"
     method: POST
     enabled: true
+
+  - name: overdue-checklists
+    description: "Emails each workspace owner a daily list of checklists that have missed their scheduled frequency"
+    cron: "0 7 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/overdue-checklists"
+    method: POST
+    enabled: true

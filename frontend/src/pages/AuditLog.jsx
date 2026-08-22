@@ -2,10 +2,29 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import {
   Truck, ClipboardText, Wrench, Package, UsersThree, CheckCircle, Warning, ClockCounterClockwise, UserCirclePlus, UserCheck, PencilSimple,
+  FolderSimple, FolderPlus, FolderMinus, Palette, TrashSimple,
 } from "@phosphor-icons/react";
 
 const ACTION_MAP = {
   "vehicle.created": { icon: Truck, color: "text-[#34C759]", label: "Added vehicle" },
+  "vehicle_group.created": { icon: FolderPlus, color: "text-[#34C759]", label: "Created vehicle group" },
+  "vehicle_group.updated": { icon: FolderSimple, color: "text-[#3B82F6]", label: "Updated vehicle group" },
+  "vehicle_group.color_changed": { icon: Palette, color: "text-[#A855F7]", label: "Changed vehicle group color" },
+  "vehicle_group.member_added": { icon: FolderPlus, color: "text-[#34C759]", label: "Added vehicles to group" },
+  "vehicle_group.member_removed": { icon: FolderMinus, color: "text-primary", label: "Removed vehicles from group" },
+  "vehicle_group.deleted": { icon: TrashSimple, color: "text-primary", label: "Deleted vehicle group" },
+  "driver_group.created": { icon: FolderPlus, color: "text-[#34C759]", label: "Created driver group" },
+  "driver_group.updated": { icon: FolderSimple, color: "text-[#3B82F6]", label: "Updated driver group" },
+  "driver_group.color_changed": { icon: Palette, color: "text-[#A855F7]", label: "Changed driver group color" },
+  "driver_group.member_added": { icon: FolderPlus, color: "text-[#34C759]", label: "Added drivers to group" },
+  "driver_group.member_removed": { icon: FolderMinus, color: "text-primary", label: "Removed drivers from group" },
+  "driver_group.deleted": { icon: TrashSimple, color: "text-primary", label: "Deleted driver group" },
+  "asset_group.created": { icon: FolderPlus, color: "text-[#34C759]", label: "Created asset group" },
+  "asset_group.updated": { icon: FolderSimple, color: "text-[#3B82F6]", label: "Updated asset group" },
+  "asset_group.color_changed": { icon: Palette, color: "text-[#A855F7]", label: "Changed asset group color" },
+  "asset_group.member_added": { icon: FolderPlus, color: "text-[#34C759]", label: "Added assets to group" },
+  "asset_group.member_removed": { icon: FolderMinus, color: "text-primary", label: "Removed assets from group" },
+  "asset_group.deleted": { icon: TrashSimple, color: "text-primary", label: "Deleted asset group" },
   "template.created": { icon: ClipboardText, color: "text-[#3B82F6]", label: "Saved checklist template" },
   "inspection.completed": { icon: ClipboardText, color: "text-[#FFCC00]", label: "Completed inspection" },
   "maintenance.created": { icon: Wrench, color: "text-[#FFCC00]", label: "Allocated maintenance job" },
@@ -37,6 +56,9 @@ const renderMeta = (action, meta = {}) => {
   if (action === "part.adjusted") return <>{meta.name} <span className={`mono ${meta.delta >= 0 ? "text-[#34C759]" : "text-primary"}`}>{meta.delta >= 0 ? "+" : ""}{meta.delta}</span> <span className="text-muted-foreground">→ {meta.new_stock} on hand</span></>;
   if (action === "invite.created") return <>{meta.email} <span className="text-muted-foreground">as {meta.role}</span></>;
   if (action === "invite.accepted") return <>{meta.email} <span className="text-muted-foreground">as {meta.role}</span></>;
+  if (action.endsWith(".created") || action.endsWith(".updated") || action.endsWith(".deleted")) return <>{meta.name}</>;
+  if (action.endsWith(".color_changed")) return <>{meta.name} <span className="text-muted-foreground">{meta.from || "default"} → {meta.to}</span></>;
+  if (action.endsWith(".member_added") || action.endsWith(".member_removed")) return <>{meta.name} <span className="text-muted-foreground">· {meta.count} record{meta.count !== 1 && "s"}</span></>;
   return null;
 };
 
@@ -57,8 +79,11 @@ export default function AuditLog() {
     { key: "maintenance", label: "Maintenance" },
     { key: "part", label: "Parts" },
     { key: "invite", label: "Team" },
+    { key: "group", label: "Groups" },
   ];
-  const filtered = filter === "all" ? events : events.filter(e => e.action.startsWith(filter));
+  const filtered = filter === "all" ? events
+    : filter === "group" ? events.filter(e => e.action.startsWith("vehicle_group") || e.action.startsWith("driver_group") || e.action.startsWith("asset_group"))
+    : events.filter(e => e.action.startsWith(filter));
 
   return (
     <div className="noise-bg min-h-screen">

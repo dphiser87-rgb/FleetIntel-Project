@@ -32,16 +32,22 @@ const DeltaBadge = ({ pct }) => {
   return <span className={`text-xs mono ml-2 ${up ? "text-[#FF3B30]" : "text-[#34C759]"}`}>{up ? "+" : ""}{pct}%</span>;
 };
 
-export default function Level3Vehicle({ vehicleId, onDrillEvent }) {
+export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) {
   const [period, setPeriod] = useState("all");
   const [data, setData] = useState(null);
   const [showFuelForm, setShowFuelForm] = useState(false);
   const [fuelForm, setFuelForm] = useState({ occurred_at: "", litres: "", cost: "", location: "" });
+  const [tripLogs, setTripLogs] = useState([]);
+  const [showTripForm, setShowTripForm] = useState(false);
+  const [tripForm, setTripForm] = useState({ occurred_at: "", distance_km: "" });
 
   const load = () => {
     api.get(`/vehicles/${vehicleId}/investigation`, { params: { period } })
       .then((r) => setData(r.data))
       .catch(() => toast.error("Unable to load vehicle investigation"));
+    api.get("/trip-logs", { params: { vehicle_id: vehicleId } })
+      .then((r) => setTripLogs(r.data || []))
+      .catch(() => {});
   };
 
   useEffect(() => { setData(null); load(); }, [vehicleId, period]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -63,6 +69,21 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent }) {
     } catch { toast.error("Failed to log fuel purchase"); }
   };
 
+  const logTrip = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post("/trip-logs", {
+        vehicle_id: vehicleId,
+        occurred_at: tripForm.occurred_at ? new Date(tripForm.occurred_at).toISOString() : new Date().toISOString(),
+        distance_km: Number(tripForm.distance_km),
+      });
+      toast.success("Trip logged");
+      setShowTripForm(false);
+      setTripForm({ occurred_at: "", distance_km: "" });
+      load();
+    } catch { toast.error("Failed to log trip"); }
+  };
+
   if (!data) return <div className="p-12 text-muted-foreground text-sm">Loading vehicle investigation…</div>;
 
   const { vehicle: v, driver, cost_summary: cs, monthly_trend, fuel_logs, maintenance, defects, utilization, timeline } = data;
@@ -81,12 +102,17 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent }) {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          ["Maintenance", cs.maintenance_cost, cs.maintenance_cost_delta_pct],
-          ["Fuel", cs.fuel_cost, cs.fuel_cost_delta_pct],
-          ["Downtime", cs.downtime_cost, cs.downtime_cost_delta_pct],
-          ["Total cost", cs.total_cost, cs.total_cost_delta_pct],
-        ].map(([label, value, delta]) => (
-          <div key={label} className="bg-[#121214] border border-border p-4">
+          ["Maintenance", cs.maintenance_cost, cs.maintenance_cost_delta_pct, "maintenance"],
+          ["Fuel", cs.fuel_cost, cs.fuel_cost_delta_pct, "fuel"],
+          ["Downtime", cs.downtime_cost, cs.downtime_cost_delta_pct, "downtime"],
+          ["Total cost", cs.total_cost, cs.total_cost_delta_pct, null],
+        ].map(([label, value, delta, category]) => (
+          <div
+            key={label}
+            onClick={() => category && onDrillCost(category, { maintenance, fuelLogs: fuel_logs, label })}
+            className={`bg-[#121214] border border-border p-4 ${category ? "hover:border-primary cursor-pointer" : ""}`}
+            data-testid={`cost-tile-${category || "total"}`}
+          >
             <div className="overline">{label}</div>
             <div className="mono text-xl font-bold mt-1">{money(value)}<DeltaBadge pct={delta} /></div>
           </div>
@@ -136,7 +162,7 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent }) {
         </ResponsiveContainer>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="bg-[#121214] border border-border p-4">
           <div className="flex items-center justify-between mb-2">
             <div className="overline">Fuel log ({fuel_logs.length})</div>
@@ -161,6 +187,31 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent }) {
               </div>
             ))}
             {fuel_logs.length === 0 && <div className="text-xs text-muted-foreground text-center py-4">No fuel purchases logged.</div>}
+          </div>
+        </div>
+
+        <div className="bg-[#121214] border border-border p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="overline">Trips ({tripLogs.length})</div>
+            <button onClick={() => setShowTripForm((s) => !s)} data-testid="log-trip-toggle" className="flex items-center gap-1 text-xs uppercase tracking-widest text-primary hover:text-primary/80">
+              <Plus size={12} /> Log trip
+            </button>
+          </div>
+          {showTripForm && (
+            <form onSubmit={logTrip} className="grid grid-cols-2 gap-2 mb-3 p-3 border border-primary/40 bg-primary/5" data-testid="trip-log-form">
+              <input required type="datetime-local" value={tripForm.occurred_at} onChange={(e) => setTripForm((f) => ({ ...f, occurred_at: e.target.value }))} className="col-span-2 bg-[#0b0b0d] border border-border px-2 py-1.5 text-xs focus:border-primary focus:outline-none" />
+              <input required type="number" step="0.1" placeholder="Distance (km)" value={tripForm.distance_km} onChange={(e) => setTripForm((f) => ({ ...f, distance_km: e.target.value }))} className="col-span-2 bg-[#0b0b0d] border border-border px-2 py-1.5 text-xs focus:border-primary focus:outline-none" />
+              <button type="submit" className="col-span-2 bg-primary text-primary-foreground px-3 py-1.5 text-xs uppercase tracking-widest hover:bg-primary/90">Save</button>
+            </form>
+          )}
+          <div className="space-y-1 max-h-56 overflow-y-auto">
+            {tripLogs.slice(0, 10).map((t) => (
+              <div key={t.id} className="flex items-center justify-between text-xs border-b border-border/50 py-1.5">
+                <span className="text-muted-foreground">{(t.occurred_at || "").slice(0, 10)}</span>
+                <span className="mono">{t.distance_km} km</span>
+              </div>
+            ))}
+            {tripLogs.length === 0 && <div className="text-xs text-muted-foreground text-center py-4">No trips logged.</div>}
           </div>
         </div>
 

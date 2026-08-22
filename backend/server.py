@@ -27,6 +27,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from PIL import Image as PILImage
 try:
     # Only available inside Emergent's own hosted platform image, not on public PyPI —
     # OCR endpoint degrades to a 503 outside that environment instead of failing to boot.
@@ -209,12 +210,37 @@ class VehicleIn(BaseModel):
 class VehicleGroupIn(BaseModel):
     name: str
     color: Optional[str] = None
+    fleet_type: Optional[str] = None
+    branch: Optional[str] = None
+    region: Optional[str] = None
+    cost_centre: Optional[str] = None
+
+class GroupAssign(BaseModel):
+    add_ids: List[str] = []
+    remove_ids: List[str] = []
+
+class AssetIn(BaseModel):
+    kind: Literal["asset", "trailer"] = "asset"
+    name: str
+    identifier: Optional[str] = ""
+    category: Optional[str] = ""
+    status: Literal["active", "maintenance", "idle"] = "active"
+    group_id: Optional[str] = None
+
+class AssetGroupIn(BaseModel):
+    name: str
+    color: Optional[str] = None
+    category: Optional[str] = None
+    branch: Optional[str] = None
+    region: Optional[str] = None
+    cost_centre: Optional[str] = None
 
 class ChecklistItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     label: str
     type: Literal["boolean", "rating", "text", "number"] = "boolean"
     required: bool = True
+    photo_required: bool = False
 
 class ChecklistSection(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -225,12 +251,21 @@ class TemplateIn(BaseModel):
     name: str
     description: Optional[str] = ""
     sections: List[ChecklistSection] = []
+    type: Literal["vehicle", "asset", "trailer"] = "vehicle"
+    frequency: Optional[Literal["daily", "weekly", "each_trip", "monthly"]] = None
+    assignment_scope: Literal["all", "group", "specific"] = "all"
+    group_id: Optional[str] = None
+    target_ids: List[str] = []
+    active: bool = True
+
+DEFECT_TYPES = {"tyres", "engine", "brakes", "electrical", "bodywork", "general"}  # mirrors maintenance.category
 
 class InspectionAnswer(BaseModel):
     item_id: str
     value: str  # "pass", "fail", rating number, text
     note: Optional[str] = ""
     photo: Optional[str] = None  # base64 data URL
+    defect_type: Optional[str] = None  # required when value == "fail", see DEFECT_TYPES
 
 class PartIn(BaseModel):
     name: str
@@ -251,7 +286,14 @@ class InviteIn(BaseModel):
     role: Literal["manager", "inspector", "mechanic", "admin"] = "manager"
 
 class WorkspaceRename(BaseModel):
-    name: str
+    name: Optional[str] = None
+    license_warning_days: Optional[int] = None
+
+class LicenseCategory(BaseModel):
+    category: str
+    codes: Optional[str] = ""
+    issue_date: Optional[str] = None
+    expiration_date: Optional[str] = None
 
 class DriverIn(BaseModel):
     name: str
@@ -263,6 +305,31 @@ class DriverIn(BaseModel):
     assigned_vehicle_id: Optional[str] = None
     status: Literal["active", "inactive", "on_leave"] = "active"
     notes: Optional[str] = ""
+    group_id: Optional[str] = None
+    number: Optional[str] = None
+    company_department: Optional[str] = None
+    cell_country_code: Optional[str] = None
+    private: bool = False
+    additional_info: Optional[str] = None
+    app_access: dict = {"vehicle_checklist": False}
+    identification_method: str = "vehicle_assignment"
+    regulation: Optional[str] = None
+    license_issuing_country: Optional[str] = None
+    license_issuing_authority: Optional[str] = None
+    license_issue_date: Optional[str] = None
+    license_categories: List[LicenseCategory] = []
+    address_country: Optional[str] = None
+    address_street: Optional[str] = None
+    address_zip: Optional[str] = None
+    address_city: Optional[str] = None
+
+class DriverGroupIn(BaseModel):
+    name: str
+    color: Optional[str] = None
+    description: Optional[str] = None
+    department: Optional[str] = None
+    region: Optional[str] = None
+    cost_centre: Optional[str] = None
 
 class OCRIn(BaseModel):
     image_base64: str  # data URL or raw base64
@@ -278,10 +345,18 @@ class LoginReq2FA(BaseModel):
 
 class InspectionIn(BaseModel):
     template_id: str
-    vehicle_id: str
+    vehicle_id: Optional[str] = None
+    asset_id: Optional[str] = None
     answers: List[InspectionAnswer] = []
     notes: Optional[str] = ""
     odometer: Optional[float] = None
+    completed_at: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    address: Optional[str] = None
+    location_status: Optional[Literal["captured", "denied", "unavailable", "not_attempted"]] = "not_attempted"
+    signature: Optional[str] = None  # base64 data URL, captured on-device
+    client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
 
 class MaintenanceIn(BaseModel):
     vehicle_id: str
@@ -290,11 +365,18 @@ class MaintenanceIn(BaseModel):
     title: str
     description: Optional[str] = ""
     priority: Literal["low", "medium", "high", "critical"] = "medium"
+    category: Optional[Literal["tyres", "engine", "brakes", "electrical", "bodywork", "general"]] = None
     estimated_cost: float = 0
     estimated_hours: float = 0
     assigned_to: Optional[str] = None  # mechanic user id
     parts_cost: float = 0
     labor_cost: float = 0
+
+class TripLogIn(BaseModel):
+    vehicle_id: str
+    driver_id: Optional[str] = None
+    occurred_at: str  # ISO datetime
+    distance_km: float
 
 class FuelLogIn(BaseModel):
     vehicle_id: str
@@ -330,11 +412,15 @@ class IncidentUpdate(BaseModel):
 class TileConfig(BaseModel):
     key: str
     threshold: Optional[float] = None
-    view_by: Literal["none", "vehicle", "group"] = "none"
+    view_by: Literal["none", "vehicle", "group", "driver"] = "none"
     group_id: Optional[str] = None
+    chart_type: Literal["gauge", "bar", "line", "number"] = "gauge"
+    period: Literal["7d", "30d", "90d", "6m", "12m", "all"] = "all"
+    size: Literal["sm", "md", "lg"] = "md"
 
 class UserPrefs(BaseModel):
     dashboard_tiles: Optional[List[TileConfig]] = None
+    currency: Optional[str] = None
 
 class MaintenanceUpdate(BaseModel):
     status: Optional[Literal["pending", "in_progress", "completed", "cancelled"]] = None
@@ -355,8 +441,10 @@ def _parse_date(s):
     """asyncpg needs a native date/datetime object for date/timestamptz columns — a Postgres-side
     ::date or ::timestamptz cast doesn't help, since asyncpg encodes the parameter client-side
     before Postgres ever sees the cast."""
-    if not s or isinstance(s, date_cls):
+    if isinstance(s, date_cls):
         return s
+    if not s:
+        return None
     return datetime.strptime(s, "%Y-%m-%d").date()
 
 def _parse_datetime(s):
@@ -383,7 +471,9 @@ async def register(req: RegisterReq):
             raise HTTPException(status_code=400, detail="Invite email mismatch")
         workspace_id = invite["workspace_id"]
         role = invite.get("role") or role
+        invite_permissions = invite.get("permissions") or PROFILE_PRESETS.get(role, {})
     else:
+        invite_permissions = PROFILE_PRESETS.get(role, {})
         workspace_id = str(uuid.uuid4())
         await execute(
             "insert into workspaces (id, name, owner_email) values (:id, :name, :owner_email)",
@@ -398,9 +488,10 @@ async def register(req: RegisterReq):
 
     try:
         await execute(
-            "insert into user_profiles (id, email, name, role, workspace_id) "
-            "values (:id, :email, :name, :role, :workspace_id)",
+            "insert into user_profiles (id, email, name, role, workspace_id, permissions) "
+            "values (:id, :email, :name, :role, :workspace_id, :permissions ::jsonb)",
             id=user_id, email=email, name=req.name, role=role, workspace_id=workspace_id,
+            permissions=json_dumps(invite_permissions),
         )
         if req.invite_code:
             await execute(
@@ -549,12 +640,103 @@ async def me(user: dict = Depends(get_current_user)):
 async def logout(user: dict = Depends(get_current_user)):
     return {"ok": True}
 
+MODULE_KEYS = ["dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
+               "templates", "maintenance", "parts", "team", "audit", "reports", "security"]
+
+def _default_permissions(role: str) -> dict:
+    """Pre-fills System Rights from a Profile (role) — not yet enforced on routes, but real,
+    persisted data a future backend/mobile pass can read."""
+    full = {m: "full" for m in MODULE_KEYS}
+    read_all = {m: "read" for m in MODULE_KEYS}
+    if role == "admin":
+        modules = full
+    elif role == "manager":
+        modules = {**full, "security": "read", "team": "read"}
+    elif role == "inspector":
+        modules = {**read_all, "vehicle_checklist": "full", "templates": "full", "fleet": "read"}
+    elif role == "mechanic":
+        modules = {**read_all, "maintenance": "full", "parts": "full"}
+    else:
+        modules = {m: "none" for m in MODULE_KEYS}
+    return {"modules": modules, "vehicle_group_ids": [], "driver_group_ids": [], "trip_data_access": True, "address_access": True}
+
+PROFILE_PRESETS = {role: _default_permissions(role) for role in ("admin", "manager", "inspector", "mechanic")}
+
+USER_COLS = {"name", "username", "company_department", "cell", "additional_info", "status",
+             "active_from", "active_until", "permissions", "role"}
+
 @api.get("/users")
 async def list_users(user: dict = Depends(get_current_user)):
     return await fetch_all(
-        "select id, email, name, role, workspace_id, created_at from user_profiles where workspace_id = :ws",
+        "select * from user_profiles where workspace_id = :ws",
         ws=user["workspace_id"],
     )
+
+@api.get("/permissions/presets")
+async def get_permission_presets(user: dict = Depends(get_current_user)):
+    return {"module_keys": MODULE_KEYS, "presets": PROFILE_PRESETS}
+
+@api.patch("/users/{uid}")
+async def update_user(uid: str, patch: dict, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    target = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
+    if not target: raise HTTPException(status_code=404, detail="Not found")
+    await update_row("user_profiles", uid, user["workspace_id"], patch, USER_COLS)
+    doc = await fetch_one("select * from user_profiles where id = :id", id=uid)
+    await log_event(user, "user.updated", "user", uid, {"name": doc["name"], "fields": list(patch.keys())})
+    return doc
+
+@api.post("/users/{uid}/deactivate")
+async def deactivate_user(uid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    target = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
+    if not target: raise HTTPException(status_code=404, detail="Not found")
+    await execute("update user_profiles set status = 'inactive' where id = :id", id=uid)
+    await log_event(user, "user.deactivated", "user", uid, {"name": target["name"]})
+    return await fetch_one("select * from user_profiles where id = :id", id=uid)
+
+@api.post("/users/{uid}/reset-password")
+async def reset_user_password(uid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    target = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
+    if not target: raise HTTPException(status_code=404, detail="Not found")
+    await auth_supabase.send_password_reset_email(target["email"])
+    await log_event(user, "user.password_reset", "user", uid, {"name": target["name"]})
+    return {"ok": True}
+
+@api.post("/users/{uid}/duplicate")
+async def duplicate_user(uid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    src = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
+    if not src: raise HTTPException(status_code=404, detail="Not found")
+    iid = str(uuid.uuid4())
+    code = secrets.token_urlsafe(12)
+    await execute(
+        "insert into invites (id, workspace_id, code, email, role, created_by, invitee_name, permissions) "
+        "values (:id, :ws, :code, :email, :role, :created_by, :name, :permissions ::jsonb)",
+        id=iid, ws=user["workspace_id"], code=code, email=f"copy-of-{src['email']}",
+        role=src["role"], created_by=user["id"], name=f"{src['name']} (copy)",
+        permissions=json_dumps(src.get("permissions") or {}),
+    )
+    doc = await fetch_one("select * from invites where id = :id", id=iid)
+    await log_event(user, "user.duplicated", "user", uid, {"name": src["name"]})
+    return doc
+
+@api.delete("/users/{uid}")
+async def delete_user(uid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can remove team members")
+    target = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
+    if not target: raise HTTPException(status_code=404, detail="Not found")
+    if uid == user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot remove yourself")
+    await execute("delete from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
+    await log_event(user, "user.deleted", "user", uid, {"name": target["name"]})
+    return {"ok": True}
 
 @api.get("/users/me/prefs")
 async def get_my_prefs(user: dict = Depends(get_current_user)):
@@ -575,6 +757,8 @@ async def put_my_prefs(p: UserPrefs, user: dict = Depends(get_current_user)):
 VEHICLE_COLS = {"name", "plate", "make", "model", "year", "type", "status", "odometer",
                  "fuel_cost_per_km", "downtime_cost_per_hour", "image_url", "group_id"}
 
+VEHICLE_GROUP_COLS = {"name", "color", "fleet_type", "branch", "region", "cost_centre"}
+
 # --- Vehicle groups ---
 @api.get("/vehicle-groups")
 async def list_vehicle_groups(user: dict = Depends(get_current_user)):
@@ -584,25 +768,205 @@ async def list_vehicle_groups(user: dict = Depends(get_current_user)):
 async def create_vehicle_group(g: VehicleGroupIn, user: dict = Depends(get_current_user)):
     gid = str(uuid.uuid4())
     await execute(
-        "insert into vehicle_groups (id, workspace_id, name, color) values (:id, :ws, :name, :color)",
-        id=gid, ws=user["workspace_id"], name=g.name, color=g.color,
+        "insert into vehicle_groups (id, workspace_id, name, color, fleet_type, branch, region, cost_centre) "
+        "values (:id, :ws, :name, :color, :fleet_type, :branch, :region, :cost_centre)",
+        id=gid, ws=user["workspace_id"], **g.model_dump(),
     )
-    return await fetch_one("select * from vehicle_groups where id = :id", id=gid)
+    doc = await fetch_one("select * from vehicle_groups where id = :id", id=gid)
+    await log_event(user, "vehicle_group.created", "vehicle_group", gid, {"name": doc["name"]})
+    return doc
 
 @api.patch("/vehicle-groups/{gid}")
 async def update_vehicle_group(gid: str, patch: dict, user: dict = Depends(get_current_user)):
-    await update_row("vehicle_groups", gid, user["workspace_id"], patch, {"name", "color"})
-    return await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    before = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if not before: raise HTTPException(status_code=404, detail="Not found")
+    await update_row("vehicle_groups", gid, user["workspace_id"], patch, VEHICLE_GROUP_COLS)
+    doc = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if "color" in patch and patch["color"] != before["color"]:
+        await log_event(user, "vehicle_group.color_changed", "vehicle_group", gid, {"name": doc["name"], "from": before["color"], "to": doc["color"]})
+    else:
+        await log_event(user, "vehicle_group.updated", "vehicle_group", gid, {"name": doc["name"]})
+    return doc
 
 @api.delete("/vehicle-groups/{gid}")
 async def delete_vehicle_group(gid: str, user: dict = Depends(get_current_user)):
+    g = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     await execute("delete from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if g:
+        await log_event(user, "vehicle_group.deleted", "vehicle_group", gid, {"name": g["name"]})
+    return {"ok": True}
+
+@api.post("/vehicle-groups/{gid}/assign")
+async def assign_vehicle_group(gid: str, body: GroupAssign, user: dict = Depends(get_current_user)):
+    g = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if not g: raise HTTPException(status_code=404, detail="Not found")
+    if body.add_ids:
+        await execute(
+            "update vehicles set group_id = :gid where id = any(:ids) and workspace_id = :ws",
+            gid=gid, ids=body.add_ids, ws=user["workspace_id"],
+        )
+        await log_event(user, "vehicle_group.member_added", "vehicle_group", gid, {"name": g["name"], "count": len(body.add_ids), "ids": body.add_ids})
+    if body.remove_ids:
+        await execute(
+            "update vehicles set group_id = null where id = any(:ids) and group_id = :gid and workspace_id = :ws",
+            gid=gid, ids=body.remove_ids, ws=user["workspace_id"],
+        )
+        await log_event(user, "vehicle_group.member_removed", "vehicle_group", gid, {"name": g["name"], "count": len(body.remove_ids), "ids": body.remove_ids})
+    return {"ok": True}
+
+@api.get("/vehicle-groups/{gid}/analysis")
+async def vehicle_group_analysis(gid: str, user: dict = Depends(get_current_user)):
+    ws = user["workspace_id"]
+    g = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=ws)
+    if not g: raise HTTPException(status_code=404, detail="Not found")
+    vehicles = await fetch_all("select * from vehicles where workspace_id = :ws and group_id = :gid order by name", ws=ws, gid=gid)
+    vids = [v["id"] for v in vehicles]
+    driver_count = 0
+    fuel_cost = maintenance_cost = tyre_cost = 0.0
+    if vids:
+        driver_count = (await fetch_one(
+            "select count(*) as c from drivers where workspace_id = :ws and assigned_vehicle_id = any(:ids)", ws=ws, ids=vids,
+        ))["c"]
+        fuel_rows = await fetch_all(
+            "select coalesce(sum(cost), 0) as total from fuel_logs where workspace_id = :ws and vehicle_id = any(:ids)", ws=ws, ids=vids,
+        )
+        fuel_cost = float(fuel_rows[0]["total"] or 0)
+        maint_rows = await fetch_all(
+            "select coalesce(sum(actual_cost), 0) as total from maintenance where workspace_id = :ws and vehicle_id = any(:ids) and status = 'completed'",
+            ws=ws, ids=vids,
+        )
+        maintenance_cost = float(maint_rows[0]["total"] or 0)
+        tyre_rows = await fetch_all(
+            "select coalesce(sum(actual_cost), 0) as total from maintenance where workspace_id = :ws and vehicle_id = any(:ids) "
+            "and status = 'completed' and category = 'tyres'",
+            ws=ws, ids=vids,
+        )
+        tyre_cost = float(tyre_rows[0]["total"] or 0)
+    return {
+        "group": g,
+        "vehicle_count": len(vehicles),
+        "driver_count": driver_count,
+        "fuel_cost": round(fuel_cost, 2),
+        "maintenance_cost": round(maintenance_cost, 2),
+        "tyre_cost": round(tyre_cost, 2),
+        "vehicles": vehicles,
+    }
+
+# --- Asset groups ---
+ASSET_GROUP_COLS = {"name", "color", "category", "branch", "region", "cost_centre"}
+
+@api.get("/asset-groups")
+async def list_asset_groups(user: dict = Depends(get_current_user)):
+    return await fetch_all("select * from asset_groups where workspace_id = :ws order by name", ws=user["workspace_id"])
+
+@api.post("/asset-groups")
+async def create_asset_group(g: AssetGroupIn, user: dict = Depends(get_current_user)):
+    gid = str(uuid.uuid4())
+    await execute(
+        "insert into asset_groups (id, workspace_id, name, color, category, branch, region, cost_centre) "
+        "values (:id, :ws, :name, :color, :category, :branch, :region, :cost_centre)",
+        id=gid, ws=user["workspace_id"], **g.model_dump(),
+    )
+    doc = await fetch_one("select * from asset_groups where id = :id", id=gid)
+    await log_event(user, "asset_group.created", "asset_group", gid, {"name": doc["name"]})
+    return doc
+
+@api.patch("/asset-groups/{gid}")
+async def update_asset_group(gid: str, patch: dict, user: dict = Depends(get_current_user)):
+    before = await fetch_one("select * from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if not before: raise HTTPException(status_code=404, detail="Not found")
+    await update_row("asset_groups", gid, user["workspace_id"], patch, ASSET_GROUP_COLS)
+    doc = await fetch_one("select * from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if "color" in patch and patch["color"] != before["color"]:
+        await log_event(user, "asset_group.color_changed", "asset_group", gid, {"name": doc["name"], "from": before["color"], "to": doc["color"]})
+    else:
+        await log_event(user, "asset_group.updated", "asset_group", gid, {"name": doc["name"]})
+    return doc
+
+@api.delete("/asset-groups/{gid}")
+async def delete_asset_group(gid: str, user: dict = Depends(get_current_user)):
+    g = await fetch_one("select * from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    await execute("delete from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if g:
+        await log_event(user, "asset_group.deleted", "asset_group", gid, {"name": g["name"]})
+    return {"ok": True}
+
+@api.post("/asset-groups/{gid}/assign")
+async def assign_asset_group(gid: str, body: GroupAssign, user: dict = Depends(get_current_user)):
+    g = await fetch_one("select * from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if not g: raise HTTPException(status_code=404, detail="Not found")
+    if body.add_ids:
+        await execute(
+            "update assets set group_id = :gid where id = any(:ids) and workspace_id = :ws",
+            gid=gid, ids=body.add_ids, ws=user["workspace_id"],
+        )
+        await log_event(user, "asset_group.member_added", "asset_group", gid, {"name": g["name"], "count": len(body.add_ids), "ids": body.add_ids})
+    if body.remove_ids:
+        await execute(
+            "update assets set group_id = null where id = any(:ids) and group_id = :gid and workspace_id = :ws",
+            gid=gid, ids=body.remove_ids, ws=user["workspace_id"],
+        )
+        await log_event(user, "asset_group.member_removed", "asset_group", gid, {"name": g["name"], "count": len(body.remove_ids), "ids": body.remove_ids})
+    return {"ok": True}
+
+# --- Assets & trailers (lightweight inspectable targets, no maintenance/fuel lifecycle) ---
+ASSET_COLS = {"name", "identifier", "category", "status", "group_id"}
+
+@api.get("/assets")
+async def list_assets(kind: Optional[str] = None, search: Optional[str] = None, user: dict = Depends(get_current_user)):
+    q = "select * from assets where workspace_id = :ws"
+    params = {"ws": user["workspace_id"]}
+    if kind:
+        q += " and kind = :kind"
+        params["kind"] = kind
+    if search:
+        q += " and name ilike :q"
+        params["q"] = f"%{search}%"
+    q += " order by name"
+    return await fetch_all(q, **params)
+
+@api.post("/assets")
+async def create_asset(a: AssetIn, user: dict = Depends(get_current_user)):
+    aid = str(uuid.uuid4())
+    await execute(
+        "insert into assets (id, workspace_id, kind, name, identifier, category, status, group_id) "
+        "values (:id, :ws, :kind, :name, :identifier, :category, :status, :group_id)",
+        id=aid, ws=user["workspace_id"], **a.model_dump(),
+    )
+    doc = await fetch_one("select * from assets where id = :id", id=aid)
+    await log_event(user, "asset.created", "asset", aid, {"name": doc["name"], "kind": doc["kind"]})
+    return doc
+
+@api.get("/assets/{aid}")
+async def get_asset(aid: str, user: dict = Depends(get_current_user)):
+    a = await fetch_one("select * from assets where id = :id and workspace_id = :ws", id=aid, ws=user["workspace_id"])
+    if not a: raise HTTPException(status_code=404, detail="Not found")
+    return a
+
+@api.patch("/assets/{aid}")
+async def update_asset(aid: str, patch: dict, user: dict = Depends(get_current_user)):
+    await update_row("assets", aid, user["workspace_id"], patch, ASSET_COLS)
+    return await fetch_one("select * from assets where id = :id and workspace_id = :ws", id=aid, ws=user["workspace_id"])
+
+@api.delete("/assets/{aid}")
+async def delete_asset(aid: str, user: dict = Depends(get_current_user)):
+    await execute("delete from assets where id = :id and workspace_id = :ws", id=aid, ws=user["workspace_id"])
     return {"ok": True}
 
 # --- Vehicles ---
 @api.get("/vehicles")
-async def list_vehicles(user: dict = Depends(get_current_user)):
-    return await fetch_all("select * from vehicles where workspace_id = :ws", ws=user["workspace_id"])
+async def list_vehicles(search: Optional[str] = None, limit: Optional[int] = None, offset: int = 0, user: dict = Depends(get_current_user)):
+    if search:
+        q = "select * from vehicles where workspace_id = :ws and (name ilike :q or plate ilike :q) order by name"
+        params = {"ws": user["workspace_id"], "q": f"%{search}%"}
+    else:
+        q = "select * from vehicles where workspace_id = :ws order by name"
+        params = {"ws": user["workspace_id"]}
+    if limit is not None:
+        q += " limit :limit offset :offset"
+        params["limit"] = limit
+        params["offset"] = offset
+    return await fetch_all(q, **params)
 
 @api.post("/vehicles")
 async def create_vehicle(v: VehicleIn, user: dict = Depends(get_current_user)):
@@ -633,25 +997,52 @@ async def delete_vehicle(vid: str, user: dict = Depends(get_current_user)):
     await execute("delete from vehicles where id = :id and workspace_id = :ws", id=vid, ws=user["workspace_id"])
     return {"ok": True}
 
-TEMPLATE_COLS = {"name", "description", "sections"}
+TEMPLATE_COLS = {"name", "description", "sections", "type", "frequency", "assignment_scope",
+                  "group_id", "target_ids", "active"}
 
 # --- Templates ---
 @api.get("/templates")
 async def list_templates(user: dict = Depends(get_current_user)):
-    return await fetch_all("select * from templates where workspace_id = :ws", ws=user["workspace_id"])
+    # Only the current version of each template family — superseded versions stay queryable by id
+    # (e.g. for historical reports) but drop out of the assignment/picker list.
+    return await fetch_all("select * from templates where workspace_id = :ws and active = true", ws=user["workspace_id"])
 
 @api.post("/templates")
 async def create_template(t: TemplateIn, user: dict = Depends(get_current_user)):
     tid = str(uuid.uuid4())
     sections = [s.model_dump() for s in t.sections]
     await execute(
-        "insert into templates (id, workspace_id, name, description, sections, created_by) "
-        "values (:id, :ws, :name, :description, :sections ::jsonb, :created_by)",
+        "insert into templates (id, workspace_id, name, description, sections, type, frequency, "
+        "assignment_scope, group_id, target_ids, active, created_by, version, family_id) values (:id, :ws, :name, "
+        ":description, :sections ::jsonb, :type, :frequency, :assignment_scope, :group_id, "
+        ":target_ids ::jsonb, :active, :created_by, 1, :id)",
         id=tid, ws=user["workspace_id"], name=t.name, description=t.description,
-        sections=json_dumps(sections), created_by=user["id"],
+        sections=json_dumps(sections), type=t.type, frequency=t.frequency,
+        assignment_scope=t.assignment_scope, group_id=t.group_id,
+        target_ids=json_dumps(t.target_ids), active=t.active, created_by=user["id"],
     )
     doc = await fetch_one("select * from templates where id = :id", id=tid)
     await log_event(user, "template.created", "template", tid, {"name": doc["name"]})
+    return doc
+
+@api.post("/templates/{tid}/duplicate")
+async def duplicate_template(tid: str, user: dict = Depends(get_current_user)):
+    src = await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
+    if not src: raise HTTPException(status_code=404, detail="Not found")
+    new_id = str(uuid.uuid4())
+    await execute(
+        "insert into templates (id, workspace_id, name, description, sections, type, frequency, "
+        "assignment_scope, group_id, target_ids, active, created_by, version, family_id) values (:id, :ws, :name, "
+        ":description, :sections ::jsonb, :type, :frequency, :assignment_scope, :group_id, "
+        ":target_ids ::jsonb, :active, :created_by, 1, :id)",
+        id=new_id, ws=user["workspace_id"], name=f"{src['name']} copy", description=src.get("description"),
+        sections=json_dumps(src.get("sections", [])), type=src.get("type", "vehicle"),
+        frequency=src.get("frequency"), assignment_scope=src.get("assignment_scope", "all"),
+        group_id=src.get("group_id"), target_ids=json_dumps(src.get("target_ids", [])),
+        active=src.get("active", True), created_by=user["id"],
+    )
+    doc = await fetch_one("select * from templates where id = :id", id=new_id)
+    await log_event(user, "template.duplicated", "template", new_id, {"name": doc["name"], "source_id": tid})
     return doc
 
 @api.get("/templates/{tid}")
@@ -662,8 +1053,37 @@ async def get_template(tid: str, user: dict = Depends(get_current_user)):
 
 @api.patch("/templates/{tid}")
 async def update_template(tid: str, patch: dict, user: dict = Depends(get_current_user)):
-    await update_row("templates", tid, user["workspace_id"], patch, TEMPLATE_COLS)
-    return await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
+    ws = user["workspace_id"]
+    current = await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=ws)
+    if not current: raise HTTPException(status_code=404, detail="Not found")
+
+    if "sections" in patch:
+        used = await fetch_one("select 1 as x from inspections where template_id = :id limit 1", id=tid)
+        if used:
+            # Editing the actual checklist content of a template that's already been filled in against —
+            # version it instead of mutating history. Existing submissions keep their own
+            # template_snapshot regardless, but the templates table should reflect the lineage too.
+            new_id = str(uuid.uuid4())
+            merged = {**current, **patch}
+            await execute(
+                "insert into templates (id, workspace_id, name, description, sections, type, frequency, "
+                "assignment_scope, group_id, target_ids, active, created_by, version, family_id) values "
+                "(:id, :ws, :name, :description, :sections ::jsonb, :type, :frequency, :assignment_scope, "
+                ":group_id, :target_ids ::jsonb, :active, :created_by, :version, :family_id)",
+                id=new_id, ws=ws, name=merged["name"], description=merged.get("description"),
+                sections=json_dumps(merged["sections"]), type=merged["type"], frequency=merged.get("frequency"),
+                assignment_scope=merged.get("assignment_scope", "all"), group_id=merged.get("group_id"),
+                target_ids=json_dumps(merged.get("target_ids", [])), active=True, created_by=user["id"],
+                version=current["version"] + 1, family_id=current["family_id"],
+            )
+            await execute("update templates set active = false where id = :id", id=tid)
+            doc = await fetch_one("select * from templates where id = :id", id=new_id)
+            await log_event(user, "template.versioned", "template", new_id, {"name": doc["name"], "version": doc["version"], "from": tid})
+            return doc
+
+    patch = {**patch, "updated_at": datetime.now(timezone.utc)}
+    await update_row("templates", tid, ws, patch, TEMPLATE_COLS | {"updated_at"})
+    return await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=ws)
 
 @api.delete("/templates/{tid}")
 async def delete_template(tid: str, user: dict = Depends(get_current_user)):
@@ -672,33 +1092,107 @@ async def delete_template(tid: str, user: dict = Depends(get_current_user)):
 
 # --- Inspections ---
 @api.get("/inspections")
-async def list_inspections(vehicle_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_inspections(vehicle_id: Optional[str] = None, asset_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    ws = user["workspace_id"]
     if vehicle_id:
-        return await fetch_all(
+        rows = await fetch_all(
             "select * from inspections where workspace_id = :ws and vehicle_id = :vid order by created_at desc",
-            ws=user["workspace_id"], vid=vehicle_id,
+            ws=ws, vid=vehicle_id,
         )
-    return await fetch_all(
-        "select * from inspections where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
-    )
+    elif asset_id:
+        rows = await fetch_all(
+            "select * from inspections where workspace_id = :ws and asset_id = :aid order by created_at desc",
+            ws=ws, aid=asset_id,
+        )
+    else:
+        rows = await fetch_all("select * from inspections where workspace_id = :ws order by created_at desc", ws=ws)
+
+    vids = list({r["vehicle_id"] for r in rows if r.get("vehicle_id")})
+    aids = list({r["asset_id"] for r in rows if r.get("asset_id")})
+    tids = list({r["template_id"] for r in rows if r.get("template_id")})
+    vmap = {v["id"]: v for v in (await fetch_all("select * from vehicles where workspace_id = :ws and id = any(:ids)", ws=ws, ids=vids) if vids else [])}
+    amap = {a["id"]: a for a in (await fetch_all("select * from assets where workspace_id = :ws and id = any(:ids)", ws=ws, ids=aids) if aids else [])}
+    tmap = {t["id"]: t for t in (await fetch_all("select id, name from templates where workspace_id = :ws and id = any(:ids)", ws=ws, ids=tids) if tids else [])}
+    for r in rows:
+        v = vmap.get(r.get("vehicle_id"))
+        a = amap.get(r.get("asset_id"))
+        target = v or a
+        r["target_name"] = target.get("name") if target else None
+        r["target_plate"] = v.get("plate") if v else (a.get("identifier") if a else None)
+        r["target_kind"] = "vehicle" if v else (a.get("kind") if a else None)
+        r["template_name"] = (tmap.get(r.get("template_id")) or {}).get("name")
+    return rows
+
+async def _reverse_geocode(lat: float, lon: float) -> Optional[str]:
+    """Best-effort resolved address for a mobile-captured GPS fix — never blocks the submission."""
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            r = await client.get(
+                "https://nominatim.openstreetmap.org/reverse",
+                params={"lat": lat, "lon": lon, "format": "jsonv2"},
+                headers={"User-Agent": "FleetIntel/1.0"},
+            )
+            if r.status_code == 200:
+                return r.json().get("display_name")
+    except Exception as e:
+        logger.warning(f"reverse geocode failed: {e}")
+    return None
 
 @api.post("/inspections")
 async def create_inspection(i: InspectionIn, user: dict = Depends(get_current_user)):
+    if bool(i.vehicle_id) == bool(i.asset_id):
+        raise HTTPException(status_code=400, detail="Provide exactly one of vehicle_id or asset_id")
+    ws = user["workspace_id"]
+
+    if i.client_submission_id:
+        existing = await fetch_one(
+            "select * from inspections where workspace_id = :ws and client_submission_id = :cid",
+            ws=ws, cid=i.client_submission_id,
+        )
+        if existing:
+            return existing  # idempotent retry — a dropped-connection resync must not duplicate the record
+
+    if i.vehicle_id and not (i.odometer and i.odometer > 0):
+        raise HTTPException(status_code=400, detail="Odometer reading is required for a vehicle checklist")
+    if not i.signature:
+        raise HTTPException(status_code=400, detail="Signature is required")
+    for a in i.answers:
+        if str(a.value).lower() == "fail":
+            missing = [f for f, ok in (("note", bool(a.note and a.note.strip())), ("photo", bool(a.photo)), ("defect_type", bool(a.defect_type))) if not ok]
+            if missing:
+                raise HTTPException(status_code=400, detail=f"Item {a.item_id} is marked as a defect but is missing: {', '.join(missing)}")
+            if a.defect_type not in DEFECT_TYPES:
+                raise HTTPException(status_code=400, detail=f"Item {a.item_id} has an invalid defect_type: {a.defect_type}")
+
+    template = await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=i.template_id, ws=ws)
     iid = str(uuid.uuid4())
     answers = [a.model_dump() for a in i.answers]
     fails = sum(1 for a in answers if str(a.get("value", "")).lower() == "fail")
-    if i.odometer:
+    if i.odometer and i.vehicle_id:
         await execute(
             "update vehicles set odometer = :odo where id = :vid and workspace_id = :ws",
-            odo=i.odometer, vid=i.vehicle_id, ws=user["workspace_id"],
+            odo=i.odometer, vid=i.vehicle_id, ws=ws,
         )
+    address = i.address
+    if not address and i.latitude is not None and i.longitude is not None:
+        address = await _reverse_geocode(i.latitude, i.longitude)
+    snapshot = {"name": template["name"], "sections": template["sections"]} if template else None
+    location_status = i.location_status or "not_attempted"
+    if location_status == "not_attempted" and i.latitude is not None:
+        location_status = "captured"
     await execute(
-        "insert into inspections (id, workspace_id, template_id, vehicle_id, answers, notes, odometer, "
-        "inspector_id, inspector_name, fail_count, status) values (:id, :ws, :template_id, :vehicle_id, "
-        ":answers ::jsonb, :notes, :odometer, :inspector_id, :inspector_name, :fail_count, 'completed')",
-        id=iid, ws=user["workspace_id"], template_id=i.template_id, vehicle_id=i.vehicle_id,
-        answers=json_dumps(answers), notes=i.notes, odometer=i.odometer,
+        "insert into inspections (id, workspace_id, template_id, vehicle_id, asset_id, answers, notes, "
+        "odometer, inspector_id, inspector_name, fail_count, status, completed_at, latitude, longitude, "
+        "address, location_status, signature, client_submission_id, template_snapshot) values (:id, :ws, :template_id, "
+        ":vehicle_id, :asset_id, :answers ::jsonb, :notes, :odometer, :inspector_id, :inspector_name, "
+        ":fail_count, 'completed', :completed_at, :latitude, :longitude, :address, :location_status, :signature, "
+        ":client_submission_id, :template_snapshot ::jsonb)",
+        id=iid, ws=ws, template_id=i.template_id, vehicle_id=i.vehicle_id,
+        asset_id=i.asset_id, answers=json_dumps(answers), notes=i.notes, odometer=i.odometer,
         inspector_id=user["id"], inspector_name=user["name"], fail_count=fails,
+        completed_at=_parse_datetime(i.completed_at) if i.completed_at else datetime.now(timezone.utc),
+        latitude=i.latitude, longitude=i.longitude, address=address, location_status=location_status, signature=i.signature,
+        client_submission_id=i.client_submission_id, template_snapshot=json_dumps(snapshot) if snapshot else None,
     )
     return await fetch_one("select * from inspections where id = :id", id=iid)
 
@@ -709,7 +1203,7 @@ async def get_inspection(iid: str, user: dict = Depends(get_current_user)):
     return x
 
 MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downtime_hours",
-                     "assigned_to", "notes", "completed_at", "started_at"}
+                     "assigned_to", "notes", "completed_at", "started_at", "category"}
 
 # --- Maintenance jobs ---
 @api.get("/maintenance")
@@ -723,9 +1217,9 @@ async def create_maintenance(m: MaintenanceIn, user: dict = Depends(get_current_
     mid = str(uuid.uuid4())
     await execute(
         "insert into maintenance (id, workspace_id, vehicle_id, inspection_id, driver_id, title, "
-        "description, priority, estimated_cost, estimated_hours, assigned_to, parts_cost, labor_cost, "
+        "description, priority, category, estimated_cost, estimated_hours, assigned_to, parts_cost, labor_cost, "
         "status, created_by, actual_cost, downtime_hours) values (:id, :ws, :vehicle_id, :inspection_id, "
-        ":driver_id, :title, :description, :priority, :estimated_cost, :estimated_hours, :assigned_to, "
+        ":driver_id, :title, :description, :priority, :category, :estimated_cost, :estimated_hours, :assigned_to, "
         ":parts_cost, :labor_cost, 'pending', :created_by, 0, 0)",
         id=mid, ws=user["workspace_id"], created_by=user["id"], **m.model_dump(),
     )
@@ -779,9 +1273,12 @@ async def delete_maintenance(mid: str, user: dict = Depends(get_current_user)):
 # --- KPIs / Analytics ---
 @api.get("/analytics/kpi")
 async def analytics_kpi(user: dict = Depends(get_current_user)):
-    vehicles = await fetch_all("select * from vehicles where workspace_id = :ws", ws=user["workspace_id"])
-    maint = await fetch_all("select * from maintenance where workspace_id = :ws", ws=user["workspace_id"])
-    fuel_logs = await fetch_all("select * from fuel_logs where workspace_id = :ws", ws=user["workspace_id"])
+    ws = user["workspace_id"]
+    vehicles = await fetch_all("select * from vehicles where workspace_id = :ws", ws=ws)
+    maint = await fetch_all("select * from maintenance where workspace_id = :ws", ws=ws)
+    fuel_logs = await fetch_all("select * from fuel_logs where workspace_id = :ws", ws=ws)
+    parts = await fetch_all("select * from parts where workspace_id = :ws", ws=ws)
+    inspections = await fetch_all("select answers, fail_count from inspections where workspace_id = :ws", ws=ws)
     vmap = {v["id"]: v for v in vehicles}
     total_vehicles = len(vehicles)
     active = sum(1 for v in vehicles if v.get("status") == "active")
@@ -802,6 +1299,51 @@ async def analytics_kpi(user: dict = Depends(get_current_user)):
     total_fleet_cost = total_maint_cost + total_fuel_cost + total_downtime_cost
     cost_per_vehicle = (total_maint_cost / total_vehicles) if total_vehicles else 0
     utilization = (active / total_vehicles * 100) if total_vehicles else 0
+    tyre_cost = sum(m.get("actual_cost", 0) or 0 for m in completed_jobs if m.get("category") == "tyres")
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    def _dt(x):
+        if isinstance(x, datetime): return x
+        return None
+    monthly_jobs = [m for m in completed_jobs if (_dt(m.get("completed_at") or m.get("created_at")) or now) >= month_start]
+    monthly_maint = sum(m.get("actual_cost", 0) or 0 for m in monthly_jobs)
+    monthly_downtime_cost = sum(
+        (m.get("downtime_hours", 0) or 0) * (vmap.get(m.get("vehicle_id"), {}).get("downtime_cost_per_hour", 0) or 0)
+        for m in monthly_jobs
+    )
+    monthly_fuel = sum(l.get("cost", 0) or 0 for l in fuel_logs if (_dt(l.get("occurred_at")) or now) >= month_start)
+    total_monthly_cost = monthly_maint + monthly_downtime_cost + monthly_fuel
+
+    on_budget = sum(1 for m in completed_jobs if (m.get("actual_cost", 0) or 0) <= (m.get("estimated_cost", 0) or 0))
+    cost_efficiency_pct = (on_budget / len(completed_jobs) * 100) if completed_jobs else 100
+
+    by_supplier = {}
+    for p in parts:
+        by_supplier.setdefault(p.get("supplier") or "Unknown", []).append(p.get("unit_cost", 0) or 0)
+    supplier_avgs = [sum(v) / len(v) for v in by_supplier.values() if v]
+    vendor_avg_cost = (sum(supplier_avgs) / len(supplier_avgs)) if supplier_avgs else 0
+
+    avg_downtime_days_per_vehicle = (total_downtime / 24 / total_vehicles) if total_vehicles else 0
+
+    total_defects = sum(1 for i in inspections for a in (i.get("answers") or []) if a.get("value") == "fail")
+    failed_checklists = sum(1 for i in inspections if (i.get("fail_count") or 0) > 0)
+
+    driver_scores = await _compute_driver_performance(ws)
+    avg_driver_score = (sum(d["score"] for d in driver_scores) / len(driver_scores)) if driver_scores else 0
+
+    driver_cost = {}
+    for m in completed_jobs:
+        if m.get("driver_id"):
+            driver_cost[m["driver_id"]] = driver_cost.get(m["driver_id"], 0) + (m.get("actual_cost", 0) or 0)
+    for f in fuel_logs:
+        if f.get("driver_id"):
+            driver_cost[f["driver_id"]] = driver_cost.get(f["driver_id"], 0) + (f.get("cost", 0) or 0)
+    driver_highest_cost = max(driver_cost.values()) if driver_cost else 0
+
+    trip_logs = await fetch_all("select vehicle_id from trip_logs where workspace_id = :ws", ws=ws)
+    avg_trips_per_vehicle = (len(trip_logs) / total_vehicles) if total_vehicles else 0
+
     return {
         "total_vehicles": total_vehicles,
         "active": active,
@@ -819,6 +1361,16 @@ async def analytics_kpi(user: dict = Depends(get_current_user)):
         "pending_jobs": len(pending_jobs),
         "completed_jobs": len(completed_jobs),
         "total_km": round(total_odo, 0),
+        "tyre_cost": round(tyre_cost, 2),
+        "total_monthly_cost": round(total_monthly_cost, 2),
+        "cost_efficiency_pct": round(cost_efficiency_pct, 1),
+        "vendor_avg_cost": round(vendor_avg_cost, 2),
+        "avg_downtime_days_per_vehicle": round(avg_downtime_days_per_vehicle, 1),
+        "total_defects": total_defects,
+        "failed_checklists": failed_checklists,
+        "avg_driver_score": round(avg_driver_score, 1),
+        "driver_highest_cost": round(driver_highest_cost, 2),
+        "avg_trips_per_vehicle": round(avg_trips_per_vehicle, 1),
     }
 
 @api.get("/analytics/cost-trend")
@@ -1024,13 +1576,154 @@ async def export_parts(request: Request):
         })
     return _csv_response(rows, ["sku","name","category","supplier","supplier_email","stock","reorder_point","unit_cost","inventory_value","low_stock"], "parts-inventory.csv")
 
+@api.get("/export/inspections.csv")
+async def export_inspections(request: Request):
+    token = request.query_params.get("token")
+    user = await user_from_token(token) if token else await get_current_user(request)
+    ws = user["workspace_id"]
+    insp = await fetch_all("select * from inspections where workspace_id = :ws order by created_at desc limit 5000", ws=ws)
+    vehicles = {v["id"]: v for v in await fetch_all("select * from vehicles where workspace_id = :ws", ws=ws)}
+    assets = {a["id"]: a for a in await fetch_all("select * from assets where workspace_id = :ws", ws=ws)}
+    templates = {t["id"]: t for t in await fetch_all("select id, name from templates where workspace_id = :ws", ws=ws)}
+    rows = []
+    for i in insp:
+        v = vehicles.get(i.get("vehicle_id"))
+        a = assets.get(i.get("asset_id"))
+        target = v or a
+        rows.append({
+            "id": i.get("id", ""), "vehicle": target.get("name", "") if target else "",
+            "plate_or_identifier": (v.get("plate") if v else (a.get("identifier") if a else "")) or "",
+            "type": "vehicle" if v else (a.get("kind") if a else ""),
+            "driver": i.get("inspector_name", ""), "template": templates.get(i.get("template_id"), {}).get("name", ""),
+            "completed_at": i.get("completed_at") or i.get("created_at") or "",
+            "received_at": i.get("created_at", ""), "address": i.get("address", ""),
+            "result": "Defects Found" if (i.get("fail_count") or 0) > 0 else "Pass",
+            "defect_count": i.get("fail_count", 0),
+        })
+    return _csv_response(rows, ["id","vehicle","plate_or_identifier","type","driver","template","completed_at","received_at","address","result","defect_count"], "checklist-register.csv")
+
+@api.get("/export/drivers.csv")
+async def export_drivers(group_id: Optional[str] = None, status: Optional[str] = None, request: Request = None):
+    token = request.query_params.get("token")
+    user = await user_from_token(token) if token else await get_current_user(request)
+    ws = user["workspace_id"]
+    q = "select * from drivers where workspace_id = :ws"
+    params = {"ws": ws}
+    if group_id:
+        q += " and group_id = :gid"; params["gid"] = group_id
+    if status:
+        q += " and status = :status"; params["status"] = status
+    q += " order by name"
+    drivers = await fetch_all(q, **params)
+    vehicles = {v["id"]: v for v in await fetch_all("select id, name, plate from vehicles where workspace_id = :ws", ws=ws)}
+    rows = []
+    for d in drivers:
+        v = vehicles.get(d.get("assigned_vehicle_id"))
+        rows.append({
+            "name": d.get("name", ""), "number": d.get("number", ""), "email": d.get("email", ""),
+            "phone": d.get("phone", ""), "vehicle": f"{v['name']} ({v['plate']})" if v else "",
+            "status": d.get("status", ""), "license_number": d.get("license_number", ""),
+            "license_expiry": d.get("license_expiry", ""),
+            "vehicle_checklist_access": (d.get("app_access") or {}).get("vehicle_checklist", False),
+        })
+    return _csv_response(rows, ["name","number","email","phone","vehicle","status","license_number","license_expiry","vehicle_checklist_access"], "drivers.csv")
+
+@api.get("/export/users.csv")
+async def export_users(request: Request):
+    token = request.query_params.get("token")
+    user = await user_from_token(token) if token else await get_current_user(request)
+    users = await fetch_all("select * from user_profiles where workspace_id = :ws order by name", ws=user["workspace_id"])
+    rows = [{
+        "name": u.get("name", ""), "username": u.get("username", ""), "email": u.get("email", ""),
+        "role": u.get("role", ""), "status": u.get("status", "active"),
+        "active_from": u.get("active_from", "") or "", "active_until": u.get("active_until", "") or "",
+    } for u in users]
+    return _csv_response(rows, ["name","username","email","role","status","active_from","active_until"], "team-members.csv")
+
+DRIVER_GROUP_COLS = {"name", "color", "description", "department", "region", "cost_centre"}
+
+# --- Driver groups ---
+@api.get("/driver-groups")
+async def list_driver_groups(user: dict = Depends(get_current_user)):
+    return await fetch_all("select * from driver_groups where workspace_id = :ws order by name", ws=user["workspace_id"])
+
+@api.post("/driver-groups")
+async def create_driver_group(g: DriverGroupIn, user: dict = Depends(get_current_user)):
+    gid = str(uuid.uuid4())
+    await execute(
+        "insert into driver_groups (id, workspace_id, name, color, description, department, region, cost_centre) "
+        "values (:id, :ws, :name, :color, :description, :department, :region, :cost_centre)",
+        id=gid, ws=user["workspace_id"], **g.model_dump(),
+    )
+    doc = await fetch_one("select * from driver_groups where id = :id", id=gid)
+    await log_event(user, "driver_group.created", "driver_group", gid, {"name": doc["name"]})
+    return doc
+
+@api.patch("/driver-groups/{gid}")
+async def update_driver_group(gid: str, patch: dict, user: dict = Depends(get_current_user)):
+    before = await fetch_one("select * from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if not before: raise HTTPException(status_code=404, detail="Not found")
+    await update_row("driver_groups", gid, user["workspace_id"], patch, DRIVER_GROUP_COLS)
+    doc = await fetch_one("select * from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if "color" in patch and patch["color"] != before["color"]:
+        await log_event(user, "driver_group.color_changed", "driver_group", gid, {"name": doc["name"], "from": before["color"], "to": doc["color"]})
+    else:
+        await log_event(user, "driver_group.updated", "driver_group", gid, {"name": doc["name"]})
+    return doc
+
+@api.delete("/driver-groups/{gid}")
+async def delete_driver_group(gid: str, user: dict = Depends(get_current_user)):
+    g = await fetch_one("select * from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    await execute("delete from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if g:
+        await log_event(user, "driver_group.deleted", "driver_group", gid, {"name": g["name"]})
+    return {"ok": True}
+
+@api.post("/driver-groups/{gid}/assign")
+async def assign_driver_group(gid: str, body: GroupAssign, user: dict = Depends(get_current_user)):
+    g = await fetch_one("select * from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
+    if not g: raise HTTPException(status_code=404, detail="Not found")
+    if body.add_ids:
+        await execute(
+            "update drivers set group_id = :gid where id = any(:ids) and workspace_id = :ws",
+            gid=gid, ids=body.add_ids, ws=user["workspace_id"],
+        )
+        await log_event(user, "driver_group.member_added", "driver_group", gid, {"name": g["name"], "count": len(body.add_ids), "ids": body.add_ids})
+    if body.remove_ids:
+        await execute(
+            "update drivers set group_id = null where id = any(:ids) and group_id = :gid and workspace_id = :ws",
+            gid=gid, ids=body.remove_ids, ws=user["workspace_id"],
+        )
+        await log_event(user, "driver_group.member_removed", "driver_group", gid, {"name": g["name"], "count": len(body.remove_ids), "ids": body.remove_ids})
+    return {"ok": True}
+
 # --- Drivers ---
 DRIVER_COLS = {"name", "email", "phone", "license_number", "license_expiry", "hire_date",
-               "assigned_vehicle_id", "status", "notes"}
+               "assigned_vehicle_id", "status", "notes", "group_id",
+               "number", "company_department", "cell_country_code", "private", "additional_info",
+               "app_access", "identification_method", "regulation", "license_issuing_country",
+               "license_issuing_authority", "license_issue_date", "license_categories",
+               "address_country", "address_street", "address_zip", "address_city"}
+
+REGULATIONS = ["EU 561/2006", "US FMCSA HOS", "South Africa NRTA", "Not tracked"]
+
+def _validate_driver_app_access(email: Optional[str], app_access: dict):
+    if (app_access or {}).get("vehicle_checklist") and not email:
+        raise HTTPException(status_code=400, detail="Vehicle Checklist app access requires an email on file — add one in the Driver section first")
 
 @api.get("/drivers")
-async def list_drivers(user: dict = Depends(get_current_user)):
-    return await fetch_all("select * from drivers where workspace_id = :ws order by name", ws=user["workspace_id"])
+async def list_drivers(search: Optional[str] = None, limit: Optional[int] = None, offset: int = 0, user: dict = Depends(get_current_user)):
+    if search:
+        q = "select * from drivers where workspace_id = :ws and name ilike :q order by name"
+        params = {"ws": user["workspace_id"], "q": f"%{search}%"}
+    else:
+        q = "select * from drivers where workspace_id = :ws order by name"
+        params = {"ws": user["workspace_id"]}
+    if limit is not None:
+        q += " limit :limit offset :offset"
+        params["limit"] = limit
+        params["offset"] = offset
+    return await fetch_all(q, **params)
 
 @api.post("/drivers")
 async def create_driver(d: dict, user: dict = Depends(get_current_user)):
@@ -1038,14 +1731,25 @@ async def create_driver(d: dict, user: dict = Depends(get_current_user)):
     if isinstance(d.get("email"), str) and not d["email"].strip():
         d["email"] = None
     driver = DriverIn(**d)
+    _validate_driver_app_access(driver.email, driver.app_access)
     did = str(uuid.uuid4())
     fields = driver.model_dump()
     fields["license_expiry"] = _parse_date(fields["license_expiry"])
     fields["hire_date"] = _parse_date(fields["hire_date"])
+    fields["license_issue_date"] = _parse_date(fields["license_issue_date"]) if fields.get("license_issue_date") else None
+    fields["app_access"] = json_dumps(fields["app_access"])
+    fields["license_categories"] = json_dumps(fields["license_categories"])
     await execute(
         "insert into drivers (id, workspace_id, name, email, phone, license_number, license_expiry, "
-        "hire_date, assigned_vehicle_id, status, notes) values (:id, :ws, :name, :email, :phone, "
-        ":license_number, :license_expiry, :hire_date, :assigned_vehicle_id, :status, :notes)",
+        "hire_date, assigned_vehicle_id, status, notes, group_id, number, company_department, "
+        "cell_country_code, private, additional_info, app_access, identification_method, regulation, "
+        "license_issuing_country, license_issuing_authority, license_issue_date, license_categories, "
+        "address_country, address_street, address_zip, address_city) values (:id, :ws, :name, :email, "
+        ":phone, :license_number, :license_expiry, :hire_date, :assigned_vehicle_id, :status, :notes, "
+        ":group_id, :number, :company_department, :cell_country_code, :private, :additional_info, "
+        ":app_access ::jsonb, :identification_method, :regulation, :license_issuing_country, "
+        ":license_issuing_authority, :license_issue_date, :license_categories ::jsonb, :address_country, "
+        ":address_street, :address_zip, :address_city)",
         id=did, ws=user["workspace_id"], **fields,
     )
     doc = await fetch_one("select * from drivers where id = :id", id=did)
@@ -1060,8 +1764,15 @@ async def get_driver(did: str, user: dict = Depends(get_current_user)):
 
 @api.patch("/drivers/{did}")
 async def update_driver(did: str, patch: dict, user: dict = Depends(get_current_user)):
+    current = await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
+    if not current: raise HTTPException(status_code=404, detail="Not found")
+    if "app_access" in patch or "email" in patch:
+        email = patch.get("email", current.get("email"))
+        app_access = patch.get("app_access", current.get("app_access") or {})
+        _validate_driver_app_access(email, app_access)
     if "license_expiry" in patch: patch["license_expiry"] = _parse_date(patch["license_expiry"])
     if "hire_date" in patch: patch["hire_date"] = _parse_date(patch["hire_date"])
+    if "license_issue_date" in patch: patch["license_issue_date"] = _parse_date(patch["license_issue_date"]) if patch["license_issue_date"] else None
     await update_row("drivers", did, user["workspace_id"], patch, DRIVER_COLS)
     return await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
 
@@ -1099,15 +1810,19 @@ def _group_key(vid, vmap, gmap):
     g = gmap.get(gid)
     return (gid or "none", g["name"] if g else "No group")
 
-def _aggregate(items, vmap, gmap, group_by, value_fn, count_only=False):
-    """Collapse a list of maintenance rows into per-vehicle or per-group totals."""
+def _aggregate(items, vmap, gmap, group_by, value_fn, count_only=False, dmap=None):
+    """Collapse a list of rows into per-vehicle, per-group, or per-driver totals."""
     buckets = {}
     for it in items:
-        vid = it.get("vehicle_id")
-        if group_by == "group":
-            key, label = _group_key(vid, vmap, gmap)
+        if group_by == "driver":
+            did = it.get("driver_id")
+            d = (dmap or {}).get(did)
+            key, label, plate = did or "none", d["name"] if d else "Unassigned", ""
+        elif group_by == "group":
+            key, label = _group_key(it.get("vehicle_id"), vmap, gmap)
             plate = ""
         else:
+            vid = it.get("vehicle_id")
             v = vmap.get(vid) or {}
             key, label, plate = vid or "none", v.get("name", "?"), v.get("plate", "")
         b = buckets.setdefault(key, {"vehicle": label, "plate": plate, "value": 0, "jobs": 0})
@@ -1135,9 +1850,9 @@ def _in_range(dt, start, end=None):
     if end is not None and dt >= end: return False
     return True
 
-def _with_delta(rows, prior_items, vmap, gmap, group_by, value_fn):
+def _with_delta(rows, prior_items, vmap, gmap, group_by, value_fn, dmap=None):
     """Mutates rows in place, adding delta_pct = % change vs. the same bucket's prior-period value."""
-    prior_rows = _aggregate(prior_items, vmap, gmap, group_by, value_fn)
+    prior_rows = _aggregate(prior_items, vmap, gmap, group_by, value_fn, dmap=dmap)
     prior_map = {(r["vehicle"], r["plate"]): r["value"] for r in prior_rows}
     for r in rows:
         prev = prior_map.get((r["vehicle"], r["plate"]))
@@ -1151,8 +1866,10 @@ async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Opti
     maint_all = await fetch_all("select * from maintenance where workspace_id = :ws", ws=user["workspace_id"])
     fuel_logs_all = await fetch_all("select * from fuel_logs where workspace_id = :ws", ws=user["workspace_id"])
     groups = await fetch_all("select * from vehicle_groups where workspace_id = :ws", ws=user["workspace_id"]) if group_by == "group" else []
+    drivers = await fetch_all("select * from drivers where workspace_id = :ws", ws=user["workspace_id"]) if group_by == "driver" else []
     vmap = {v["id"]: v for v in vehicles}
     gmap = {g["id"]: g for g in groups}
+    dmap = {d["id"]: d for d in drivers}
     def vname(vid): return vmap.get(vid, {}).get("name", "?")
     def vplate(vid): return vmap.get(vid, {}).get("plate", "")
 
@@ -1304,6 +2021,40 @@ async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Opti
         rows = [{"vehicle": v["name"], "plate": v["plate"], "status": v.get("status", ""), "odometer": v.get("odometer", 0)} for v in vehicles]
         active = sum(1 for v in vehicles if v.get("status") == "active")
         return {"title": "Fleet utilization", "total": round(active / len(vehicles) * 100 if vehicles else 0, 1), "unit": "%", "columns": ["vehicle","plate","status","odometer"], "rows": rows}
+    if kpi_key == "tyre_cost":
+        tyre_jobs = [m for m in completed if m.get("category") == "tyres"]
+        if group_by in ("vehicle", "group"):
+            rows = _aggregate(tyre_jobs, vmap, gmap, group_by, lambda m: m.get("actual_cost", 0))
+            for r in rows: r["value"] = round(r["value"], 2)
+            if cutoff: _with_delta(rows, [m for m in completed_prior if m.get("category") == "tyres"], vmap, gmap, group_by, lambda m: m.get("actual_cost", 0))
+            rows.sort(key=lambda x: x["value"], reverse=True)
+            cols = (["vehicle", "value", "jobs"] if group_by == "group" else ["vehicle", "plate", "value", "jobs"]) + (["delta_pct"] if cutoff else [])
+            return {"title": f"Tyre cost · by {group_by}", "total": round(sum(r["value"] for r in rows), 2), "unit": "$", "columns": cols, "rows": rows}
+        rows = [{"vehicle": vname(m["vehicle_id"]), "plate": vplate(m["vehicle_id"]),
+                 "title": m["title"], "cost": round(m.get("actual_cost", 0) or 0, 2),
+                 "date": _d10(m.get("completed_at") or m.get("created_at"))} for m in tyre_jobs]
+        rows.sort(key=lambda x: x["cost"], reverse=True)
+        return {"title": "Tyre cost", "total": round(sum(r["cost"] for r in rows), 2), "unit": "$", "columns": ["vehicle","plate","title","cost","date"], "rows": rows}
+    if kpi_key == "driver_performance":
+        scores = await _compute_driver_performance(user["workspace_id"])
+        rows = [{"vehicle": s["name"], "score": s["score"], "status": s["status"]} for s in scores]
+        avg = round(sum(r["score"] for r in rows) / len(rows), 1) if rows else 0
+        return {"title": "Driver performance", "total": avg, "unit": "score", "columns": ["vehicle", "score", "status"], "rows": rows}
+    if kpi_key == "defect_reporting":
+        inspections = await fetch_all("select vehicle_id, answers from inspections where workspace_id = :ws", ws=user["workspace_id"])
+        defect_items = []
+        for i in inspections:
+            for a in (i.get("answers") or []):
+                if a.get("value") == "fail":
+                    defect_items.append({"vehicle_id": i.get("vehicle_id")})
+        if group_by in ("vehicle", "group"):
+            rows = _aggregate(defect_items, vmap, gmap, group_by, lambda x: 0, count_only=True)
+            rows.sort(key=lambda x: x["jobs"], reverse=True)
+            for r in rows: r["value"] = r["jobs"]
+            cols = ["vehicle", "value"] if group_by == "group" else ["vehicle", "plate", "value"]
+            return {"title": f"Defect reports · by {group_by}", "total": len(defect_items), "unit": "defects", "columns": cols, "rows": rows}
+        rows = [{"vehicle": vname(x["vehicle_id"]), "plate": vplate(x["vehicle_id"])} for x in defect_items]
+        return {"title": "Defect reports", "total": len(rows), "unit": "defects", "columns": ["vehicle", "plate"], "rows": rows}
     raise HTTPException(status_code=404, detail="Unknown KPI key")
 
 # --- Insurance / Public share link ---
@@ -1391,7 +2142,7 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
         mo = d.strftime("%Y-%m") if d else ""
         if not mo: continue
         by_v.setdefault(m["vehicle_id"], {}).setdefault(mo, 0)
-        by_v[m["vehicle_id"]][mo] += m.get("actual_cost", 0) or 0
+        by_v[m["vehicle_id"]][mo] += float(m.get("actual_cost", 0) or 0)
     anomalies = 0
     for vid, months in by_v.items():
         if len(months) < 3: continue
@@ -1400,8 +2151,14 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
         mean = sum(hist) / len(hist)
         std = (sum((x - mean) ** 2 for x in hist) / len(hist)) ** 0.5
         if std > 0 and latest > mean + 1.5 * std: anomalies += 1
+    overdue_checklists = await _compute_overdue_checklists(user["workspace_id"])
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+    recent_insp = await fetch_all(
+        "select id from inspections where workspace_id = :ws and fail_count > 0 and created_at >= :cutoff",
+        ws=user["workspace_id"], cutoff=recent_cutoff,
+    )
     critical_count = len(critical) + len(open_incidents) + sum(1 for e in expiring if e["days"] < 0)
-    warning_count = anomalies + len(low_stock) + sum(1 for e in expiring if 0 <= e["days"] <= 30)
+    warning_count = anomalies + len(low_stock) + sum(1 for e in expiring if 0 <= e["days"] <= 30) + len(overdue_checklists) + len(recent_insp)
     return {
         "critical": critical_count,
         "warnings": warning_count,
@@ -1413,6 +2170,8 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
             "pending_jobs": len(pending),
             "low_stock_parts": len(low_stock),
             "open_incidents": len(open_incidents),
+            "overdue_checklists": len(overdue_checklists),
+            "recent_defects": len(recent_insp),
         },
         "details": {
             "expiring_drivers": expiring[:10],
@@ -1689,6 +2448,46 @@ async def delete_fuel_log(lid: str, user: dict = Depends(get_current_user)):
     await execute("delete from fuel_logs where id = :id and workspace_id = :ws", id=lid, ws=user["workspace_id"])
     return {"ok": True}
 
+# --- Trip logs (real distance-travelled records, for the Trips per Vehicle / Kilometres tiles) ---
+@api.get("/trip-logs")
+async def list_trip_logs(vehicle_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    if vehicle_id:
+        logs = await fetch_all(
+            "select * from trip_logs where workspace_id = :ws and vehicle_id = :vid order by occurred_at desc",
+            ws=user["workspace_id"], vid=vehicle_id,
+        )
+    else:
+        logs = await fetch_all(
+            "select * from trip_logs where workspace_id = :ws order by occurred_at desc", ws=user["workspace_id"],
+        )
+    d_ids = list({l["driver_id"] for l in logs if l.get("driver_id")})
+    dmap = {d["id"]: d for d in await fetch_all(
+        "select id, name from drivers where workspace_id = :ws and id = any(:ids)",
+        ws=user["workspace_id"], ids=d_ids,
+    )} if d_ids else {}
+    for l in logs:
+        l["driver_name"] = dmap.get(l.get("driver_id") or "", {}).get("name")
+    return logs
+
+@api.post("/trip-logs")
+async def create_trip_log(t: TripLogIn, user: dict = Depends(get_current_user)):
+    tid = str(uuid.uuid4())
+    fields = t.model_dump()
+    fields["occurred_at"] = _parse_datetime(fields["occurred_at"])
+    await execute(
+        "insert into trip_logs (id, workspace_id, vehicle_id, driver_id, occurred_at, distance_km, "
+        "created_by) values (:id, :ws, :vehicle_id, :driver_id, :occurred_at, :distance_km, :created_by)",
+        id=tid, ws=user["workspace_id"], created_by=user["id"], **fields,
+    )
+    doc = await fetch_one("select * from trip_logs where id = :id", id=tid)
+    await log_event(user, "trip.logged", "trip_log", tid, {"vehicle_id": doc["vehicle_id"], "distance_km": doc["distance_km"]})
+    return doc
+
+@api.delete("/trip-logs/{tid}")
+async def delete_trip_log(tid: str, user: dict = Depends(get_current_user)):
+    await execute("delete from trip_logs where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
+    return {"ok": True}
+
 @api.get("/analytics/fleet-health")
 async def fleet_health(user: dict = Depends(get_current_user)):
     """Returns per-vehicle health score (0-100) and contributing factors."""
@@ -1805,6 +2604,65 @@ def _score_vehicle(v: dict, insp_list: list, maint_list: list, inc_list: list, d
         "factors": factors,
     }
 
+async def _compute_driver_performance(workspace_id: str):
+    """Mirrors _compute_fleet_health, scoped to drivers instead of vehicles."""
+    drivers = await fetch_all("select * from drivers where workspace_id = :ws", ws=workspace_id)
+    all_maint = await fetch_all("select * from maintenance where workspace_id = :ws", ws=workspace_id)
+    all_inc = await fetch_all("select * from incidents where workspace_id = :ws", ws=workspace_id)
+    now = datetime.now(timezone.utc)
+    results = [_score_driver(d, all_maint, all_inc, as_of=now) for d in drivers]
+    results.sort(key=lambda r: r["score"])  # worst first
+    return results
+
+def _score_driver(d: dict, maint_list: list, inc_list: list, as_of: datetime):
+    """Deterministic performance score (0-100) for a driver, mirroring _score_vehicle."""
+    did = d["id"]
+    ninety = as_of - timedelta(days=90)
+    def _parse(x):
+        if not x: return None
+        if isinstance(x, datetime): return x
+        try: return datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+        except Exception: return None
+    score = 100
+    factors = []
+    # Maintenance jobs attributed to this driver, opened in the trailing 90 days
+    dmaint = [m for m in maint_list if m.get("driver_id") == did and (_parse(m.get("created_at")) or as_of) <= as_of and (_parse(m.get("created_at")) or as_of) >= ninety]
+    critical = [m for m in dmaint if m.get("priority") == "critical"]
+    if critical:
+        score -= 20
+        factors.append({"key": "critical_maintenance", "label": f"{len(critical)} critical maintenance job(s) in 90d", "impact": -20})
+    # Incidents attributed to this driver in the trailing 90 days
+    dinc = [i for i in inc_list if i.get("driver_id") == did and (_parse(i.get("occurred_at")) or as_of) <= as_of and (_parse(i.get("occurred_at")) or as_of) >= ninety]
+    sev_weight = {"severe": 20, "moderate": 12, "minor": 4}
+    inc_deduction = min(40, sum(sev_weight.get(i.get("severity"), 4) for i in dinc))
+    if inc_deduction > 0:
+        score -= inc_deduction
+        factors.append({"key": "incidents", "label": f"{len(dinc)} incident(s) in 90d", "impact": -inc_deduction})
+    # Own license status
+    if d.get("license_expiry"):
+        try:
+            exp = d["license_expiry"]
+            exp = exp if hasattr(exp, "year") and not isinstance(exp, datetime) else datetime.strptime(str(exp), "%Y-%m-%d").date()
+            days_left = (exp - as_of.date()).days
+            if days_left < 0:
+                score -= 20
+                factors.append({"key": "license_expired", "label": "License expired", "impact": -20})
+            elif days_left <= 30:
+                score -= 8
+                factors.append({"key": "license_expiring", "label": f"License expires in {days_left}d", "impact": -8})
+        except Exception: pass
+    if d.get("status") == "inactive":
+        score -= 10
+        factors.append({"key": "inactive", "label": "Driver marked inactive", "impact": -10})
+    score = max(0, min(100, score))
+    status = "healthy" if score >= 80 else "watch" if score >= 55 else "at_risk"
+    return {"driver_id": did, "name": d.get("name"), "score": score, "status": status, "factors": factors}
+
+@api.get("/analytics/driver-performance")
+async def driver_performance(user: dict = Depends(get_current_user)):
+    """Returns per-driver performance score (0-100) and contributing factors."""
+    return await _compute_driver_performance(user["workspace_id"])
+
 # --- Bulk CSV import ---
 def _parse_csv(text: str) -> list:
     reader = csvlib.DictReader(BytesIO(text.encode()).read().decode().splitlines())
@@ -1909,6 +2767,59 @@ async def import_drivers(payload: dict, user: dict = Depends(get_current_user)):
     await log_event(user, "drivers.imported", "invite", "", {"created": created, "errors": len(errors)})
     return {"created": created, "errors": errors}
 
+@api.post("/import/driver-records")
+async def import_driver_records(payload: dict, user: dict = Depends(get_current_user)):
+    """Bulk-imports fleet driver records (name/license/etc.) into the `drivers` table — distinct from
+    /import/drivers above, which invites team-member *users* (email/role) rather than driver records."""
+    text = payload.get("csv", "")
+    if not text.strip(): raise HTTPException(status_code=400, detail="Empty CSV")
+    rows = list(csvlib.DictReader(text.splitlines()))
+    created = 0; errors = []
+    for i, r in enumerate(rows):
+        try:
+            doc = {
+                "id": str(uuid.uuid4()),
+                "workspace_id": user["workspace_id"],
+                "name": r.get("name") or r.get("Name") or "",
+                "email": (r.get("email") or "").strip() or None,
+                "phone": r.get("phone") or "",
+                "license_number": r.get("license_number") or r.get("License Number") or "",
+                "license_expiry": _parse_date(r.get("license_expiry") or r.get("License Expiry") or ""),
+                "hire_date": _parse_date(r.get("hire_date") or ""),
+                "status": (r.get("status") or "active").lower(),
+            }
+            if not doc["name"] or not doc["license_number"]:
+                raise ValueError("name and license_number required")
+            await execute(
+                "insert into drivers (id, workspace_id, name, email, phone, license_number, license_expiry, "
+                "hire_date, status) values (:id, :workspace_id, :name, :email, :phone, :license_number, "
+                ":license_expiry, :hire_date, :status)",
+                **doc,
+            )
+            created += 1
+        except Exception as e:
+            errors.append(f"row {i+2}: {e}")
+    await log_event(user, "driver_records.imported", "driver", "", {"created": created, "errors": len(errors)})
+    return {"created": created, "errors": errors}
+
+@api.get("/import/vehicles/template.csv")
+async def vehicle_import_template():
+    csv_text = (
+        "name,plate,make,model,year,type,status,odometer,fuel_cost_per_km\n"
+        "Falcon-03,FLT-1003,Volvo,FH16,2023,truck,active,0,0.35\n"
+    )
+    return StreamingResponse(iter([csv_text]), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=vehicle-import-template.csv"})
+
+@api.get("/import/driver-records/template.csv")
+async def driver_import_template():
+    csv_text = (
+        "name,email,phone,license_number,license_expiry,hire_date,status\n"
+        "Jane Doe,jane@example.com,+27821234567,DL-123456,2027-01-01,2024-01-01,active\n"
+    )
+    return StreamingResponse(iter([csv_text]), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=driver-import-template.csv"})
+
 # --- Weekly digest (PDF + email) ---
 async def _build_weekly_digest_pdf(workspace_id: str) -> tuple:
     """Build the digest PDF for a workspace. Returns (pdf_bytes, kpi_dict)."""
@@ -1931,7 +2842,7 @@ async def _build_weekly_digest_pdf(workspace_id: str) -> tuple:
         mo = d.strftime("%Y-%m") if d else ""
         if not mo: continue
         by_v.setdefault(m["vehicle_id"], {}).setdefault(mo, 0)
-        by_v[m["vehicle_id"]][mo] += m.get("actual_cost", 0) or 0
+        by_v[m["vehicle_id"]][mo] += float(m.get("actual_cost", 0) or 0)
     anomalies = []
     vmap = {v["id"]: v for v in vehicles}
     for vid, months in by_v.items():
@@ -2143,6 +3054,113 @@ async def send_health_digest_now(user: dict = Depends(get_current_user)):
     await log_event(user, "health_digest.sent", "workspace", user["workspace_id"], {"email_id": email_id})
     return {"sent": bool(email_id), "email_id": email_id}
 
+FREQUENCY_DAYS = {"daily": 1, "weekly": 7, "monthly": 30}  # 'each_trip' is usage-based, not time-based — excluded
+
+async def _compute_overdue_checklists(workspace_id: str):
+    """For each active template with a time-based frequency, finds targets (vehicles, or assets/trailers
+    per assignment_scope) whose most recent matching inspection is older than the frequency interval, or
+    who have never been inspected with that template at all."""
+    templates = await fetch_all("select * from templates where workspace_id = :ws and active = true", ws=workspace_id)
+    vehicles = await fetch_all("select id, name, group_id from vehicles where workspace_id = :ws", ws=workspace_id)
+    assets = await fetch_all("select id, name, kind from assets where workspace_id = :ws", ws=workspace_id)
+    vmap = {v["id"]: v for v in vehicles}
+    amap = {a["id"]: a for a in assets}
+    now = datetime.now(timezone.utc)
+    results = []
+    for t in templates:
+        days = FREQUENCY_DAYS.get(t.get("frequency"))
+        if not days:
+            continue
+        ttype = t.get("type", "vehicle")
+        scope = t.get("assignment_scope", "all")
+        target_ids = t.get("target_ids") or []
+        if ttype == "vehicle":
+            if scope == "all":
+                targets = [(v["id"], v["name"]) for v in vehicles]
+            elif scope == "group":
+                targets = [(v["id"], v["name"]) for v in vehicles if v.get("group_id") == t.get("group_id")]
+            else:
+                targets = [(vid, vmap[vid]["name"]) for vid in target_ids if vid in vmap]
+        else:
+            if scope == "specific":
+                targets = [(aid, amap[aid]["name"]) for aid in target_ids if aid in amap and amap[aid]["kind"] == ttype]
+            else:
+                targets = [(a["id"], a["name"]) for a in assets if a.get("kind") == ttype]
+        for target_id, target_name in targets:
+            col = "vehicle_id" if ttype == "vehicle" else "asset_id"
+            last = await fetch_one(
+                f"select created_at from inspections where template_id = :tid and {col} = :xid order by created_at desc limit 1",
+                tid=t["id"], xid=target_id,
+            )
+            last_at = last["created_at"] if last else None
+            if last_at is None or (now - last_at) > timedelta(days=days):
+                results.append({
+                    "template_id": t["id"], "template_name": t["name"], "target_type": ttype,
+                    "target_id": target_id, "target_name": target_name,
+                    "last_completed_at": last_at.isoformat() if last_at else None,
+                    "days_overdue": (now - last_at).days - days if last_at else None,
+                })
+    return results
+
+async def _send_overdue_checklists_digest(workspace_id: str) -> Optional[str]:
+    """Emails the workspace owner a list of checklists that are past their scheduled frequency."""
+    ws = await fetch_one("select * from workspaces where id = :id", id=workspace_id) or {"id": workspace_id, "name": "FleetIntel Workspace"}
+    owner = await fetch_one("select email, name from user_profiles where workspace_id = :ws and role = 'admin'", ws=workspace_id)
+    if not owner:
+        logger.warning(f"overdue-checklists digest for {workspace_id}: no owner/admin to email")
+        return None
+    overdue = await _compute_overdue_checklists(workspace_id)
+    if not overdue:
+        return None
+    subject = f"{len(overdue)} checklist(s) overdue"
+    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
+    def _row(o: dict) -> str:
+        status = "Never completed" if not o["last_completed_at"] else f"{o['days_overdue']}d overdue"
+        return (
+            f'<tr><td style="padding:12px;border-bottom:1px solid #e2e8f0">'
+            f'<div><strong>{escape(o["template_name"])}</strong> — {escape(o["target_name"])} '
+            f'<span style="color:#64748b;font-size:12px">({o["target_type"]})</span></div>'
+            f'<div style="font-size:12px;color:#dc2626;margin-top:2px">{status}</div>'
+            f'</td></tr>'
+        )
+    rows_html = "".join(_row(o) for o in overdue[:30])
+    html = (
+        f'<table role="presentation" width="100%" style="max-width:640px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:3px solid #dc2626">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape(from_name)}</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:22px">Overdue checklists</h1>'
+        f'<div style="color:#64748b;margin-top:4px">{escape(ws.get("name", "Workspace"))}</div></td></tr>'
+        f'<tr><td style="padding:24px">'
+        f'<p style="margin:0 0 16px 0">The following scheduled checklists have not been completed on time.</p>'
+        f'<table role="presentation" width="100%" style="border-collapse:collapse;border:1px solid #e2e8f0">{rows_html}</table>'
+        f'<p style="margin:20px 0 0 0;font-size:12px;color:#888">Sent by {escape(from_name)}. We never ask for your password or card details by email.</p>'
+        f'</td></tr></table>'
+    )
+    return await send_email(to=owner["email"], subject=subject, html=html)
+
+@api.post("/cron/overdue-checklists")
+async def cron_overdue_checklists(request: Request):
+    auth = request.headers.get("Authorization", "")
+    expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    if not expected or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    async def _run():
+        workspaces = await fetch_all("select id from workspaces")
+        for ws in workspaces:
+            try:
+                await _send_overdue_checklists_digest(ws["id"])
+            except Exception as e:
+                logger.error(f"overdue-checklists digest for {ws.get('id')} failed: {e}")
+    asyncio.create_task(_run())
+    return {"ok": True, "queued": True}
+
+@api.post("/workspace/send-overdue-checklists-alert")
+async def send_overdue_checklists_now(user: dict = Depends(get_current_user)):
+    """Manual trigger of the overdue-checklists email for this workspace."""
+    email_id = await _send_overdue_checklists_digest(user["workspace_id"])
+    await log_event(user, "overdue_checklists.sent", "workspace", user["workspace_id"], {"email_id": email_id})
+    return {"sent": bool(email_id), "email_id": email_id}
+
 # --- Workspace / Team / Invites ---
 @api.get("/workspace")
 async def get_workspace(user: dict = Depends(get_current_user)):
@@ -2160,7 +3178,10 @@ async def get_workspace(user: dict = Depends(get_current_user)):
 
 @api.patch("/workspace")
 async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_current_user)):
-    await execute("update workspaces set name = :name where id = :id", name=req.name, id=user["workspace_id"])
+    if req.name is not None:
+        await execute("update workspaces set name = :name where id = :id", name=req.name, id=user["workspace_id"])
+    if req.license_warning_days is not None:
+        await execute("update workspaces set license_warning_days = :d where id = :id", d=req.license_warning_days, id=user["workspace_id"])
     return await fetch_one("select * from workspaces where id = :id", id=user["workspace_id"])
 
 @api.post("/workspace/invites")
@@ -2233,7 +3254,7 @@ async def anomalies(user: dict = Depends(get_current_user)):
             d = m.get("completed_at") or m.get("created_at")
             mo = d.strftime("%Y-%m") if d else ""
             if not mo: continue
-            by_month[mo] = by_month.get(mo, 0) + (m.get("actual_cost", 0) or 0)
+            by_month[mo] = by_month.get(mo, 0) + float(m.get("actual_cost", 0) or 0)
         if len(by_month) < 3: continue
         series = sorted(by_month.items())
         vals = [s[1] for s in series]
@@ -2263,7 +3284,7 @@ async def forecast(user: dict = Depends(get_current_user)):
     for m in maint:
         d = m.get("completed_at") or m.get("created_at") or datetime.now(timezone.utc)
         month = d.strftime("%Y-%m")
-        buckets[month] = buckets.get(month, 0) + (m.get("actual_cost", 0) or 0)
+        buckets[month] = buckets.get(month, 0) + float(m.get("actual_cost", 0) or 0)
     history = sorted(buckets.items(), key=lambda x: x[0])
     if len(history) < 2:
         return {"history": [{"month": m, "total": t, "type": "actual"} for m, t in history], "forecast": []}
@@ -2295,7 +3316,12 @@ async def inspection_pdf(iid: str, request: Request):
     # NOTE: was fetched by id only with no workspace check in the Mongo version (cross-tenant read) — fixed here.
     insp = await fetch_one("select * from inspections where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
     if not insp: raise HTTPException(status_code=404, detail="Inspection not found")
-    vehicle = await fetch_one("select * from vehicles where id = :id", id=insp["vehicle_id"]) or {}
+    if insp.get("vehicle_id"):
+        target = await fetch_one("select * from vehicles where id = :id", id=insp["vehicle_id"]) or {}
+        target_label = f"{target.get('name','?')}  ({target.get('plate','?')})"
+    else:
+        target = await fetch_one("select * from assets where id = :id", id=insp["asset_id"]) or {}
+        target_label = f"{target.get('name','?')}  ({target.get('identifier') or target.get('kind','?')})"
     template = await fetch_one("select * from templates where id = :id", id=insp["template_id"]) or {"sections": []}
     ans_map = {a["item_id"]: a for a in insp.get("answers", [])}
 
@@ -2311,7 +3337,7 @@ async def inspection_pdf(iid: str, request: Request):
     story.append(Paragraph("FleetCost Intelligence", small))
     story.append(Paragraph("Vehicle Inspection Report", h1))
     header_tbl = Table([
-        ["Vehicle", f"{vehicle.get('name','?')}  ({vehicle.get('plate','?')})", "Inspector", insp.get("inspector_name","")],
+        ["Vehicle", target_label, "Inspector", insp.get("inspector_name","")],
         ["Template", template.get("name","?"), "Date", insp["created_at"].strftime("%Y-%m-%d %H:%M") if insp.get("created_at") else ""],
         ["Odometer", f"{insp.get('odometer','—')} km", "Failed items", str(insp.get("fail_count", 0))],
     ], colWidths=[1.1*inch, 2.6*inch, 1.1*inch, 2.6*inch])
@@ -2357,6 +3383,33 @@ async def inspection_pdf(iid: str, request: Request):
                                        ("FONT", (1, ri), (1, ri), "Helvetica-Bold", 9)]))
         story.append(t)
         story.append(Spacer(1, 6))
+
+    defect_items = []
+    for sec in template.get("sections", []):
+        for it in sec.get("items", []):
+            a = ans_map.get(it["id"], {})
+            if str(a.get("value", "")).lower() == "fail":
+                defect_items.append((it, a))
+    if defect_items:
+        story.append(Paragraph("Defects", h2))
+        for it, a in defect_items:
+            story.append(Paragraph(f'<b>{it.get("label","")}</b>' + (f' — {a["note"]}' if a.get("note") else ""), body))
+            photo = a.get("photo")
+            if photo:
+                try:
+                    header, b64data = photo.split(",", 1) if "," in photo else ("", photo)
+                    img_bytes = b64.b64decode(b64data)
+                    img_buf = io.BytesIO(img_bytes)
+                    pil_img = PILImage.open(img_buf)
+                    w, h = pil_img.size
+                    max_w = 3.0 * inch
+                    display_w = min(max_w, w)
+                    display_h = display_w * (h / w) if w else display_w
+                    img_buf.seek(0)
+                    story.append(RLImage(img_buf, width=display_w, height=display_h))
+                except Exception as e:
+                    logger.warning(f"inspection pdf: failed to embed photo for item {it.get('id')}: {e}")
+            story.append(Spacer(1, 8))
 
     if insp.get("notes"):
         story.append(Paragraph("General notes", h2))
@@ -2462,8 +3515,8 @@ async def seed():
             ],
         }
         await execute(
-            "insert into templates (id, workspace_id, name, description, sections, created_by) "
-            "values (:id, :ws, :name, :description, :sections ::jsonb, null)",
+            "insert into templates (id, workspace_id, name, description, sections, created_by, version, family_id) "
+            "values (:id, :ws, :name, :description, :sections ::jsonb, null, 1, :id)",
             id=template["id"], ws=DEFAULT_WORKSPACE_ID, name=template["name"],
             description=template["description"], sections=json_dumps(template["sections"]),
         )
@@ -2473,14 +3526,16 @@ async def seed():
         vehicles = await fetch_all("select id from vehicles where workspace_id = :ws limit 100", ws=DEFAULT_WORKSPACE_ID)
         if vehicles:
             samples = [
-                {"vehicle_id": vehicles[0]["id"], "title": "Oil & filter change", "priority": "low", "parts_cost": 85, "labor_cost": 60, "downtime_hours": 1.5, "status": "completed", "months_ago": 4},
-                {"vehicle_id": vehicles[0]["id"], "title": "Brake pad replacement", "priority": "medium", "parts_cost": 240, "labor_cost": 180, "downtime_hours": 3.0, "status": "completed", "months_ago": 2},
-                {"vehicle_id": vehicles[1]["id"], "title": "Turbocharger repair", "priority": "high", "parts_cost": 1800, "labor_cost": 900, "downtime_hours": 18, "status": "in_progress", "months_ago": 0},
-                {"vehicle_id": vehicles[2]["id"], "title": "Tire rotation", "priority": "low", "parts_cost": 0, "labor_cost": 80, "downtime_hours": 1.0, "status": "completed", "months_ago": 3},
-                {"vehicle_id": vehicles[3]["id"], "title": "Transmission service", "priority": "medium", "parts_cost": 320, "labor_cost": 260, "downtime_hours": 4.5, "status": "completed", "months_ago": 1},
-                {"vehicle_id": vehicles[4]["id"], "title": "Coolant flush", "priority": "low", "parts_cost": 55, "labor_cost": 90, "downtime_hours": 2.0, "status": "completed", "months_ago": 5},
-                {"vehicle_id": vehicles[4]["id"], "title": "Suspension inspection", "priority": "medium", "parts_cost": 420, "labor_cost": 340, "downtime_hours": 5.5, "status": "pending", "months_ago": 0},
-                {"vehicle_id": vehicles[5]["id"], "title": "Air filter replacement", "priority": "low", "parts_cost": 45, "labor_cost": 40, "downtime_hours": 0.75, "status": "completed", "months_ago": 2},
+                {"vehicle_id": vehicles[0]["id"], "title": "Oil & filter change", "priority": "low", "category": "engine", "parts_cost": 85, "labor_cost": 60, "downtime_hours": 1.5, "status": "completed", "months_ago": 4},
+                {"vehicle_id": vehicles[0]["id"], "title": "Brake pad replacement", "priority": "medium", "category": "brakes", "parts_cost": 240, "labor_cost": 180, "downtime_hours": 3.0, "status": "completed", "months_ago": 2},
+                {"vehicle_id": vehicles[1]["id"], "title": "Turbocharger repair", "priority": "high", "category": "engine", "parts_cost": 1800, "labor_cost": 900, "downtime_hours": 18, "status": "in_progress", "months_ago": 0},
+                {"vehicle_id": vehicles[2]["id"], "title": "Tire rotation", "priority": "low", "category": "tyres", "parts_cost": 0, "labor_cost": 80, "downtime_hours": 1.0, "status": "completed", "months_ago": 3},
+                {"vehicle_id": vehicles[3]["id"], "title": "Transmission service", "priority": "medium", "category": "engine", "parts_cost": 320, "labor_cost": 260, "downtime_hours": 4.5, "status": "completed", "months_ago": 1},
+                {"vehicle_id": vehicles[4]["id"], "title": "Coolant flush", "priority": "low", "category": "engine", "parts_cost": 55, "labor_cost": 90, "downtime_hours": 2.0, "status": "completed", "months_ago": 5},
+                {"vehicle_id": vehicles[4]["id"], "title": "Suspension inspection", "priority": "medium", "category": "general", "parts_cost": 420, "labor_cost": 340, "downtime_hours": 5.5, "status": "pending", "months_ago": 0},
+                {"vehicle_id": vehicles[5]["id"], "title": "Air filter replacement", "priority": "low", "category": "engine", "parts_cost": 45, "labor_cost": 40, "downtime_hours": 0.75, "status": "completed", "months_ago": 2},
+                {"vehicle_id": vehicles[1]["id"], "title": "New tyre set (rear axle)", "priority": "medium", "category": "tyres", "parts_cost": 760, "labor_cost": 120, "downtime_hours": 2.5, "status": "completed", "months_ago": 1},
+                {"vehicle_id": vehicles[5]["id"], "title": "Tyre puncture repair", "priority": "low", "category": "tyres", "parts_cost": 30, "labor_cost": 35, "downtime_hours": 0.5, "status": "completed", "months_ago": 0},
             ]
             rows = []
             for s in samples:
@@ -2489,17 +3544,17 @@ async def seed():
                 actual = (s["parts_cost"] + s["labor_cost"]) if s["status"] == "completed" else 0
                 rows.append({
                     "id": str(uuid.uuid4()), "workspace_id": DEFAULT_WORKSPACE_ID, "vehicle_id": s["vehicle_id"],
-                    "title": s["title"], "description": "", "priority": s["priority"],
+                    "title": s["title"], "description": "", "priority": s["priority"], "category": s["category"],
                     "estimated_cost": s["parts_cost"] + s["labor_cost"], "estimated_hours": s["downtime_hours"],
                     "parts_cost": s["parts_cost"], "labor_cost": s["labor_cost"], "actual_cost": actual,
                     "downtime_hours": s["downtime_hours"] if s["status"] == "completed" else 0,
                     "status": s["status"], "created_at": created, "completed_at": completed,
                 })
             await execute_many(
-                "insert into maintenance (id, workspace_id, vehicle_id, title, description, priority, "
+                "insert into maintenance (id, workspace_id, vehicle_id, title, description, priority, category, "
                 "estimated_cost, estimated_hours, parts_cost, labor_cost, actual_cost, downtime_hours, "
                 "status, created_at, completed_at) values (:id, :workspace_id, :vehicle_id, :title, "
-                ":description, :priority, :estimated_cost, :estimated_hours, :parts_cost, :labor_cost, "
+                ":description, :priority, :category, :estimated_cost, :estimated_hours, :parts_cost, :labor_cost, "
                 ":actual_cost, :downtime_hours, :status, :created_at, :completed_at)",
                 rows,
             )
@@ -2528,6 +3583,53 @@ async def seed():
                 "cost, location, odometer, created_by) values (:id, :workspace_id, :vehicle_id, :driver_id, "
                 ":occurred_at, :litres, :cost, :location, :odometer, :created_by)",
                 fuel_rows,
+            )
+
+    # Sample drivers (for the Driver Performance tile + drill-down)
+    if not await fetch_one("select 1 from drivers where workspace_id = :ws", ws=DEFAULT_WORKSPACE_ID):
+        vehicles = await fetch_all("select id from vehicles where workspace_id = :ws order by created_at limit 100", ws=DEFAULT_WORKSPACE_ID)
+        if vehicles:
+            today = datetime.now(timezone.utc).date()
+            driver_samples = [
+                {"name": "Thabo Nkosi", "license_number": "DL-88213", "license_expiry": today + timedelta(days=400), "assigned_vehicle_id": vehicles[0]["id"], "status": "active"},
+                {"name": "Sipho Dlamini", "license_number": "DL-77410", "license_expiry": today + timedelta(days=20), "assigned_vehicle_id": vehicles[1]["id"], "status": "active"},
+                {"name": "Naledi Mokoena", "license_number": "DL-65302", "license_expiry": today + timedelta(days=250), "assigned_vehicle_id": vehicles[2]["id"], "status": "active"},
+                {"name": "Kagiso Molefe", "license_number": "DL-54118", "license_expiry": today - timedelta(days=5), "assigned_vehicle_id": vehicles[3]["id"], "status": "active"},
+                {"name": "Zanele Khumalo", "license_number": "DL-91205", "license_expiry": today + timedelta(days=180), "assigned_vehicle_id": None, "status": "inactive"},
+            ]
+            drows = []
+            for d in driver_samples:
+                drows.append({
+                    "id": str(uuid.uuid4()), "workspace_id": DEFAULT_WORKSPACE_ID, "name": d["name"],
+                    "email": None, "phone": None, "license_number": d["license_number"],
+                    "license_expiry": d["license_expiry"], "hire_date": None,
+                    "assigned_vehicle_id": d["assigned_vehicle_id"], "status": d["status"], "notes": "",
+                })
+            await execute_many(
+                "insert into drivers (id, workspace_id, name, email, phone, license_number, license_expiry, "
+                "hire_date, assigned_vehicle_id, status, notes) values (:id, :workspace_id, :name, :email, "
+                ":phone, :license_number, :license_expiry, :hire_date, :assigned_vehicle_id, :status, :notes)",
+                drows,
+            )
+
+    # Sample trip logs (for the Trips per Vehicle tile + drill-down)
+    if not await fetch_one("select 1 from trip_logs where workspace_id = :ws", ws=DEFAULT_WORKSPACE_ID):
+        vehicles = await fetch_all("select id from vehicles where workspace_id = :ws limit 100", ws=DEFAULT_WORKSPACE_ID)
+        if vehicles:
+            trip_rows = []
+            for i, v in enumerate(vehicles):
+                for j in range(6):
+                    days_ago = 2 + j * 12 + (i * 2)
+                    distance = round(35 + (i * 7 + j * 5) % 60, 1)
+                    trip_rows.append({
+                        "id": str(uuid.uuid4()), "workspace_id": DEFAULT_WORKSPACE_ID, "vehicle_id": v["id"],
+                        "driver_id": None, "occurred_at": datetime.now(timezone.utc) - timedelta(days=days_ago),
+                        "distance_km": distance, "created_by": None,
+                    })
+            await execute_many(
+                "insert into trip_logs (id, workspace_id, vehicle_id, driver_id, occurred_at, distance_km, "
+                "created_by) values (:id, :workspace_id, :vehicle_id, :driver_id, :occurred_at, :distance_km, :created_by)",
+                trip_rows,
             )
 
     # Seed parts

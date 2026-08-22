@@ -58,6 +58,16 @@ async def admin_delete_user(user_id: str) -> None:
     await _client.delete(f"{_AUTH_BASE}/admin/users/{user_id}", headers=_ADMIN_HEADERS)
 
 
+async def send_password_reset_email(email: str) -> None:
+    """Triggers Supabase's own password-reset email flow — best-effort, doesn't reveal whether the
+    email exists (Supabase returns 200 either way)."""
+    await _client.post(
+        f"{_AUTH_BASE}/recover",
+        headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Content-Type": "application/json"},
+        json={"email": email},
+    )
+
+
 async def password_sign_in(email: str, password: str) -> dict:
     """Returns {access_token, refresh_token, expires_in, user: {...}}."""
     resp = await _client.post(
