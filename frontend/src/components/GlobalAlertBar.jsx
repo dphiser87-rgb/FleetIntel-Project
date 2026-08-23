@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 
 export default function GlobalAlertBar() {
@@ -22,12 +23,19 @@ export default function GlobalAlertBar() {
         <span className="mono">{alerts.total}</span> total
       </div>
       <div className="flex items-center gap-3 ml-auto flex-wrap">
-        {Object.entries(alerts.buckets).filter(([, n]) => n > 0).map(([k, n]) => (
-          <div key={k} className="flex items-center gap-1 text-xs" data-testid={`bucket-${k}`}>
-            <span className="mono text-primary font-bold">{n}</span>
-            <span className="text-muted-foreground">{k.replace(/_/g, " ")}</span>
-          </div>
-        ))}
+        {Object.entries(alerts.buckets).filter(([, n]) => n > 0).map(([k, n]) =>
+          k === "approvals" ? (
+            <Link key={k} to="/maintenance?approvals=1" className="flex items-center gap-1 text-xs hover:text-primary" data-testid={`bucket-${k}`}>
+              <span className="mono text-primary font-bold">{n}</span>
+              <span className="text-muted-foreground">approvals</span>
+            </Link>
+          ) : (
+            <div key={k} className="flex items-center gap-1 text-xs" data-testid={`bucket-${k}`}>
+              <span className="mono text-primary font-bold">{n}</span>
+              <span className="text-muted-foreground">{k.replace(/_/g, " ")}</span>
+            </div>
+          )
+        )}
       </div>
     </div>
   );

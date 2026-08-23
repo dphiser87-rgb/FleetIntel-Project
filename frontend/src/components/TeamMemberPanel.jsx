@@ -3,21 +3,18 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Trash, Prohibit, Key, Copy, PencilSimple } from "@phosphor-icons/react";
+import { ROLE_COLOR } from "@/lib/access";
 
-const ROLES = ["admin", "manager", "inspector", "mechanic"];
 const LEVELS = ["none", "read", "full"];
 const LEVEL_LABEL = { none: "No access", read: "Read only", full: "Full access" };
+const ACCOUNT_TYPES = ["business", "system"];
+const FALLBACK_ROLES = ["admin", "manager", "inspector", "mechanic"];
 
-const roleColor = (r) => ({
-  admin: "border-primary text-primary",
-  manager: "border-[#FFCC00] text-[#FFCC00]",
-  inspector: "border-[#3B82F6] text-[#3B82F6]",
-  mechanic: "border-[#34C759] text-[#34C759]",
-}[r] || "border-muted-foreground text-muted-foreground");
+const roleColor = (r) => ROLE_COLOR[r] || "border-muted-foreground text-muted-foreground";
 
 const emptyForm = {
   name: "", username: "", email: "", company_department: "", cell: "", additional_info: "",
-  role: "manager", active_from: "", active_until: "",
+  role: "manager", active_from: "", active_until: "", account_type: "",
   permissions: { modules: {}, vehicle_group_ids: [], driver_group_ids: [], trip_data_access: true, address_access: true },
 };
 
@@ -44,6 +41,7 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
       company_department: member.company_department || "", cell: member.cell || "",
       additional_info: member.additional_info || "", role: member.role || "manager",
       active_from: member.active_from || "", active_until: member.active_until || "",
+      account_type: member.account_type || "",
       permissions: perms,
     };
     setForm(f);
@@ -81,6 +79,7 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
         cell: form.cell, additional_info: form.additional_info, role: form.role,
         active_from: timePeriod === "temporary" ? (form.active_from || null) : null,
         active_until: timePeriod === "temporary" ? (form.active_until || null) : null,
+        account_type: form.role === "admin" ? (form.account_type || null) : null,
         permissions: form.permissions,
       });
       toast.success("Team member updated");
@@ -234,6 +233,16 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
                       </div>
                     )}
                   </div>
+                  {form.role === "admin" && (
+                    <div>
+                      <label className="text-xs uppercase tracking-widest text-muted-foreground mb-1.5 block">Account type</label>
+                      <select value={form.account_type} onChange={(e) => setForm({ ...form, account_type: e.target.value })} data-testid="account-type-select"
+                        className="w-full bg-[#121214] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                        <option value="">Unset</option>
+                        {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -244,7 +253,7 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
                     <label className="text-xs uppercase tracking-widest text-muted-foreground mb-1.5 block">Profile</label>
                     <select value={form.role} onChange={(e) => applyProfile(e.target.value)} data-testid="profile-select"
                       className="w-full bg-[#121214] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
-                      {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                      {(Object.keys(presets).length ? Object.keys(presets) : FALLBACK_ROLES).map((r) => <option key={r} value={r}>{r}</option>)}
                     </select>
                   </div>
                   <div>

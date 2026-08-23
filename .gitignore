@@ -8,6 +8,7 @@
 backend/uvicorn.*.log
 frontend/dev*.log
 frontend/dev.pid
+frontend/frontend.*.log
 
 # Playwright MCP debug output (snapshots, console logs, downloaded artifacts)
 .playwright-mcp/

@@ -1,32 +1,46 @@
 import React from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import GlobalAlertBar from "@/components/GlobalAlertBar";
+import NotificationCenter from "@/components/NotificationCenter";
+import { hasAccess } from "@/lib/access";
 import {
-  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise, ShieldCheck, UserCircle, Warning, Stack, ListChecks,
+  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise, ShieldCheck, UserCircle, Warning, Stack, ListChecks, Receipt,
 } from "@phosphor-icons/react";
 
 const nav = [
-  { to: "/", label: "Dashboard", icon: Gauge, end: true, id: "nav-dashboard" },
-  { to: "/fleet", label: "Fleet", icon: Truck, id: "nav-fleet" },
-  { to: "/assets", label: "Assets", icon: Stack, id: "nav-assets" },
-  { to: "/drivers", label: "Drivers", icon: UserCircle, id: "nav-drivers" },
-  { to: "/incidents", label: "Incidents", icon: Warning, id: "nav-incidents" },
-  { to: "/vehicle-checklist", label: "Vehicle Checklist", icon: ClipboardText, id: "nav-vehicle-checklist" },
-  { to: "/templates", label: "Checklist Templates", icon: ListChecks, id: "nav-templates" },
-  { to: "/maintenance", label: "Maintenance", icon: Wrench, id: "nav-maintenance" },
-  { to: "/parts", label: "Parts", icon: Package, id: "nav-parts" },
-  { to: "/team", label: "Team", icon: UsersThree, id: "nav-team" },
-  { to: "/audit", label: "Activity", icon: ClockCounterClockwise, id: "nav-audit" },
-  { to: "/reports", label: "Reports", icon: ChartBar, id: "nav-reports" },
-  { to: "/security", label: "Security", icon: ShieldCheck, id: "nav-security" },
+  { to: "/", label: "Dashboard", icon: Gauge, end: true, id: "nav-dashboard", moduleKey: "dashboard" },
+  { to: "/fleet", label: "Fleet", icon: Truck, id: "nav-fleet", moduleKey: "fleet" },
+  { to: "/assets", label: "Assets", icon: Stack, id: "nav-assets", moduleKey: "assets" },
+  { to: "/drivers", label: "Drivers", icon: UserCircle, id: "nav-drivers", moduleKey: "drivers" },
+  { to: "/incidents", label: "Incidents", icon: Warning, id: "nav-incidents", moduleKey: "incidents" },
+  { to: "/vehicle-checklist", label: "Vehicle Checklist", icon: ClipboardText, id: "nav-vehicle-checklist", moduleKey: "vehicle_checklist" },
+  { to: "/templates", label: "Checklist Templates", icon: ListChecks, id: "nav-templates", moduleKey: "templates" },
+  { to: "/maintenance", label: "Maintenance", icon: Wrench, id: "nav-maintenance", moduleKey: "maintenance" },
+  { to: "/parts", label: "Parts", icon: Package, id: "nav-parts", moduleKey: "parts" },
+  { to: "/purchase-orders", label: "Purchase Orders", icon: Receipt, id: "nav-purchase-orders", moduleKey: "purchase_orders" },
+  { to: "/team", label: "Team", icon: UsersThree, id: "nav-team", moduleKey: "team" },
+  { to: "/audit", label: "Activity", icon: ClockCounterClockwise, id: "nav-audit", moduleKey: "audit" },
+  { to: "/reports", label: "Reports", icon: ChartBar, id: "nav-reports", moduleKey: "reports" },
+  { to: "/security", label: "Security", icon: ShieldCheck, id: "nav-security", moduleKey: "security" },
 ];
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const visibleNav = nav.filter((n) => hasAccess(user, n.moduleKey, "read"));
 
   const handleLogout = () => { logout(); navigate("/login"); };
+
+  // Deep-link guard: a route reachable only by URL (not through the filtered nav above) still
+  // needs gating — redirect home instead of rendering a page the user has no module access to.
+  const matched = [...nav].sort((a, b) => b.to.length - a.to.length).find(
+    (n) => location.pathname === n.to || (n.to !== "/" && location.pathname.startsWith(n.to + "/"))
+  );
+  if (matched && !hasAccess(user, matched.moduleKey, "read")) {
+    return <Navigate to="/" replace />;
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground flex">
@@ -45,7 +59,7 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 px-3 py-6 space-y-1">
-          {nav.map((n) => (
+          {visibleNav.map((n) => (
             <NavLink
               key={n.to}
               to={n.to}
@@ -70,10 +84,11 @@ export default function Layout() {
             <div className="w-9 h-9 bg-primary/20 border border-primary/40 flex items-center justify-center mono text-xs text-primary">
               {user?.name?.charAt(0)?.toUpperCase() || "U"}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="text-sm truncate" data-testid="user-name">{user?.name}</div>
               <div className="overline truncate" data-testid="user-role">{user?.role}</div>
             </div>
+            <NotificationCenter />
           </div>
           <button
             data-testid="logout-btn"

@@ -137,7 +137,7 @@ async def log_event(user: dict, action: str, entity_type: str, entity_id: str = 
             ":eid, :meta ::jsonb)",
             id=str(uuid.uuid4()), ws=user.get("workspace_id", DEFAULT_WORKSPACE_ID),
             uid=user.get("id", ""), uname=user.get("name", ""), uemail=user.get("email", ""),
-            action=action, etype=entity_type, eid=entity_id, meta=json_dumps(meta or {}),
+            action=action, etype=entity_type, eid=str(entity_id) if entity_id else "", meta=json_dumps(meta or {}),
         )
     except Exception as e:
         logger.error(f"audit log failed: {e}")
@@ -180,12 +180,30 @@ def require_role(*roles):
         return user
     return dep
 
+_ACCESS_LEVELS = {"none": 0, "read": 1, "full": 2}
+
+def require_module(module: str, level: str = "read"):
+    """Enforces the System Rights matrix (permissions.modules) that Profiles have stored since the
+    Teams pass but no route ever actually checked. Falls back to the role's PROFILE_PRESETS shape
+    when the user has no customized permissions saved — same fallback TeamMemberPanel.jsx uses
+    client-side when opening a member's Profile tab for the first time."""
+    async def dep(user: dict = Depends(get_current_user)):
+        modules = (user.get("permissions") or {}).get("modules") or {}
+        user_level = modules.get(module)
+        if user_level is None:
+            user_level = PROFILE_PRESETS.get(user.get("role"), {}).get("modules", {}).get(module, "none")
+        if _ACCESS_LEVELS.get(user_level, 0) < _ACCESS_LEVELS[level]:
+            raise HTTPException(status_code=403, detail=f"Insufficient access to {module}")
+        return user
+    return dep
+
 # --- Models ---
 class RegisterReq(BaseModel):
     email: EmailStr
     password: str
     name: str
-    role: Optional[Literal["admin", "manager", "inspector", "mechanic"]] = "manager"
+    role: Optional[Literal["admin", "manager", "inspector", "mechanic", "operations_manager", "finance",
+                            "workshop_head", "operations_staff", "finance_staff"]] = "manager"
     invite_code: Optional[str] = None
     workspace_name: Optional[str] = None
 
@@ -283,7 +301,7 @@ class PartAdjust(BaseModel):
 
 class InviteIn(BaseModel):
     email: EmailStr
-    role: Literal["manager", "inspector", "mechanic", "admin"] = "manager"
+    role: Literal["manager", "inspector", "mechanic", "admin", "operations_manager", "finance"] = "manager"
 
 class WorkspaceRename(BaseModel):
     name: Optional[str] = None
@@ -371,6 +389,36 @@ class MaintenanceIn(BaseModel):
     assigned_to: Optional[str] = None  # mechanic user id
     parts_cost: float = 0
     labor_cost: float = 0
+
+class QuoteItem(BaseModel):
+    type: Literal["part", "labour", "other"] = "part"
+    description: str
+    qty: float = 1
+    unit_cost: float = 0
+    vat_pct: float = 0
+
+class QuoteAttachment(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    file_name: str
+    file_type: str
+    file_size: int
+    uploaded_by: str
+    uploaded_at: str
+    data_url: str  # base64 data URL — matches InspectionAnswer.photo / IncidentIn.photos
+
+class QuoteIn(BaseModel):
+    items: List[QuoteItem] = []
+    attachments: List[QuoteAttachment] = []
+
+class QuoteDecision(BaseModel):
+    decision: Literal["approved", "rejected"]
+    reason: Optional[str] = ""
+
+class PurchaseOrderIn(BaseModel):
+    supplier: Optional[str] = ""
+    amount: float = 0
+    notes: Optional[str] = ""
+    maintenance_id: Optional[str] = None
 
 class TripLogIn(BaseModel):
     vehicle_id: str
@@ -641,11 +689,11 @@ async def logout(user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 MODULE_KEYS = ["dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
-               "templates", "maintenance", "parts", "team", "audit", "reports", "security"]
+               "templates", "maintenance", "parts", "team", "audit", "reports", "security",
+               "purchase_orders"]
 
 def _default_permissions(role: str) -> dict:
-    """Pre-fills System Rights from a Profile (role) — not yet enforced on routes, but real,
-    persisted data a future backend/mobile pass can read."""
+    """Pre-fills System Rights from a Profile (role). Enforced on routes via require_module()."""
     full = {m: "full" for m in MODULE_KEYS}
     read_all = {m: "read" for m in MODULE_KEYS}
     if role == "admin":
@@ -656,18 +704,32 @@ def _default_permissions(role: str) -> dict:
         modules = {**read_all, "vehicle_checklist": "full", "templates": "full", "fleet": "read"}
     elif role == "mechanic":
         modules = {**read_all, "maintenance": "full", "parts": "full"}
+    elif role == "operations_manager":
+        modules = {**read_all, "maintenance": "full", "parts": "full", "fleet": "full", "reports": "full"}
+    elif role == "finance":
+        modules = {**read_all, "parts": "full", "reports": "full", "purchase_orders": "full"}
+    elif role == "workshop_head":
+        modules = {**read_all, "maintenance": "full", "purchase_orders": "read", "parts": "read", "fleet": "read"}
+    elif role == "operations_staff":
+        modules = {**read_all, "maintenance": "full", "vehicle_checklist": "full", "templates": "full",
+                   "parts": "full", "purchase_orders": "read"}
+    elif role == "finance_staff":
+        modules = {**read_all, "parts": "read", "reports": "read", "purchase_orders": "read",
+                   "maintenance": "read", "vehicle_checklist": "read", "templates": "read"}
     else:
         modules = {m: "none" for m in MODULE_KEYS}
     return {"modules": modules, "vehicle_group_ids": [], "driver_group_ids": [], "trip_data_access": True, "address_access": True}
 
-PROFILE_PRESETS = {role: _default_permissions(role) for role in ("admin", "manager", "inspector", "mechanic")}
+PROFILE_PRESETS = {role: _default_permissions(role) for role in
+                    ("admin", "manager", "inspector", "mechanic", "operations_manager", "finance",
+                     "workshop_head", "operations_staff", "finance_staff")}
 
 USER_COLS = {"name", "username", "company_department", "cell", "additional_info", "status",
-             "active_from", "active_until", "permissions", "role"}
+             "active_from", "active_until", "permissions", "role", "account_type"}
 
 SAFE_USER_COLS = (
     "id, email, name, role, workspace_id, prefs, totp_enabled, created_at, username, "
-    "company_department, cell, additional_info, status, active_from, active_until, permissions"
+    "company_department, cell, additional_info, status, active_from, active_until, permissions, account_type"
 )  # excludes totp_secret/totp_pending_secret — raw 2FA seeds must never reach another user's browser
 
 @api.get("/users")
@@ -1213,12 +1275,17 @@ MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downti
 # --- Maintenance jobs ---
 @api.get("/maintenance")
 async def list_maintenance(user: dict = Depends(get_current_user)):
+    if user.get("role") == "mechanic":
+        return await fetch_all(
+            "select * from maintenance where workspace_id = :ws and assigned_to = :uid order by created_at desc",
+            ws=user["workspace_id"], uid=user["id"],
+        )
     return await fetch_all(
         "select * from maintenance where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
     )
 
 @api.post("/maintenance")
-async def create_maintenance(m: MaintenanceIn, user: dict = Depends(get_current_user)):
+async def create_maintenance(m: MaintenanceIn, user: dict = Depends(require_module("maintenance", "full"))):
     mid = str(uuid.uuid4())
     await execute(
         "insert into maintenance (id, workspace_id, vehicle_id, inspection_id, driver_id, title, "
@@ -1240,6 +1307,8 @@ async def create_maintenance(m: MaintenanceIn, user: dict = Depends(get_current_
 async def get_maintenance(mid: str, user: dict = Depends(get_current_user)):
     m = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not m: raise HTTPException(status_code=404, detail="Not found")
+    if user.get("role") == "mechanic" and m.get("assigned_to") != user["id"]:
+        raise HTTPException(status_code=404, detail="Not found")
     v = await fetch_one("select name, plate from vehicles where id = :id", id=m["vehicle_id"]) if m.get("vehicle_id") else None
     d = await fetch_one("select name from drivers where id = :id", id=m["driver_id"]) if m.get("driver_id") else None
     a = await fetch_one("select name from user_profiles where id = :id", id=m["assigned_to"]) if m.get("assigned_to") else None
@@ -1250,7 +1319,7 @@ async def get_maintenance(mid: str, user: dict = Depends(get_current_user)):
     return m
 
 @api.patch("/maintenance/{mid}")
-async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = Depends(get_current_user)):
+async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = Depends(require_module("maintenance", "full"))):
     upd = {k: v for k, v in patch.model_dump().items() if v is not None}
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Not found")
@@ -1271,8 +1340,168 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
     return await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
 
 @api.delete("/maintenance/{mid}")
-async def delete_maintenance(mid: str, user: dict = Depends(get_current_user)):
+async def delete_maintenance(mid: str, user: dict = Depends(require_module("maintenance", "full"))):
     await execute("delete from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+    return {"ok": True}
+
+# --- Quote approvals (Workshop -> Operations Manager -> Finance) ---
+OPS_ROLES = ("operations_manager", "admin")
+FINANCE_ROLES = ("finance", "admin")
+
+async def _notify(ws: str, roles: tuple, ntype: str, message: str, maintenance_id: str):
+    """Writes one notification row per matching user in the workspace — recipients are resolved to
+    concrete user ids at write time since a workspace can have several ops/finance users."""
+    recipients = await fetch_all(
+        "select id from user_profiles where workspace_id = :ws and role = any(:roles)", ws=ws, roles=list(roles),
+    )
+    for r in recipients:
+        await execute(
+            "insert into notifications (id, workspace_id, recipient_user_id, type, message, related_maintenance_id) "
+            "values (:id, :ws, :uid, :type, :message, :mid)",
+            id=str(uuid.uuid4()), ws=ws, uid=r["id"], type=ntype, message=message, mid=maintenance_id,
+        )
+
+@api.get("/maintenance/{mid}/quotes")
+async def list_quotes(mid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") == "mechanic":
+        job = await fetch_one("select assigned_to from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+        if not job or job.get("assigned_to") != user["id"]:
+            raise HTTPException(status_code=404, detail="Maintenance job not found")
+    return await fetch_all(
+        "select * from quotes where workspace_id = :ws and maintenance_id = :mid order by created_at desc",
+        ws=user["workspace_id"], mid=mid,
+    )
+
+@api.post("/maintenance/{mid}/quotes")
+async def create_quote(mid: str, q: QuoteIn, user: dict = Depends(get_current_user)):
+    job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+    if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
+    if len(q.attachments) > 5:
+        raise HTTPException(status_code=400, detail="A quote can have at most 5 attachments")
+    subtotal = sum(i.qty * i.unit_cost for i in q.items)
+    vat_total = sum(i.qty * i.unit_cost * (i.vat_pct / 100) for i in q.items)
+    qid = str(uuid.uuid4())
+    await execute(
+        "insert into quotes (id, workspace_id, maintenance_id, items, attachments, subtotal, vat_total, total, "
+        "stage, submitted_by, submitted_by_name) values (:id, :ws, :mid, :items ::jsonb, :attachments ::jsonb, "
+        ":subtotal, :vat_total, :total, 'pending_ops', :uid, :uname)",
+        id=qid, ws=user["workspace_id"], mid=mid,
+        items=json_dumps([i.model_dump() for i in q.items]),
+        attachments=json_dumps([a.model_dump() for a in q.attachments]),
+        subtotal=round(subtotal, 2), vat_total=round(vat_total, 2), total=round(subtotal + vat_total, 2),
+        uid=user["id"], uname=user["name"],
+    )
+    await _notify(user["workspace_id"], OPS_ROLES, "quote_submitted",
+                  f"{user['name']} submitted a quote for {job['title']}", mid)
+    await log_event(user, "quote.submitted", "quote", mid, {"quote_id": qid, "total": round(subtotal + vat_total, 2)})
+    return await fetch_one("select * from quotes where id = :id", id=qid)
+
+@api.post("/quotes/{qid}/decide")
+async def decide_quote(qid: str, body: QuoteDecision, user: dict = Depends(get_current_user)):
+    quote = await fetch_one("select * from quotes where id = :id and workspace_id = :ws", id=qid, ws=user["workspace_id"])
+    if not quote: raise HTTPException(status_code=404, detail="Quote not found")
+    if quote["stage"] not in ("pending_ops", "pending_finance"):
+        raise HTTPException(status_code=400, detail="This quote has already been decided")
+    stage_roles = OPS_ROLES if quote["stage"] == "pending_ops" else FINANCE_ROLES
+    if user.get("role") not in stage_roles:
+        raise HTTPException(status_code=403, detail="You aren't authorized to decide this quote at its current stage")
+    if body.decision == "rejected" and not (body.reason or "").strip():
+        raise HTTPException(status_code=400, detail="A reason is required to reject a quote")
+    job = await fetch_one("select * from maintenance where id = :id", id=quote["maintenance_id"])
+    decision = {"by": user["id"], "by_name": user["name"], "decision": body.decision, "reason": body.reason or "", "at": datetime.now(timezone.utc).isoformat()}
+
+    if quote["stage"] == "pending_ops":
+        await execute("update quotes set ops_decision = :d ::jsonb where id = :id", id=qid, d=json_dumps(decision))
+        if body.decision == "approved":
+            await execute("update quotes set stage = 'pending_finance' where id = :id", id=qid)
+            await _notify(user["workspace_id"], FINANCE_ROLES, "quote_ops_approved",
+                          f"Quote for {job['title']} approved by Operations — awaiting Finance", quote["maintenance_id"])
+        else:
+            await execute("update quotes set stage = 'rejected' where id = :id", id=qid)
+        submitter_role_msg = f"Quote for {job['title']} was {'approved' if body.decision == 'approved' else 'rejected'} by Operations"
+        if quote.get("submitted_by"):
+            await execute(
+                "insert into notifications (id, workspace_id, recipient_user_id, type, message, related_maintenance_id) "
+                "values (:id, :ws, :uid, :type, :message, :mid)",
+                id=str(uuid.uuid4()), ws=user["workspace_id"], uid=quote["submitted_by"],
+                type="quote_ops_approved" if body.decision == "approved" else "quote_ops_rejected",
+                message=submitter_role_msg + (f" — {body.reason}" if body.decision == "rejected" else ""),
+                mid=quote["maintenance_id"],
+            )
+        await log_event(user, f"quote.ops_{body.decision}", "quote", str(quote["maintenance_id"]), {"quote_id": qid, "reason": body.reason})
+    else:
+        await execute("update quotes set finance_decision = :d ::jsonb where id = :id", id=qid, d=json_dumps(decision))
+        if body.decision == "approved":
+            po_count = (await fetch_one("select count(*) as c from purchase_orders where workspace_id = :ws", ws=user["workspace_id"]))["c"]
+            po_number = f"PO-{datetime.now(timezone.utc).year}-{po_count + 1:04d}"
+            poid = str(uuid.uuid4())
+            await execute(
+                "insert into purchase_orders (id, workspace_id, po_number, quote_id, maintenance_id, amount, status, created_by) "
+                "values (:id, :ws, :po_number, :qid, :mid, :amount, 'po_issued', :uid)",
+                id=poid, ws=user["workspace_id"], po_number=po_number, qid=qid, mid=quote["maintenance_id"],
+                amount=quote["total"], uid=user["id"],
+            )
+            await execute("update quotes set stage = 'approved', po_id = :poid where id = :id", id=qid, poid=poid)
+            if quote.get("submitted_by"):
+                await execute(
+                    "insert into notifications (id, workspace_id, recipient_user_id, type, message, related_maintenance_id) "
+                    "values (:id, :ws, :uid, 'po_issued', :message, :mid)",
+                    id=str(uuid.uuid4()), ws=user["workspace_id"], uid=quote["submitted_by"],
+                    message=f"Quote for {job['title']} approved by Finance — {po_number} issued", mid=quote["maintenance_id"],
+                )
+        else:
+            await execute("update quotes set stage = 'rejected' where id = :id", id=qid)
+            if quote.get("submitted_by"):
+                await execute(
+                    "insert into notifications (id, workspace_id, recipient_user_id, type, message, related_maintenance_id) "
+                    "values (:id, :ws, :uid, 'quote_finance_rejected', :message, :mid)",
+                    id=str(uuid.uuid4()), ws=user["workspace_id"], uid=quote["submitted_by"],
+                    message=f"Quote for {job['title']} was rejected by Finance — {body.reason}", mid=quote["maintenance_id"],
+                )
+        await log_event(user, f"quote.finance_{body.decision}", "quote", str(quote["maintenance_id"]), {"quote_id": qid, "reason": body.reason})
+    return await fetch_one("select * from quotes where id = :id", id=qid)
+
+# --- Purchase orders ---
+@api.get("/purchase-orders")
+async def list_purchase_orders(user: dict = Depends(get_current_user)):
+    if user.get("role") == "mechanic":
+        return await fetch_all(
+            "select * from purchase_orders where workspace_id = :ws and maintenance_id in "
+            "(select id from maintenance where assigned_to = :uid) order by created_at desc",
+            ws=user["workspace_id"], uid=user["id"],
+        )
+    return await fetch_all(
+        "select * from purchase_orders where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
+    )
+
+@api.post("/purchase-orders")
+async def create_purchase_order(po: PurchaseOrderIn, user: dict = Depends(require_module("purchase_orders", "full"))):
+    poid = str(uuid.uuid4())
+    po_count = (await fetch_one("select count(*) as c from purchase_orders where workspace_id = :ws", ws=user["workspace_id"]))["c"]
+    po_number = f"PO-{datetime.now(timezone.utc).year}-{po_count + 1:04d}"
+    await execute(
+        "insert into purchase_orders (id, workspace_id, po_number, maintenance_id, supplier, amount, status, notes, created_by) "
+        "values (:id, :ws, :po_number, :maintenance_id, :supplier, :amount, 'pending_approval', :notes, :uid)",
+        id=poid, ws=user["workspace_id"], po_number=po_number, uid=user["id"], **po.model_dump(),
+    )
+    await log_event(user, "purchase_order.created", "purchase_order", poid, {"po_number": po_number, "amount": po.amount})
+    return await fetch_one("select * from purchase_orders where id = :id", id=poid)
+
+# --- Notifications ---
+@api.get("/notifications")
+async def list_notifications(user: dict = Depends(get_current_user)):
+    return await fetch_all(
+        "select * from notifications where recipient_user_id = :uid order by created_at desc limit 100", uid=user["id"],
+    )
+
+@api.post("/notifications/{nid}/read")
+async def mark_notification_read(nid: str, user: dict = Depends(get_current_user)):
+    await execute("update notifications set read = true where id = :id and recipient_user_id = :uid", id=nid, uid=user["id"])
+    return {"ok": True}
+
+@api.post("/notifications/read-all")
+async def mark_all_notifications_read(user: dict = Depends(get_current_user)):
+    await execute("update notifications set read = true where recipient_user_id = :uid and read = false", uid=user["id"])
     return {"ok": True}
 
 # --- KPIs / Analytics ---
@@ -1518,7 +1747,12 @@ async def delete_part(pid: str, user: dict = Depends(get_current_user)):
 
 # --- Audit log ---
 @api.get("/audit")
-async def audit_list(limit: int = 200, user: dict = Depends(get_current_user)):
+async def audit_list(limit: int = 200, entity_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    if entity_id:
+        return await fetch_all(
+            "select * from audit_log where workspace_id = :ws and entity_id = :eid order by at desc limit :limit",
+            ws=user["workspace_id"], eid=entity_id, limit=limit,
+        )
     return await fetch_all(
         "select * from audit_log where workspace_id = :ws order by at desc limit :limit",
         ws=user["workspace_id"], limit=limit,
@@ -2162,8 +2396,15 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
         "select id from inspections where workspace_id = :ws and fail_count > 0 and created_at >= :cutoff",
         ws=user["workspace_id"], cutoff=recent_cutoff,
     )
+    role = user.get("role")
+    actionable_stage = "pending_ops" if role in OPS_ROLES else "pending_finance" if role in FINANCE_ROLES else None
+    pending_approvals = []
+    if actionable_stage:
+        pending_approvals = await fetch_all(
+            "select id from quotes where workspace_id = :ws and stage = :stage", ws=user["workspace_id"], stage=actionable_stage,
+        )
     critical_count = len(critical) + len(open_incidents) + sum(1 for e in expiring if e["days"] < 0)
-    warning_count = anomalies + len(low_stock) + sum(1 for e in expiring if 0 <= e["days"] <= 30) + len(overdue_checklists) + len(recent_insp)
+    warning_count = anomalies + len(low_stock) + sum(1 for e in expiring if 0 <= e["days"] <= 30) + len(overdue_checklists) + len(recent_insp) + len(pending_approvals)
     return {
         "critical": critical_count,
         "warnings": warning_count,
@@ -2177,6 +2418,7 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
             "open_incidents": len(open_incidents),
             "overdue_checklists": len(overdue_checklists),
             "recent_defects": len(recent_insp),
+            "approvals": len(pending_approvals),
         },
         "details": {
             "expiring_drivers": expiring[:10],
@@ -3427,6 +3669,116 @@ async def inspection_pdf(iid: str, request: Request):
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=inspection-{iid[:8]}.pdf"})
+
+@api.get("/maintenance/{mid}/pdf")
+async def maintenance_pdf(mid: str, request: Request):
+    token = request.query_params.get("token") or None
+    user = await user_from_token(token) if token else await get_current_user(request)
+    ws = user["workspace_id"]
+
+    job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=ws)
+    if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
+    v = await fetch_one("select name, plate from vehicles where id = :id", id=job["vehicle_id"]) if job.get("vehicle_id") else None
+    a = await fetch_one("select name from user_profiles where id = :id", id=job["assigned_to"]) if job.get("assigned_to") else None
+    quotes = await fetch_all("select * from quotes where workspace_id = :ws and maintenance_id = :mid order by created_at desc", ws=ws, mid=mid)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.5*inch, bottomMargin=0.5*inch, leftMargin=0.6*inch, rightMargin=0.6*inch)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=22, textColor=colors.HexColor("#0f172a"))
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=13, textColor=colors.HexColor("#334155"), spaceBefore=12, spaceAfter=6)
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontName="Helvetica", fontSize=10)
+    small = ParagraphStyle("small", parent=styles["BodyText"], fontName="Helvetica", fontSize=8, textColor=colors.grey)
+    story = []
+
+    story.append(Paragraph("FleetCost Intelligence", small))
+    story.append(Paragraph("Maintenance Job Summary", h1))
+    header_tbl = Table([
+        ["Job", job.get("title", ""), "Status", (job.get("status") or "").replace("_", " ")],
+        ["Vehicle", f"{v.get('name','?')} ({v.get('plate','?')})" if v else "—", "Priority", job.get("priority", "")],
+        ["Category", job.get("category") or "—", "Assigned to", a.get("name") if a else "Unassigned"],
+        ["Estimated cost", f"${job.get('estimated_cost', 0) or 0:,.2f}", "Actual cost", f"${job.get('actual_cost', 0) or 0:,.2f}"],
+    ], colWidths=[1.1*inch, 2.6*inch, 1.1*inch, 2.6*inch])
+    header_tbl.setStyle(TableStyle([
+        ("FONT", (0,0), (-1,-1), "Helvetica", 9),
+        ("FONT", (0,0), (0,-1), "Helvetica-Bold", 9),
+        ("FONT", (2,0), (2,-1), "Helvetica-Bold", 9),
+        ("TEXTCOLOR", (0,0), (0,-1), colors.HexColor("#64748b")),
+        ("TEXTCOLOR", (2,0), (2,-1), colors.HexColor("#64748b")),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ("LINEBELOW", (0,0), (-1,-1), 0.25, colors.HexColor("#e2e8f0")),
+    ]))
+    story.append(header_tbl)
+
+    if job.get("description"):
+        story.append(Paragraph("Description", h2))
+        story.append(Paragraph(job["description"], body))
+
+    STAGE_LABEL = {"pending_ops": "Pending — Operations", "pending_finance": "Pending — Finance", "approved": "Approved", "rejected": "Rejected"}
+    for q in quotes:
+        story.append(Paragraph(f"Quote — {STAGE_LABEL.get(q['stage'], q['stage'])}", h2))
+        story.append(Paragraph(f"Submitted by {q.get('submitted_by_name','?')} on {q['submitted_at'].strftime('%Y-%m-%d') if q.get('submitted_at') else ''}", small))
+        rows = [["Type", "Description", "Qty", "Unit cost", "VAT", "Line total"]]
+        for it in (q.get("items") or []):
+            qty, unit_cost, vat_pct = float(it.get("qty", 0) or 0), float(it.get("unit_cost", 0) or 0), float(it.get("vat_pct", 0) or 0)
+            rows.append([it.get("type", ""), it.get("description", ""), str(qty), f"${unit_cost:,.2f}", f"{vat_pct}%", f"${qty * unit_cost * (1 + vat_pct/100):,.2f}"])
+        rows.append(["", "", "", "", "Subtotal", f"${float(q.get('subtotal',0) or 0):,.2f}"])
+        rows.append(["", "", "", "", "VAT", f"${float(q.get('vat_total',0) or 0):,.2f}"])
+        rows.append(["", "", "", "", "Total", f"${float(q.get('total',0) or 0):,.2f}"])
+        t = Table(rows, colWidths=[0.8*inch, 2.6*inch, 0.5*inch, 0.9*inch, 0.7*inch, 1.0*inch])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0f172a")),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+            ("FONT", (0,0), (-1,0), "Helvetica-Bold", 9),
+            ("FONT", (0,1), (-1,-1), "Helvetica", 9),
+            ("FONT", (4,-3), (-1,-1), "Helvetica-Bold", 9),
+            ("GRID", (0,0), (-1,len(rows)-4), 0.25, colors.HexColor("#e2e8f0")),
+            ("LINEABOVE", (4,-3), (-1,-3), 0.5, colors.HexColor("#0f172a")),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("LEFTPADDING", (0,0), (-1,-1), 6), ("RIGHTPADDING", (0,0), (-1,-1), 6),
+            ("TOPPADDING", (0,0), (-1,-1), 4), ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ]))
+        story.append(t)
+
+        for decision_key, decision_label in (("ops_decision", "Operations"), ("finance_decision", "Finance")):
+            d = q.get(decision_key)
+            if d:
+                line = f"{decision_label}: <b>{d.get('decision','')}</b> by {d.get('by_name','')}" + (f" — {d['reason']}" if d.get("reason") else "")
+                story.append(Paragraph(line, small))
+
+        attachments = q.get("attachments") or []
+        if attachments:
+            story.append(Spacer(1, 6))
+            story.append(Paragraph(f"Attachments ({len(attachments)})", small))
+            for att in attachments:
+                if str(att.get("file_type", "")).startswith("image/") and att.get("data_url"):
+                    try:
+                        header, b64data = att["data_url"].split(",", 1) if "," in att["data_url"] else ("", att["data_url"])
+                        img_bytes = b64.b64decode(b64data)
+                        img_buf = io.BytesIO(img_bytes)
+                        pil_img = PILImage.open(img_buf)
+                        w, h = pil_img.size
+                        display_w = min(2.5 * inch, w)
+                        display_h = display_w * (h / w) if w else display_w
+                        img_buf.seek(0)
+                        story.append(RLImage(img_buf, width=display_w, height=display_h))
+                    except Exception as e:
+                        logger.warning(f"maintenance pdf: failed to embed attachment {att.get('id')}: {e}")
+                        story.append(Paragraph(f"— {att.get('file_name','')}", body))
+                else:
+                    story.append(Paragraph(f"— {att.get('file_name','')}", body))
+        story.append(Spacer(1, 10))
+
+    if not quotes:
+        story.append(Paragraph("No quote has been submitted for this job yet.", body))
+
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · FleetCost Intelligence", small))
+
+    doc.build(story)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=maintenance-{mid[:8]}.pdf"})
 
 # --- Seed ---
 async def _ensure_user(email: str, name: str, role: str, password: str):
