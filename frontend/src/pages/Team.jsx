@@ -4,15 +4,11 @@ import { toast } from "sonner";
 import { UserPlus, Copy, Trash, PencilSimple, ArrowUp, ArrowDown, DownloadSimple, Prohibit } from "@phosphor-icons/react";
 import { formatApiErrorDetail } from "@/lib/api";
 import TeamMemberPanel from "@/components/TeamMemberPanel";
+import { ROLE_COLOR } from "@/lib/access";
 
-const ROLES = ["admin", "manager", "inspector", "mechanic"];
+const FALLBACK_ROLES = ["admin", "manager", "inspector", "mechanic"];
 
-const roleColor = (r) => ({
-  admin: "border-primary text-primary",
-  manager: "border-[#FFCC00] text-[#FFCC00]",
-  inspector: "border-[#3B82F6] text-[#3B82F6]",
-  mechanic: "border-[#34C759] text-[#34C759]",
-}[r] || "border-muted-foreground text-muted-foreground");
+const roleColor = (r) => ROLE_COLOR[r] || "border-muted-foreground text-muted-foreground";
 
 export default function Team() {
   const [ws, setWs] = useState(null);
@@ -26,6 +22,7 @@ export default function Team() {
   const [vehicleGroups, setVehicleGroups] = useState([]);
   const [driverGroups, setDriverGroups] = useState([]);
   const [selected, setSelected] = useState(null);
+  const ROLES = Object.keys(presets).length ? Object.keys(presets) : FALLBACK_ROLES;
 
   const [statusFilter, setStatusFilter] = useState("all");
   const [profileFilter, setProfileFilter] = useState("all");
@@ -208,7 +205,12 @@ export default function Team() {
                     <td className="p-3" onClick={() => setSelected(m)}>{m.name}</td>
                     <td className="p-3 text-muted-foreground mono text-xs" onClick={() => setSelected(m)}>{m.username || "—"}</td>
                     <td className="p-3 text-muted-foreground mono text-xs" onClick={() => setSelected(m)}>{m.email}</td>
-                    <td className="p-3" onClick={() => setSelected(m)}><span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border ${roleColor(m.role)}`}>{m.role}</span></td>
+                    <td className="p-3" onClick={() => setSelected(m)}>
+                      <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border ${roleColor(m.role)}`}>{m.role}</span>
+                      {m.role === "admin" && m.account_type && (
+                        <span className="ml-1 text-[10px] mono uppercase tracking-widest px-2 py-1 border border-muted-foreground text-muted-foreground">{m.account_type}</span>
+                      )}
+                    </td>
                     <td className="p-3 text-xs text-muted-foreground" onClick={() => setSelected(m)}>{m.active_from || m.active_until ? `${m.active_from || "…"} → ${m.active_until || "…"}` : "Unlimited"}</td>
                     <td className="p-3" onClick={() => setSelected(m)}>
                       <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border ${(m.status || "active") === "active" ? "border-[#34C759] text-[#34C759]" : "border-muted-foreground text-muted-foreground"}`}>{m.status || "active"}</span>

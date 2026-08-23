@@ -180,12 +180,30 @@ def require_role(*roles):
         return user
     return dep
 
+_ACCESS_LEVELS = {"none": 0, "read": 1, "full": 2}
+
+def require_module(module: str, level: str = "read"):
+    """Enforces the System Rights matrix (permissions.modules) that Profiles have stored since the
+    Teams pass but no route ever actually checked. Falls back to the role's PROFILE_PRESETS shape
+    when the user has no customized permissions saved — same fallback TeamMemberPanel.jsx uses
+    client-side when opening a member's Profile tab for the first time."""
+    async def dep(user: dict = Depends(get_current_user)):
+        modules = (user.get("permissions") or {}).get("modules") or {}
+        user_level = modules.get(module)
+        if user_level is None:
+            user_level = PROFILE_PRESETS.get(user.get("role"), {}).get("modules", {}).get(module, "none")
+        if _ACCESS_LEVELS.get(user_level, 0) < _ACCESS_LEVELS[level]:
+            raise HTTPException(status_code=403, detail=f"Insufficient access to {module}")
+        return user
+    return dep
+
 # --- Models ---
 class RegisterReq(BaseModel):
     email: EmailStr
     password: str
     name: str
-    role: Optional[Literal["admin", "manager", "inspector", "mechanic", "operations_manager", "finance"]] = "manager"
+    role: Optional[Literal["admin", "manager", "inspector", "mechanic", "operations_manager", "finance",
+                            "workshop_head", "operations_staff", "finance_staff"]] = "manager"
     invite_code: Optional[str] = None
     workspace_name: Optional[str] = None
 
@@ -671,11 +689,11 @@ async def logout(user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 MODULE_KEYS = ["dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
-               "templates", "maintenance", "parts", "team", "audit", "reports", "security"]
+               "templates", "maintenance", "parts", "team", "audit", "reports", "security",
+               "purchase_orders"]
 
 def _default_permissions(role: str) -> dict:
-    """Pre-fills System Rights from a Profile (role) — not yet enforced on routes, but real,
-    persisted data a future backend/mobile pass can read."""
+    """Pre-fills System Rights from a Profile (role). Enforced on routes via require_module()."""
     full = {m: "full" for m in MODULE_KEYS}
     read_all = {m: "read" for m in MODULE_KEYS}
     if role == "admin":
@@ -689,20 +707,29 @@ def _default_permissions(role: str) -> dict:
     elif role == "operations_manager":
         modules = {**read_all, "maintenance": "full", "parts": "full", "fleet": "full", "reports": "full"}
     elif role == "finance":
-        modules = {**read_all, "parts": "full", "reports": "full"}
+        modules = {**read_all, "parts": "full", "reports": "full", "purchase_orders": "full"}
+    elif role == "workshop_head":
+        modules = {**read_all, "maintenance": "full", "purchase_orders": "read", "parts": "read", "fleet": "read"}
+    elif role == "operations_staff":
+        modules = {**read_all, "maintenance": "full", "vehicle_checklist": "full", "templates": "full",
+                   "parts": "full", "purchase_orders": "read"}
+    elif role == "finance_staff":
+        modules = {**read_all, "parts": "read", "reports": "read", "purchase_orders": "read",
+                   "maintenance": "read", "vehicle_checklist": "read", "templates": "read"}
     else:
         modules = {m: "none" for m in MODULE_KEYS}
     return {"modules": modules, "vehicle_group_ids": [], "driver_group_ids": [], "trip_data_access": True, "address_access": True}
 
 PROFILE_PRESETS = {role: _default_permissions(role) for role in
-                    ("admin", "manager", "inspector", "mechanic", "operations_manager", "finance")}
+                    ("admin", "manager", "inspector", "mechanic", "operations_manager", "finance",
+                     "workshop_head", "operations_staff", "finance_staff")}
 
 USER_COLS = {"name", "username", "company_department", "cell", "additional_info", "status",
-             "active_from", "active_until", "permissions", "role"}
+             "active_from", "active_until", "permissions", "role", "account_type"}
 
 SAFE_USER_COLS = (
     "id, email, name, role, workspace_id, prefs, totp_enabled, created_at, username, "
-    "company_department, cell, additional_info, status, active_from, active_until, permissions"
+    "company_department, cell, additional_info, status, active_from, active_until, permissions, account_type"
 )  # excludes totp_secret/totp_pending_secret — raw 2FA seeds must never reach another user's browser
 
 @api.get("/users")
@@ -1248,12 +1275,17 @@ MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downti
 # --- Maintenance jobs ---
 @api.get("/maintenance")
 async def list_maintenance(user: dict = Depends(get_current_user)):
+    if user.get("role") == "mechanic":
+        return await fetch_all(
+            "select * from maintenance where workspace_id = :ws and assigned_to = :uid order by created_at desc",
+            ws=user["workspace_id"], uid=user["id"],
+        )
     return await fetch_all(
         "select * from maintenance where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
     )
 
 @api.post("/maintenance")
-async def create_maintenance(m: MaintenanceIn, user: dict = Depends(get_current_user)):
+async def create_maintenance(m: MaintenanceIn, user: dict = Depends(require_module("maintenance", "full"))):
     mid = str(uuid.uuid4())
     await execute(
         "insert into maintenance (id, workspace_id, vehicle_id, inspection_id, driver_id, title, "
@@ -1275,6 +1307,8 @@ async def create_maintenance(m: MaintenanceIn, user: dict = Depends(get_current_
 async def get_maintenance(mid: str, user: dict = Depends(get_current_user)):
     m = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not m: raise HTTPException(status_code=404, detail="Not found")
+    if user.get("role") == "mechanic" and m.get("assigned_to") != user["id"]:
+        raise HTTPException(status_code=404, detail="Not found")
     v = await fetch_one("select name, plate from vehicles where id = :id", id=m["vehicle_id"]) if m.get("vehicle_id") else None
     d = await fetch_one("select name from drivers where id = :id", id=m["driver_id"]) if m.get("driver_id") else None
     a = await fetch_one("select name from user_profiles where id = :id", id=m["assigned_to"]) if m.get("assigned_to") else None
@@ -1285,7 +1319,7 @@ async def get_maintenance(mid: str, user: dict = Depends(get_current_user)):
     return m
 
 @api.patch("/maintenance/{mid}")
-async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = Depends(get_current_user)):
+async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = Depends(require_module("maintenance", "full"))):
     upd = {k: v for k, v in patch.model_dump().items() if v is not None}
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Not found")
@@ -1306,7 +1340,7 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
     return await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
 
 @api.delete("/maintenance/{mid}")
-async def delete_maintenance(mid: str, user: dict = Depends(get_current_user)):
+async def delete_maintenance(mid: str, user: dict = Depends(require_module("maintenance", "full"))):
     await execute("delete from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     return {"ok": True}
 
@@ -1329,6 +1363,10 @@ async def _notify(ws: str, roles: tuple, ntype: str, message: str, maintenance_i
 
 @api.get("/maintenance/{mid}/quotes")
 async def list_quotes(mid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") == "mechanic":
+        job = await fetch_one("select assigned_to from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+        if not job or job.get("assigned_to") != user["id"]:
+            raise HTTPException(status_code=404, detail="Maintenance job not found")
     return await fetch_all(
         "select * from quotes where workspace_id = :ws and maintenance_id = :mid order by created_at desc",
         ws=user["workspace_id"], mid=mid,
@@ -1426,12 +1464,18 @@ async def decide_quote(qid: str, body: QuoteDecision, user: dict = Depends(get_c
 # --- Purchase orders ---
 @api.get("/purchase-orders")
 async def list_purchase_orders(user: dict = Depends(get_current_user)):
+    if user.get("role") == "mechanic":
+        return await fetch_all(
+            "select * from purchase_orders where workspace_id = :ws and maintenance_id in "
+            "(select id from maintenance where assigned_to = :uid) order by created_at desc",
+            ws=user["workspace_id"], uid=user["id"],
+        )
     return await fetch_all(
         "select * from purchase_orders where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
     )
 
 @api.post("/purchase-orders")
-async def create_purchase_order(po: PurchaseOrderIn, user: dict = Depends(get_current_user)):
+async def create_purchase_order(po: PurchaseOrderIn, user: dict = Depends(require_module("purchase_orders", "full"))):
     poid = str(uuid.uuid4())
     po_count = (await fetch_one("select count(*) as c from purchase_orders where workspace_id = :ws", ws=user["workspace_id"]))["c"]
     po_number = f"PO-{datetime.now(timezone.utc).year}-{po_count + 1:04d}"

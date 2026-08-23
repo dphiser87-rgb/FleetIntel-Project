@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Plus, Receipt, ArrowSquareOut } from "@phosphor-icons/react";
+import { useAuth } from "@/contexts/AuthContext";
+import { hasAccess } from "@/lib/access";
 
 const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
@@ -12,6 +14,8 @@ const STATUS_COLOR = {
 };
 
 export default function PurchaseOrders() {
+  const { user } = useAuth();
+  const canCreatePO = hasAccess(user, "purchase_orders", "full");
   const [orders, setOrders] = useState([]);
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ supplier: "", amount: "", notes: "" });
@@ -37,9 +41,11 @@ export default function PurchaseOrders() {
           <div className="overline">Procurement</div>
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="po-title">Purchase Orders</h1>
         </div>
-        <button onClick={() => setShowNew(!showNew)} data-testid="new-po-btn" className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
-          <Plus size={14} weight="bold" /> Create PO
-        </button>
+        {canCreatePO && (
+          <button onClick={() => setShowNew(!showNew)} data-testid="new-po-btn" className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
+            <Plus size={14} weight="bold" /> Create PO
+          </button>
+        )}
       </header>
 
       {showNew && (
