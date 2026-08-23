@@ -16,7 +16,7 @@ const PERIODS = [
   { value: "30d", label: "Last 30 days" },
 ];
 
-export default function Level2Ranking({ kpiKey, initialGroupBy, groups, onDrillVehicle }) {
+export default function Level2Ranking({ kpiKey, initialGroupBy, groups, onDrillVehicle, onDrillGroup }) {
   const [groupBy, setGroupBy] = useState(initialGroupBy || "vehicle");
   const [period, setPeriod] = useState("all");
   const [data, setData] = useState(null);
@@ -39,6 +39,7 @@ export default function Level2Ranking({ kpiKey, initialGroupBy, groups, onDrillV
   }, [kpiKey, groupBy, period]);
 
   const vehicleByName = useMemo(() => Object.fromEntries(vehicles.map((v) => [v.name, v])), [vehicles]);
+  const groupByName = useMemo(() => Object.fromEntries(groups.map((g) => [g.name, g])), [groups]);
 
   const rows = data ? [...data.rows].sort((a, b) => {
     if (!sortKey) return 0;
@@ -144,16 +145,22 @@ export default function Level2Ranking({ kpiKey, initialGroupBy, groups, onDrillV
             <tbody>
               {rows.map((r, i) => {
                 const vehicle = groupBy === "vehicle" ? vehicleByName[r.vehicle] : null;
-                const clickable = !!vehicle;
+                const group = groupBy === "group" ? groupByName[r.vehicle] : null;
+                const clickable = !!vehicle || !!group;
                 return (
                   <tr
                     key={i}
                     className={`border-b border-border/50 ${clickable ? "hover:bg-primary/5 cursor-pointer" : "hover:bg-[#121214]"}`}
-                    onClick={() => clickable && onDrillVehicle(vehicle)}
+                    onClick={() => { if (vehicle) onDrillVehicle(vehicle); else if (group) onDrillGroup(group); }}
                     data-testid={`level2-row-${i}`}
                   >
-                    {data.columns.map((c) => (
-                      <td key={c} className={`p-2 ${isMoney(c) || typeof r[c] === "number" ? "mono" : ""}`}>{fmtCell(c, r[c])}</td>
+                    {data.columns.map((c, ci) => (
+                      <td key={c} className={`p-2 ${isMoney(c) || typeof r[c] === "number" ? "mono" : ""}`}>
+                        {ci === 0 && group && (
+                          <span className="inline-block w-2 h-2 rounded-sm mr-1.5 align-middle" style={{ background: group.color || "#636366" }} />
+                        )}
+                        {fmtCell(c, r[c])}
+                      </td>
                     ))}
                   </tr>
                 );

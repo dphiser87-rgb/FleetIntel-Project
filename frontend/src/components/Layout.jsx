@@ -1,16 +1,19 @@
 import React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import GlobalAlertBar from "@/components/GlobalAlertBar";
 import {
-  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise, ShieldCheck, UserCircle, Warning,
+  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise, ShieldCheck, UserCircle, Warning, Stack, ListChecks,
 } from "@phosphor-icons/react";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: Gauge, end: true, id: "nav-dashboard" },
   { to: "/fleet", label: "Fleet", icon: Truck, id: "nav-fleet" },
+  { to: "/assets", label: "Assets", icon: Stack, id: "nav-assets" },
   { to: "/drivers", label: "Drivers", icon: UserCircle, id: "nav-drivers" },
   { to: "/incidents", label: "Incidents", icon: Warning, id: "nav-incidents" },
-  { to: "/templates", label: "Checklists", icon: ClipboardText, id: "nav-templates" },
+  { to: "/vehicle-checklist", label: "Vehicle Checklist", icon: ClipboardText, id: "nav-vehicle-checklist" },
+  { to: "/templates", label: "Checklist Templates", icon: ListChecks, id: "nav-templates" },
   { to: "/maintenance", label: "Maintenance", icon: Wrench, id: "nav-maintenance" },
   { to: "/parts", label: "Parts", icon: Package, id: "nav-parts" },
   { to: "/team", label: "Team", icon: UsersThree, id: "nav-team" },
@@ -84,6 +87,7 @@ export default function Layout() {
       </aside>
 
       <main className="flex-1 min-w-0 overflow-x-hidden">
+        <GlobalAlertBar />
         <Outlet />
       </main>
     </div>

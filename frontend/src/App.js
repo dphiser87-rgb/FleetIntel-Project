@@ -2,6 +2,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { CurrencyProvider } from "@/lib/CurrencyContext";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
@@ -10,7 +11,9 @@ import Fleet from "@/pages/Fleet";
 import VehicleDetail from "@/pages/VehicleDetail";
 import Templates from "@/pages/Templates";
 import TemplateBuilder from "@/pages/TemplateBuilder";
+import VehicleChecklist from "@/pages/VehicleChecklist";
 import Inspection from "@/pages/Inspection";
+import Assets from "@/pages/Assets";
 import Maintenance from "@/pages/Maintenance";
 import Reports from "@/pages/Reports";
 import Parts from "@/pages/Parts";
@@ -43,15 +46,18 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/public/vehicle/:token" element={<PublicVehicle />} />
-            <Route path="/" element={<Protected><Layout /></Protected>}>
+            <Route path="/" element={<Protected><CurrencyProvider><Layout /></CurrencyProvider></Protected>}>
               <Route index element={<Dashboard />} />
               <Route path="fleet" element={<Fleet />} />
               <Route path="fleet/:id" element={<VehicleDetail />} />
               <Route path="templates" element={<Templates />} />
+              <Route path="vehicle-checklist" element={<VehicleChecklist />} />
               <Route path="templates/new" element={<TemplateBuilder />} />
               <Route path="templates/:id" element={<TemplateBuilder />} />
               <Route path="inspection/:vehicleId" element={<Inspection />} />
+              <Route path="inspection/:targetType/:id" element={<Inspection />} />
               <Route path="inspections/:id" element={<InspectionReport />} />
+              <Route path="assets" element={<Assets />} />
               <Route path="maintenance" element={<Maintenance />} />
               <Route path="parts" element={<Parts />} />
               <Route path="drivers" element={<Drivers />} />

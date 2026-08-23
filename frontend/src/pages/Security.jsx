@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { ShieldCheck, ShieldWarning, QrCode, EnvelopeSimple, ClockCounterClockwise, Copy, ArrowsClockwise } from "@phosphor-icons/react";
+import { ShieldCheck, ShieldWarning, QrCode, EnvelopeSimple, ClockCounterClockwise, Copy, ArrowsClockwise, CurrencyCircleDollar } from "@phosphor-icons/react";
 import { formatApiErrorDetail } from "@/lib/api";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { CURRENCIES } from "@/lib/currency";
 
 export default function Security() {
+  const { currency, setCurrency } = useCurrency();
   const [status, setStatus] = useState(null);
   const [setup, setSetup] = useState(null);
   const [code, setCode] = useState("");
@@ -146,6 +149,27 @@ export default function Security() {
               <button onClick={() => setRecoveryCodes(null)} className="mt-3 text-xs uppercase tracking-widest text-white/60 hover:text-white">I've saved them ✓</button>
             </div>
           )}
+        </div>
+
+        <div className="bg-[#121214] border border-border p-6" data-testid="currency-card">
+          <div className="flex items-center gap-3 mb-1">
+            <CurrencyCircleDollar size={22} className="text-primary" />
+            <div className="overline">Display preferences</div>
+          </div>
+          <h3 className="font-display text-2xl font-bold tracking-tight">Currency</h3>
+          <div className="mt-2 text-sm text-muted-foreground">
+            Dashboard tiles and tile configuration show costs in this currency.
+          </div>
+          <select
+            value={currency}
+            onChange={(e) => { setCurrency(e.target.value); toast.success(`Currency set to ${e.target.value}`); }}
+            data-testid="currency-select"
+            className="mt-4 w-full bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none"
+          >
+            {Object.entries(CURRENCIES).map(([code, c]) => (
+              <option key={code} value={code}>{code} — {c.label} ({c.symbol})</option>
+            ))}
+          </select>
         </div>
 
         <div className="bg-[#121214] border border-border p-6" data-testid="digest-card">

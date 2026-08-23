@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { CheckCircle, Play, ArrowRight } from "@phosphor-icons/react";
+import { CheckCircle, Play, ArrowRight, Plus } from "@phosphor-icons/react";
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
@@ -18,17 +18,32 @@ const PRIORITY_COLOR = {
   critical: "border-primary text-primary",
 };
 
+const CATEGORIES = ["tyres", "engine", "brakes", "electrical", "bodywork", "general"];
+
 export default function Maintenance() {
   const [jobs, setJobs] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [selected, setSelected] = useState(null);
   const [complete, setComplete] = useState({ actual_cost: "", parts_cost: "", labor_cost: "", downtime_hours: "" });
+  const [showNew, setShowNew] = useState(false);
+  const [newJob, setNewJob] = useState({ vehicle_id: "", title: "", priority: "medium", category: "general" });
 
   const load = () => api.get("/maintenance").then(r => setJobs(r.data));
   useEffect(() => {
     load();
     api.get("/vehicles").then(r => setVehicles(r.data));
   }, []);
+
+  const createJob = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post("/maintenance", newJob);
+      toast.success("Job created");
+      setShowNew(false);
+      setNewJob({ vehicle_id: "", title: "", priority: "medium", category: "general" });
+      load();
+    } catch { toast.error("Failed to create job"); }
+  };
 
   const vName = (id) => vehicles.find(v => v.id === id)?.name || "—";
   const vPlate = (id) => vehicles.find(v => v.id === id)?.plate || "";
@@ -62,7 +77,12 @@ export default function Maintenance() {
           <div className="overline">Workflow</div>
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="maintenance-title">Maintenance board</h1>
         </div>
-        <div className="mono text-xs text-muted-foreground">{jobs.length} jobs</div>
+        <div className="flex items-center gap-4">
+          <div className="mono text-xs text-muted-foreground">{jobs.length} jobs</div>
+          <button onClick={() => setShowNew(true)} data-testid="new-job-btn" className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
+            <Plus size={14} weight="bold" /> New job
+          </button>
+        </div>
       </header>
 
       <div className="p-8">
@@ -85,7 +105,8 @@ export default function Maintenance() {
                         <div className="font-display font-bold text-sm leading-tight">{job.title}</div>
                         <span className={`text-[10px] mono uppercase tracking-widest px-1.5 py-0.5 border ${PRIORITY_COLOR[job.priority] || ""}`}>{job.priority}</span>
                       </div>
-                      <div className="text-xs text-muted-foreground mb-3">{vName(job.vehicle_id)} · <span className="mono">{vPlate(job.vehicle_id)}</span></div>
+                      <div className="text-xs text-muted-foreground mb-1">{vName(job.vehicle_id)} · <span className="mono">{vPlate(job.vehicle_id)}</span></div>
+                      {job.category && <div className="text-[10px] mono uppercase tracking-widest text-[#3B82F6] mb-2">{job.category}</div>}
                       <div className="flex items-center justify-between text-xs">
                         <div className="mono">{money(job.actual_cost || job.estimated_cost)}</div>
                         <div className="text-muted-foreground">{new Date(job.created_at).toLocaleDateString()}</div>
@@ -142,6 +163,47 @@ export default function Maintenance() {
                 Mark as completed
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showNew && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6" onClick={() => setShowNew(false)}>
+          <div className="bg-[#121214] border border-border max-w-md w-full" onClick={(e) => e.stopPropagation()} data-testid="new-job-modal">
+            <div className="border-b border-border p-4">
+              <div className="overline">New maintenance job</div>
+              <h3 className="font-display font-bold text-xl mt-1">Create job</h3>
+            </div>
+            <form onSubmit={createJob} className="p-4 space-y-3">
+              <div>
+                <label className="overline block mb-1">Vehicle</label>
+                <select required value={newJob.vehicle_id} onChange={(e) => setNewJob({ ...newJob, vehicle_id: e.target.value })} data-testid="new-job-vehicle" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                  <option value="">Select vehicle…</option>
+                  {vehicles.map(v => <option key={v.id} value={v.id}>{v.name} · {v.plate}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="overline block mb-1">Title</label>
+                <input required value={newJob.title} onChange={(e) => setNewJob({ ...newJob, title: e.target.value })} data-testid="new-job-title" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="overline block mb-1">Priority</label>
+                  <select value={newJob.priority} onChange={(e) => setNewJob({ ...newJob, priority: e.target.value })} data-testid="new-job-priority" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                    {["low", "medium", "high", "critical"].map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="overline block mb-1">Category</label>
+                  <select value={newJob.category} onChange={(e) => setNewJob({ ...newJob, category: e.target.value })} data-testid="new-job-category" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <button type="submit" data-testid="create-job-btn" className="w-full bg-primary text-primary-foreground py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">
+                Create job
+              </button>
+            </form>
           </div>
         </div>
       )}

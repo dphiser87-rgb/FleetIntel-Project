@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Truck, ClipboardText, Camera, UploadSimple, Heartbeat } from "@phosphor-icons/react";
+import { Plus, Truck, ClipboardText, Camera, UploadSimple, Heartbeat, FolderSimple } from "@phosphor-icons/react";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import GroupManager from "@/components/GroupManager";
 
 const StatusBadge = ({ status }) => {
   const map = {
@@ -28,31 +30,34 @@ export default function Fleet() {
   const [vehicles, setVehicles] = useState([]);
   const [health, setHealth] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [groupFilter, setGroupFilter] = useState("all");
+  const [showGroups, setShowGroups] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [sortBy, setSortBy] = useState("health");
   const [form, setForm] = useState({ name: "", plate: "", make: "", model: "", year: 2023, type: "truck", odometer: 0, fuel_cost_per_km: 0.35, group_id: "" });
 
+  const loadGroups = () => api.get("/vehicle-groups").then(r => setGroups(r.data || []));
   const load = async () => {
-    const [v, h, g] = await Promise.all([
+    const [v, h] = await Promise.all([
       api.get("/vehicles"),
       api.get("/analytics/fleet-health").catch(() => ({ data: [] })),
-      api.get("/vehicle-groups").catch(() => ({ data: [] })),
     ]);
-    setVehicles(v.data); setHealth(h.data || []); setGroups(g.data || []);
+    setVehicles(v.data); setHealth(h.data || []);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadGroups(); }, []);
 
   const groupMap = useMemo(() => Object.fromEntries(groups.map(g => [g.id, g])), [groups]);
 
   const healthMap = useMemo(() => Object.fromEntries(health.map(h => [h.vehicle_id, h])), [health]);
   const sortedVehicles = useMemo(() => {
-    if (sortBy !== "health") return vehicles;
-    return [...vehicles].sort((a, b) => {
+    const visible = groupFilter === "all" ? vehicles : vehicles.filter(v => v.group_id === groupFilter);
+    if (sortBy !== "health") return visible;
+    return [...visible].sort((a, b) => {
       const sa = healthMap[a.id]?.score ?? 100;
       const sb = healthMap[b.id]?.score ?? 100;
       return sa - sb; // worst first
     });
-  }, [vehicles, healthMap, sortBy]);
+  }, [vehicles, healthMap, sortBy, groupFilter]);
 
   const save = async (e) => {
     e.preventDefault();
@@ -79,6 +84,13 @@ export default function Fleet() {
           <option value="health">Sort · Health (worst first)</option>
           <option value="default">Sort · Default</option>
         </select>
+        <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} data-testid="vehicle-group-filter" className="bg-[#121214] border border-border px-2 py-2 text-xs uppercase tracking-widest">
+          <option value="all">All groups</option>
+          {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select>
+        <button onClick={() => setShowGroups(true)} data-testid="manage-vehicle-groups-btn" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
+          <FolderSimple size={14} /> Manage groups
+        </button>
         <button data-testid="add-vehicle-btn" onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
           <Plus size={14} weight="bold" /> Add vehicle
         </button>
@@ -96,6 +108,9 @@ export default function Fleet() {
             e.target.value = "";
           }} />
         </label>
+        <a href={`${API}/import/vehicles/template.csv`} className="text-xs text-muted-foreground hover:text-primary underline" data-testid="download-vehicle-template">
+          Download template
+        </a>
         </div>
       </header>
 
@@ -180,7 +195,10 @@ export default function Fleet() {
                     <div className="mono text-sm">{(v.odometer || 0).toLocaleString()} km</div>
                     <div className="overline mt-1">{v.type}</div>
                     {groupMap[v.group_id] && (
-                      <div className="text-[10px] mono uppercase tracking-widest text-[#3B82F6] mt-1">{groupMap[v.group_id].name}</div>
+                      <div className="flex items-center gap-1 justify-end mt-1">
+                        <span className="w-1.5 h-1.5 rounded-sm shrink-0" style={{ background: groupMap[v.group_id].color || "#3B82F6" }} />
+                        <span className="text-[10px] mono uppercase tracking-widest" style={{ color: groupMap[v.group_id].color || "#3B82F6" }}>{groupMap[v.group_id].name}</span>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -205,8 +223,25 @@ export default function Fleet() {
             </div>
           )})}
         </div>
-        {vehicles.length === 0 && <div className="text-center text-muted-foreground py-24">No vehicles. Add one to get started.</div>}
+        {sortedVehicles.length === 0 && <div className="text-center text-muted-foreground py-24">No vehicles{groupFilter !== "all" ? " in this group" : ""}. Add one to get started.</div>}
       </div>
+
+      <Sheet open={showGroups} onOpenChange={setShowGroups}>
+        <SheetContent side="right" className="border-border bg-[#0b0b0d] w-full sm:max-w-md flex flex-col" data-testid="fleet-groups-sheet">
+          <SheetHeader>
+            <SheetTitle className="font-display text-2xl">Vehicle groups</SheetTitle>
+            <SheetDescription>Organize vehicles into fleets like Regional or Long-haul.</SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 flex-1 overflow-y-auto pr-1">
+            <GroupManager
+              groups={groups}
+              onChange={() => { loadGroups(); load(); }}
+              endpoint="/vehicle-groups"
+              emptyHint="No groups yet. Create one to organize vehicles for &quot;view by group&quot; tiles."
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
