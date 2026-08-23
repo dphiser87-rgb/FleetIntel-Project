@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { CheckCircle, Play, ArrowRight, Plus } from "@phosphor-icons/react";
+import { useAuth } from "@/contexts/AuthContext";
+import MaintenanceDetailPanel from "@/components/MaintenanceDetailPanel";
+
+const OPS_ROLES = ["operations_manager", "admin"];
+const FINANCE_ROLES = ["finance", "admin"];
 
 const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
@@ -21,18 +27,37 @@ const PRIORITY_COLOR = {
 const CATEGORIES = ["tyres", "engine", "brakes", "electrical", "bodywork", "general"];
 
 export default function Maintenance() {
+  const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [jobs, setJobs] = useState([]);
+  const [quotesByJob, setQuotesByJob] = useState({}); // job_id -> latest quote (for the approval filter)
   const [vehicles, setVehicles] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [detailJobId, setDetailJobId] = useState(searchParams.get("job") || null);
+  const [awaitingApproval, setAwaitingApproval] = useState(searchParams.get("approvals") === "1");
   const [complete, setComplete] = useState({ actual_cost: "", parts_cost: "", labor_cost: "", downtime_hours: "" });
   const [showNew, setShowNew] = useState(false);
   const [newJob, setNewJob] = useState({ vehicle_id: "", title: "", priority: "medium", category: "general" });
+
+  const actionableStage = OPS_ROLES.includes(user?.role) ? "pending_ops" : FINANCE_ROLES.includes(user?.role) ? "pending_finance" : null;
 
   const load = () => api.get("/maintenance").then(r => setJobs(r.data));
   useEffect(() => {
     load();
     api.get("/vehicles").then(r => setVehicles(r.data));
   }, []);
+
+  // Populate quotesByJob only when the "Awaiting my approval" filter is actually usable, to avoid an
+  // N+1 fetch on every page load for roles that can never action a quote.
+  useEffect(() => {
+    if (!actionableStage || jobs.length === 0) return;
+    Promise.all(jobs.map(j => api.get(`/maintenance/${j.id}/quotes`).then(r => [j.id, r.data?.[0]]).catch(() => [j.id, null])))
+      .then(pairs => setQuotesByJob(Object.fromEntries(pairs)));
+  }, [actionableStage, jobs]);
+
+  const visibleJobs = awaitingApproval && actionableStage
+    ? jobs.filter(j => quotesByJob[j.id]?.stage === actionableStage)
+    : jobs;
 
   const createJob = async (e) => {
     e.preventDefault();
@@ -78,7 +103,16 @@ export default function Maintenance() {
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="maintenance-title">Maintenance board</h1>
         </div>
         <div className="flex items-center gap-4">
-          <div className="mono text-xs text-muted-foreground">{jobs.length} jobs</div>
+          {actionableStage && (
+            <button
+              onClick={() => { const v = !awaitingApproval; setAwaitingApproval(v); setSearchParams(v ? { approvals: "1" } : {}); }}
+              data-testid="awaiting-approval-filter"
+              className={`text-xs uppercase tracking-widest px-3 py-2 border transition-colors ${awaitingApproval ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:border-primary hover:text-primary"}`}
+            >
+              Awaiting my approval
+            </button>
+          )}
+          <div className="mono text-xs text-muted-foreground">{visibleJobs.length} jobs</div>
           <button onClick={() => setShowNew(true)} data-testid="new-job-btn" className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
             <Plus size={14} weight="bold" /> New job
           </button>
@@ -88,7 +122,7 @@ export default function Maintenance() {
       <div className="p-8">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6" data-testid="kanban">
           {COLUMNS.map(col => {
-            const items = jobs.filter(j => j.status === col.key);
+            const items = visibleJobs.filter(j => j.status === col.key);
             return (
               <div key={col.key} className={`bg-[#0d0d0f] border border-border border-t-2 ${col.accent}`} data-testid={`column-${col.key}`}>
                 <div className="p-4 flex items-center justify-between border-b border-border">
@@ -100,7 +134,11 @@ export default function Maintenance() {
                 </div>
                 <div className="p-3 space-y-3 min-h-[200px]">
                   {items.map(job => (
-                    <div key={job.id} className="bg-[#121214] border border-border p-4 hover:border-primary/60 transition-colors" data-testid={`job-${job.id}`}>
+                    <div key={job.id} onClick={() => { setDetailJobId(job.id); setSearchParams({ job: job.id }); }}
+                      className="bg-[#121214] border border-border p-4 hover:border-primary/60 transition-colors cursor-pointer" data-testid={`job-${job.id}`}>
+                      {quotesByJob[job.id]?.stage === actionableStage && (
+                        <div className="text-[10px] mono uppercase tracking-widest text-primary mb-2">Awaiting your approval</div>
+                      )}
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="font-display font-bold text-sm leading-tight">{job.title}</div>
                         <span className={`text-[10px] mono uppercase tracking-widest px-1.5 py-0.5 border ${PRIORITY_COLOR[job.priority] || ""}`}>{job.priority}</span>
@@ -113,12 +151,12 @@ export default function Maintenance() {
                       </div>
                       <div className="flex gap-2 mt-3 pt-3 border-t border-border/60">
                         {col.key === "pending" && (
-                          <button onClick={() => move(job, "in_progress")} data-testid={`start-${job.id}`} className="flex-1 flex items-center justify-center gap-1 border border-border text-xs uppercase tracking-widest px-2 py-1.5 hover:border-primary hover:text-primary">
+                          <button onClick={(e) => { e.stopPropagation(); move(job, "in_progress"); }} data-testid={`start-${job.id}`} className="flex-1 flex items-center justify-center gap-1 border border-border text-xs uppercase tracking-widest px-2 py-1.5 hover:border-primary hover:text-primary">
                             <Play size={10} /> Start
                           </button>
                         )}
                         {col.key === "in_progress" && (
-                          <button onClick={() => setSelected(job)} data-testid={`complete-${job.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary text-xs uppercase tracking-widest px-2 py-1.5 hover:bg-primary hover:text-primary-foreground">
+                          <button onClick={(e) => { e.stopPropagation(); setSelected(job); }} data-testid={`complete-${job.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary text-xs uppercase tracking-widest px-2 py-1.5 hover:bg-primary hover:text-primary-foreground">
                             <CheckCircle size={10} /> Complete
                           </button>
                         )}
@@ -207,6 +245,13 @@ export default function Maintenance() {
           </div>
         </div>
       )}
+
+      <MaintenanceDetailPanel
+        jobId={detailJobId}
+        currentUser={user}
+        onClose={() => { setDetailJobId(null); setSearchParams(awaitingApproval ? { approvals: "1" } : {}); }}
+        onChange={load}
+      />
     </div>
   );
 }

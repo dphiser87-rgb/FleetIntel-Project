@@ -2,8 +2,9 @@ import React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import GlobalAlertBar from "@/components/GlobalAlertBar";
+import NotificationCenter from "@/components/NotificationCenter";
 import {
-  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise, ShieldCheck, UserCircle, Warning, Stack, ListChecks,
+  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise, ShieldCheck, UserCircle, Warning, Stack, ListChecks, Receipt,
 } from "@phosphor-icons/react";
 
 const nav = [
@@ -16,6 +17,7 @@ const nav = [
   { to: "/templates", label: "Checklist Templates", icon: ListChecks, id: "nav-templates" },
   { to: "/maintenance", label: "Maintenance", icon: Wrench, id: "nav-maintenance" },
   { to: "/parts", label: "Parts", icon: Package, id: "nav-parts" },
+  { to: "/purchase-orders", label: "Purchase Orders", icon: Receipt, id: "nav-purchase-orders" },
   { to: "/team", label: "Team", icon: UsersThree, id: "nav-team" },
   { to: "/audit", label: "Activity", icon: ClockCounterClockwise, id: "nav-audit" },
   { to: "/reports", label: "Reports", icon: ChartBar, id: "nav-reports" },
@@ -70,10 +72,11 @@ export default function Layout() {
             <div className="w-9 h-9 bg-primary/20 border border-primary/40 flex items-center justify-center mono text-xs text-primary">
               {user?.name?.charAt(0)?.toUpperCase() || "U"}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="text-sm truncate" data-testid="user-name">{user?.name}</div>
               <div className="overline truncate" data-testid="user-role">{user?.role}</div>
             </div>
+            <NotificationCenter />
           </div>
           <button
             data-testid="logout-btn"

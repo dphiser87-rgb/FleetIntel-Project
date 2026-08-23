@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import {
   Truck, ClipboardText, Wrench, Package, UsersThree, CheckCircle, Warning, ClockCounterClockwise, UserCirclePlus, UserCheck, PencilSimple,
-  FolderSimple, FolderPlus, FolderMinus, Palette, TrashSimple,
+  FolderSimple, FolderPlus, FolderMinus, Palette, TrashSimple, Receipt, XCircle,
 } from "@phosphor-icons/react";
 
 const ACTION_MAP = {
@@ -34,6 +34,12 @@ const ACTION_MAP = {
   "part.adjusted": { icon: Package, color: "text-[#3B82F6]", label: "Adjusted part stock" },
   "invite.created": { icon: UserCirclePlus, color: "text-[#3B82F6]", label: "Sent invite" },
   "invite.accepted": { icon: UserCheck, color: "text-[#34C759]", label: "Joined workspace" },
+  "quote.submitted": { icon: Receipt, color: "text-[#FFCC00]", label: "Submitted quote" },
+  "quote.ops_approved": { icon: CheckCircle, color: "text-[#34C759]", label: "Quote approved by Operations" },
+  "quote.ops_rejected": { icon: XCircle, color: "text-primary", label: "Quote rejected by Operations" },
+  "quote.finance_approved": { icon: CheckCircle, color: "text-[#34C759]", label: "Quote approved by Finance" },
+  "quote.finance_rejected": { icon: XCircle, color: "text-primary", label: "Quote rejected by Finance" },
+  "purchase_order.created": { icon: Receipt, color: "text-[#3B82F6]", label: "Created purchase order" },
 };
 
 const timeAgo = (iso) => {
@@ -56,6 +62,10 @@ const renderMeta = (action, meta = {}) => {
   if (action === "part.adjusted") return <>{meta.name} <span className={`mono ${meta.delta >= 0 ? "text-[#34C759]" : "text-primary"}`}>{meta.delta >= 0 ? "+" : ""}{meta.delta}</span> <span className="text-muted-foreground">→ {meta.new_stock} on hand</span></>;
   if (action === "invite.created") return <>{meta.email} <span className="text-muted-foreground">as {meta.role}</span></>;
   if (action === "invite.accepted") return <>{meta.email} <span className="text-muted-foreground">as {meta.role}</span></>;
+  if (action === "quote.submitted") return <>{money(meta.total)} total</>;
+  if (action === "quote.ops_approved" || action === "quote.finance_approved") return <>Approved</>;
+  if (action === "quote.ops_rejected" || action === "quote.finance_rejected") return <>{meta.reason}</>;
+  if (action === "purchase_order.created") return <>{meta.po_number} <span className="mono text-white">{money(meta.amount)}</span></>;
   if (action.endsWith(".created") || action.endsWith(".updated") || action.endsWith(".deleted")) return <>{meta.name}</>;
   if (action.endsWith(".color_changed")) return <>{meta.name} <span className="text-muted-foreground">{meta.from || "default"} → {meta.to}</span></>;
   if (action.endsWith(".member_added") || action.endsWith(".member_removed")) return <>{meta.name} <span className="text-muted-foreground">· {meta.count} record{meta.count !== 1 && "s"}</span></>;
