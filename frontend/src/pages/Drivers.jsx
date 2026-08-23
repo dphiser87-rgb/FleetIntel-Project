@@ -41,6 +41,8 @@ export default function Drivers() {
     ]);
     setDrivers(d.data); setVehicles(v.data); setTripLogs(t.data || []);
     setWarningDays(ws.data?.workspace?.license_warning_days ?? 30);
+    // Keep an open panel's driver in sync with the reload — see the identical fix in Team.jsx.
+    setPanelDriver((prev) => (prev && prev !== "new" ? d.data.find((x) => x.id === prev.id) || null : prev));
   };
   useEffect(() => { load(); loadGroups(); }, []);
 

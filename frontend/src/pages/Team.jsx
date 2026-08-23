@@ -38,6 +38,9 @@ export default function Team() {
     const { data } = await api.get("/workspace");
     setWs(data.workspace); setMembers(data.members); setInvites(data.invites);
     setWsName(data.workspace.name);
+    // Keep the open panel's member in sync — it holds a captured object reference that a plain
+    // members-array replacement wouldn't otherwise refresh, leaving the view tab showing stale data.
+    setSelected((prev) => (prev ? data.members.find((m) => m.id === prev.id) || null : prev));
   };
   useEffect(() => {
     load();

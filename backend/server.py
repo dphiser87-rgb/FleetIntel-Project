@@ -665,10 +665,15 @@ PROFILE_PRESETS = {role: _default_permissions(role) for role in ("admin", "manag
 USER_COLS = {"name", "username", "company_department", "cell", "additional_info", "status",
              "active_from", "active_until", "permissions", "role"}
 
+SAFE_USER_COLS = (
+    "id, email, name, role, workspace_id, prefs, totp_enabled, created_at, username, "
+    "company_department, cell, additional_info, status, active_from, active_until, permissions"
+)  # excludes totp_secret/totp_pending_secret — raw 2FA seeds must never reach another user's browser
+
 @api.get("/users")
 async def list_users(user: dict = Depends(get_current_user)):
     return await fetch_all(
-        "select * from user_profiles where workspace_id = :ws",
+        f"select {SAFE_USER_COLS} from user_profiles where workspace_id = :ws",
         ws=user["workspace_id"],
     )
 
@@ -683,7 +688,7 @@ async def update_user(uid: str, patch: dict, user: dict = Depends(get_current_us
     target = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
     if not target: raise HTTPException(status_code=404, detail="Not found")
     await update_row("user_profiles", uid, user["workspace_id"], patch, USER_COLS)
-    doc = await fetch_one("select * from user_profiles where id = :id", id=uid)
+    doc = await fetch_one(f"select {SAFE_USER_COLS} from user_profiles where id = :id", id=uid)
     await log_event(user, "user.updated", "user", uid, {"name": doc["name"], "fields": list(patch.keys())})
     return doc
 
@@ -695,7 +700,7 @@ async def deactivate_user(uid: str, user: dict = Depends(get_current_user)):
     if not target: raise HTTPException(status_code=404, detail="Not found")
     await execute("update user_profiles set status = 'inactive' where id = :id", id=uid)
     await log_event(user, "user.deactivated", "user", uid, {"name": target["name"]})
-    return await fetch_one("select * from user_profiles where id = :id", id=uid)
+    return await fetch_one(f"select {SAFE_USER_COLS} from user_profiles where id = :id", id=uid)
 
 @api.post("/users/{uid}/reset-password")
 async def reset_user_password(uid: str, user: dict = Depends(get_current_user)):
@@ -1632,7 +1637,7 @@ async def export_drivers(group_id: Optional[str] = None, status: Optional[str] =
 async def export_users(request: Request):
     token = request.query_params.get("token")
     user = await user_from_token(token) if token else await get_current_user(request)
-    users = await fetch_all("select * from user_profiles where workspace_id = :ws order by name", ws=user["workspace_id"])
+    users = await fetch_all(f"select {SAFE_USER_COLS} from user_profiles where workspace_id = :ws order by name", ws=user["workspace_id"])
     rows = [{
         "name": u.get("name", ""), "username": u.get("username", ""), "email": u.get("email", ""),
         "role": u.get("role", ""), "status": u.get("status", "active"),
@@ -3168,7 +3173,7 @@ async def get_workspace(user: dict = Depends(get_current_user)):
     if not ws:
         ws = {"id": user["workspace_id"], "name": "FleetCost Workspace"}
     users = await fetch_all(
-        "select id, email, name, role, workspace_id, created_at from user_profiles where workspace_id = :ws",
+        f"select {SAFE_USER_COLS} from user_profiles where workspace_id = :ws",
         ws=user["workspace_id"],
     )
     invites = await fetch_all(
