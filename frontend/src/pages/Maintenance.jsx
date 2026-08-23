@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { CheckCircle, Play, ArrowRight, Plus } from "@phosphor-icons/react";
+import { CheckCircle, Play, ArrowRight, Plus, Kanban, Table as TableIcon, ClockCounterClockwise } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { hasAccess } from "@/lib/access";
 import MaintenanceDetailPanel from "@/components/MaintenanceDetailPanel";
@@ -33,12 +33,18 @@ export default function Maintenance() {
   const [jobs, setJobs] = useState([]);
   const [quotesByJob, setQuotesByJob] = useState({}); // job_id -> latest quote (for the approval filter)
   const [vehicles, setVehicles] = useState([]);
+  const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null);
   const [detailJobId, setDetailJobId] = useState(searchParams.get("job") || null);
   const [awaitingApproval, setAwaitingApproval] = useState(searchParams.get("approvals") === "1");
   const [complete, setComplete] = useState({ actual_cost: "", parts_cost: "", labor_cost: "", downtime_hours: "" });
   const [showNew, setShowNew] = useState(false);
   const [newJob, setNewJob] = useState({ vehicle_id: "", title: "", priority: "medium", category: "general" });
+  const [view, setView] = useState("board"); // board | table | audit
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [sortKey, setSortKey] = useState("created_at");
+  const [sortDir, setSortDir] = useState("desc");
+  const [audit, setAudit] = useState([]);
 
   const actionableStage = OPS_ROLES.includes(user?.role) ? "pending_ops" : FINANCE_ROLES.includes(user?.role) ? "pending_finance" : null;
   const canManageJobs = hasAccess(user, "maintenance", "full");
@@ -47,7 +53,12 @@ export default function Maintenance() {
   useEffect(() => {
     load();
     api.get("/vehicles").then(r => setVehicles(r.data));
+    api.get("/users").then(r => setUsers(r.data));
   }, []);
+
+  useEffect(() => {
+    if (view === "audit") api.get("/audit", { params: { entity_type: "maintenance" } }).then(r => setAudit(r.data || []));
+  }, [view]);
 
   // Populate quotesByJob only when the "Awaiting my approval" filter is actually usable, to avoid an
   // N+1 fetch on every page load for roles that can never action a quote.
@@ -74,12 +85,45 @@ export default function Maintenance() {
 
   const vName = (id) => vehicles.find(v => v.id === id)?.name || "—";
   const vPlate = (id) => vehicles.find(v => v.id === id)?.plate || "";
+  const tName = (id) => users.find(u => u.id === id)?.name || "Unassigned";
 
   const move = async (job, status) => {
     await api.patch(`/maintenance/${job.id}`, { status });
     toast.success(`Moved to ${status.replace("_", " ")}`);
     load();
   };
+
+  const stats = {
+    active: jobs.filter(j => j.status === "pending" || j.status === "in_progress").length,
+    highPriority: jobs.filter(j => ["high", "critical"].includes(j.priority) && j.status !== "completed").length,
+    stale: jobs.filter(j => j.status !== "completed" && (Date.now() - new Date(j.created_at).getTime()) > 14 * 86400000).length,
+    completedThisMonth: jobs.filter(j => {
+      if (j.status !== "completed" || !j.completed_at) return false;
+      const d = new Date(j.completed_at), now = new Date();
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    }).length,
+  };
+
+  const toggleSelect = (id) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const bulkSetStatus = async (status) => {
+    await Promise.all([...selectedIds].map(id => api.patch(`/maintenance/${id}`, { status })));
+    toast.success(`${selectedIds.size} job${selectedIds.size !== 1 ? "s" : ""} moved to ${status.replace("_", " ")}`);
+    setSelectedIds(new Set());
+    load();
+  };
+
+  const tableJobs = [...visibleJobs].sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    const av = a[sortKey], bv = b[sortKey];
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return av > bv ? dir : av < bv ? -dir : 0;
+  });
 
   const finishJob = async () => {
     if (!selected) return;
@@ -99,10 +143,10 @@ export default function Maintenance() {
 
   return (
     <div className="noise-bg min-h-screen">
-      <header className="border-b border-border px-8 py-6 flex items-end justify-between">
+      <header className="border-b border-border px-8 py-6 flex items-end justify-between flex-wrap gap-4">
         <div>
           <div className="overline">Workflow</div>
-          <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="maintenance-title">Maintenance board</h1>
+          <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="maintenance-title">Workshop Management</h1>
         </div>
         <div className="flex items-center gap-4">
           {actionableStage && (
@@ -123,6 +167,39 @@ export default function Maintenance() {
         </div>
       </header>
 
+      <div className="px-8 pt-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 border border-border grid-borders" data-testid="workshop-stats">
+          {[["Active Jobs", stats.active, "text-foreground"], ["High Priority", stats.highPriority, "text-primary"],
+            ["Stale (14d+)", stats.stale, "text-[#FFCC00]"], ["Completed this month", stats.completedThisMonth, "text-[#34C759]"]].map(([l, v, cls]) => (
+            <div key={l} className="p-5 bg-[#121214]">
+              <div className="overline">{l}</div>
+              <div className={`mono text-xl font-bold mt-2 ${cls}`}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="px-8 pt-6 flex items-center gap-2">
+        {[["board", "Board", Kanban], ["table", "Table", TableIcon], ["audit", "Audit Log", ClockCounterClockwise]].map(([k, l, Icon]) => (
+          <button key={k} onClick={() => setView(k)} data-testid={`view-${k}`}
+            className={`flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-widest border transition-colors ${view === k ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:border-primary hover:text-primary"}`}>
+            <Icon size={14} /> {l}
+          </button>
+        ))}
+        {view === "table" && selectedIds.size > 0 && canManageJobs && (
+          <div className="flex items-center gap-2 ml-4 pl-4 border-l border-border">
+            <span className="text-xs text-muted-foreground">{selectedIds.size} selected</span>
+            {COLUMNS.map(col => (
+              <button key={col.key} onClick={() => bulkSetStatus(col.key)} data-testid={`bulk-${col.key}`}
+                className="text-xs uppercase tracking-widest px-2 py-1 border border-border hover:border-primary hover:text-primary">
+                Move to {col.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {view === "board" && (
       <div className="p-8">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6" data-testid="kanban">
           {COLUMNS.map(col => {
@@ -179,6 +256,65 @@ export default function Maintenance() {
           })}
         </div>
       </div>
+      )}
+
+      {view === "table" && (
+        <div className="p-8">
+          <div className="bg-[#121214] border border-border overflow-hidden" data-testid="maintenance-table">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left border-b border-border">
+                  {canManageJobs && <th className="px-4 py-3 w-10"></th>}
+                  {[["title", "Description"], ["priority", "Priority"], ["status", "Status"], ["assigned_to", "Technician"], ["actual_cost", "Cost to date"], ["created_at", "Created"]].map(([k, l]) => (
+                    <th key={k} className="overline px-4 py-3 cursor-pointer select-none" onClick={() => { setSortKey(k); setSortDir(sortKey === k && sortDir === "asc" ? "desc" : "asc"); }}>
+                      {l} {sortKey === k && (sortDir === "asc" ? "↑" : "↓")}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {tableJobs.map(job => (
+                  <tr key={job.id} className="border-b border-border/50 hover:bg-white/[0.02] cursor-pointer" data-testid={`table-row-${job.id}`}
+                    onClick={() => { setDetailJobId(job.id); setSearchParams({ job: job.id }); }}>
+                    {canManageJobs && (
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" checked={selectedIds.has(job.id)} onChange={() => toggleSelect(job.id)} data-testid={`select-${job.id}`} />
+                      </td>
+                    )}
+                    <td className="px-4 py-3">
+                      <div className="font-semibold">{job.title}</div>
+                      <div className="text-xs text-muted-foreground">{vName(job.vehicle_id)} · {vPlate(job.vehicle_id)}</div>
+                    </td>
+                    <td className="px-4 py-3"><span className={`text-[10px] mono uppercase tracking-widest px-1.5 py-0.5 border ${PRIORITY_COLOR[job.priority] || ""}`}>{job.priority}</span></td>
+                    <td className="px-4 py-3 text-xs uppercase tracking-widest text-muted-foreground">{job.status.replace("_", " ")}</td>
+                    <td className="px-4 py-3 text-xs">{tName(job.assigned_to)}</td>
+                    <td className="px-4 py-3 mono">{money(job.actual_cost || job.estimated_cost)}</td>
+                    <td className="px-4 py-3 mono text-muted-foreground text-xs">{new Date(job.created_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+                {tableJobs.length === 0 && <tr><td colSpan={7} className="p-12 text-center text-muted-foreground">No jobs match the current filters.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {view === "audit" && (
+        <div className="p-8">
+          <div className="bg-[#121214] border border-border divide-y divide-border" data-testid="workshop-audit">
+            {audit.map(e => (
+              <div key={e.id} className="flex items-start gap-3 p-4 text-sm">
+                <ClockCounterClockwise size={14} className="text-muted-foreground mt-0.5 shrink-0" />
+                <div>
+                  <div>{e.user_name} <span className="text-muted-foreground">· {e.action}</span></div>
+                  <div className="text-[10px] mono text-muted-foreground mt-0.5">{new Date(e.at).toLocaleString()}</div>
+                </div>
+              </div>
+            ))}
+            {audit.length === 0 && <div className="text-sm text-muted-foreground text-center py-12">No workshop activity yet.</div>}
+          </div>
+        </div>
+      )}
 
       {selected && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6" onClick={() => setSelected(null)}>

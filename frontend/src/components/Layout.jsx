@@ -1,11 +1,12 @@
-import React from "react";
+import React, { useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import GlobalAlertBar from "@/components/GlobalAlertBar";
 import NotificationCenter from "@/components/NotificationCenter";
 import { hasAccess } from "@/lib/access";
 import {
-  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise, ShieldCheck, UserCircle, Warning, Stack, ListChecks, Receipt,
+  ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise,
+  ShieldCheck, UserCircle, Warning, Stack, ListChecks, Receipt, ShieldCheckered, Calculator, CaretDown, WarningOctagon,
 } from "@phosphor-icons/react";
 
 const nav = [
@@ -13,23 +14,50 @@ const nav = [
   { to: "/fleet", label: "Fleet", icon: Truck, id: "nav-fleet", moduleKey: "fleet" },
   { to: "/assets", label: "Assets", icon: Stack, id: "nav-assets", moduleKey: "assets" },
   { to: "/drivers", label: "Drivers", icon: UserCircle, id: "nav-drivers", moduleKey: "drivers" },
-  { to: "/incidents", label: "Incidents", icon: Warning, id: "nav-incidents", moduleKey: "incidents" },
-  { to: "/vehicle-checklist", label: "Vehicle Checklist", icon: ClipboardText, id: "nav-vehicle-checklist", moduleKey: "vehicle_checklist" },
-  { to: "/templates", label: "Checklist Templates", icon: ListChecks, id: "nav-templates", moduleKey: "templates" },
-  { to: "/maintenance", label: "Maintenance", icon: Wrench, id: "nav-maintenance", moduleKey: "maintenance" },
-  { to: "/parts", label: "Parts", icon: Package, id: "nav-parts", moduleKey: "parts" },
-  { to: "/purchase-orders", label: "Purchase Orders", icon: Receipt, id: "nav-purchase-orders", moduleKey: "purchase_orders" },
+  { to: "/vehicle-checklist", label: "Vehicle Checklist", icon: ClipboardText, id: "nav-vehicle-checklist", moduleKey: "vehicle_checklist", group: "Operations" },
+  { to: "/templates", label: "Checklist Templates", icon: ListChecks, id: "nav-templates", moduleKey: "templates", group: "Operations" },
+  { to: "/compliance", label: "Compliance Dashboard", icon: ShieldCheckered, id: "nav-compliance", moduleKey: "vehicle_checklist", group: "Operations" },
+  { to: "/maintenance", label: "Workshop Management", icon: Wrench, id: "nav-maintenance", moduleKey: "maintenance", group: "Operations" },
+  { to: "/defects", label: "Defect Reporting", icon: WarningOctagon, id: "nav-defects", moduleKey: "defects", group: "Operations" },
+  { to: "/incidents", label: "Incidents", icon: Warning, id: "nav-incidents", moduleKey: "incidents", group: "Operations" },
+  { to: "/parts", label: "Parts", icon: Package, id: "nav-parts", moduleKey: "parts", group: "Finance" },
+  { to: "/purchase-orders", label: "Purchase Orders", icon: Receipt, id: "nav-purchase-orders", moduleKey: "purchase_orders", group: "Finance" },
+  { to: "/budgets", label: "Budget vs Actual", icon: Calculator, id: "nav-budgets", moduleKey: "reports", group: "Finance" },
+  { to: "/reports", label: "Reports", icon: ChartBar, id: "nav-reports", moduleKey: "reports", group: "Finance" },
   { to: "/team", label: "Team", icon: UsersThree, id: "nav-team", moduleKey: "team" },
   { to: "/audit", label: "Activity", icon: ClockCounterClockwise, id: "nav-audit", moduleKey: "audit" },
-  { to: "/reports", label: "Reports", icon: ChartBar, id: "nav-reports", moduleKey: "reports" },
   { to: "/security", label: "Security", icon: ShieldCheck, id: "nav-security", moduleKey: "security" },
 ];
+
+const GROUPS = ["Operations", "Finance"];
+
+function NavItem({ n }) {
+  return (
+    <NavLink
+      to={n.to}
+      end={n.end}
+      data-testid={n.id}
+      className={({ isActive }) =>
+        `flex items-center gap-3 px-3 py-2.5 text-sm border-l-2 transition-colors ${
+          isActive
+            ? "bg-[#141416] text-white border-primary"
+            : "text-muted-foreground border-transparent hover:text-white hover:bg-[#141416]"
+        }`
+      }
+    >
+      <n.icon size={18} weight="regular" />
+      <span>{n.label}</span>
+    </NavLink>
+  );
+}
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const visibleNav = nav.filter((n) => hasAccess(user, n.moduleKey, "read"));
+  const topLevel = visibleNav.filter((n) => !n.group);
+  const [collapsed, setCollapsed] = useState({});
 
   const handleLogout = () => { logout(); navigate("/login"); };
 
@@ -58,25 +86,26 @@ export default function Layout() {
           </div>
         </div>
 
-        <nav className="flex-1 px-3 py-6 space-y-1">
-          {visibleNav.map((n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.end}
-              data-testid={n.id}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 text-sm border-l-2 transition-colors ${
-                  isActive
-                    ? "bg-[#141416] text-white border-primary"
-                    : "text-muted-foreground border-transparent hover:text-white hover:bg-[#141416]"
-                }`
-              }
-            >
-              <n.icon size={18} weight="regular" />
-              <span>{n.label}</span>
-            </NavLink>
-          ))}
+        <nav className="flex-1 px-3 py-6 space-y-1 overflow-y-auto">
+          {topLevel.map((n) => <NavItem key={n.to} n={n} />)}
+          {GROUPS.map((g) => {
+            const items = visibleNav.filter((n) => n.group === g);
+            if (items.length === 0) return null;
+            const isCollapsed = !!collapsed[g];
+            return (
+              <div key={g} className="pt-2">
+                <button
+                  onClick={() => setCollapsed((c) => ({ ...c, [g]: !c[g] }))}
+                  data-testid={`nav-group-${g.toLowerCase()}`}
+                  className="w-full flex items-center justify-between px-3 py-2 overline text-muted-foreground hover:text-white transition-colors"
+                >
+                  {g}
+                  <CaretDown size={12} className={`transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
+                </button>
+                {!isCollapsed && <div className="space-y-1">{items.map((n) => <NavItem key={n.to} n={n} />)}</div>}
+              </div>
+            );
+          })}
         </nav>
 
         <div className="border-t border-border p-4">
