@@ -2,7 +2,7 @@
 // Used only for UI gating (hide/disable) — the backend's require_module() is the real enforcement.
 const MODULE_KEYS = [
   "dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
-  "templates", "maintenance", "parts", "team", "audit", "reports", "security", "purchase_orders",
+  "templates", "maintenance", "parts", "team", "audit", "reports", "security", "purchase_orders", "defects",
 ];
 
 function defaultPermissions(role) {
@@ -16,15 +16,15 @@ function defaultPermissions(role) {
     case "inspector":
       return { ...readAll, vehicle_checklist: "full", templates: "full", fleet: "read" };
     case "mechanic":
-      return { ...readAll, maintenance: "full", parts: "full" };
+      return { ...readAll, maintenance: "full", parts: "full", defects: "full" };
     case "operations_manager":
-      return { ...readAll, maintenance: "full", parts: "full", fleet: "full", reports: "full" };
+      return { ...readAll, maintenance: "full", parts: "full", fleet: "full", reports: "full", defects: "full" };
     case "finance":
       return { ...readAll, parts: "full", reports: "full", purchase_orders: "full" };
     case "workshop_head":
-      return { ...readAll, maintenance: "full", purchase_orders: "read", parts: "read", fleet: "read" };
+      return { ...readAll, maintenance: "full", purchase_orders: "read", parts: "read", fleet: "read", defects: "full" };
     case "operations_staff":
-      return { ...readAll, maintenance: "full", vehicle_checklist: "full", templates: "full", parts: "full", purchase_orders: "read" };
+      return { ...readAll, maintenance: "full", vehicle_checklist: "full", templates: "full", parts: "full", purchase_orders: "read", defects: "full" };
     case "finance_staff":
       return { ...readAll, parts: "read", reports: "read", purchase_orders: "read", maintenance: "read", vehicle_checklist: "read", templates: "read" };
     default:

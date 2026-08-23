@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Warning, DownloadSimple, Trash, PencilSimple, X as XIcon, MagnifyingGlass, CaretLeft, CaretRight, Image as ImageIcon } from "@phosphor-icons/react";
+import { Warning, DownloadSimple, Trash, PencilSimple, X as XIcon, MagnifyingGlass, CaretLeft, CaretRight, Image as ImageIcon, FilePdf, ShareNetwork, Copy, EnvelopeSimple } from "@phosphor-icons/react";
 
 const SEVERITY_STYLES = {
   severe: "border-primary text-primary bg-primary/10",
@@ -31,6 +31,10 @@ export default function Incidents() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState(null);
   const [lightbox, setLightbox] = useState(null); // { photos: [], index: 0, incident: {} }
+  const [sharing, setSharing] = useState(null); // incident being shared
+  const [shareUrl, setShareUrl] = useState(null);
+  const [emailForm, setEmailForm] = useState({ to_email: "", note: "" });
+  const [sendingEmail, setSendingEmail] = useState(false);
   const lightboxRef = useRef(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- re-focus only when the open incident changes, not on every lightbox field (e.g. photo index navigation)
   useEffect(() => { if (lightbox && lightboxRef.current) lightboxRef.current.focus(); }, [lightbox?.incident?.id]);
@@ -85,6 +89,31 @@ export default function Incidents() {
     if (!window.confirm("Delete this incident?")) return;
     try { await api.delete(`/incidents/${id}`); toast.success("Deleted"); load(); }
     catch { toast.error("Failed to delete"); }
+  };
+
+  const openShare = async (incident) => {
+    setSharing(incident);
+    setShareUrl(null);
+    setEmailForm({ to_email: "", note: "" });
+    try {
+      const { data } = await api.post(`/incidents/${incident.id}/share`);
+      setShareUrl(window.location.origin + data.url);
+    } catch { toast.error("Failed to create share link"); setSharing(null); }
+  };
+
+  const sendToInsurance = async (e) => {
+    e.preventDefault();
+    if (!sharing) return;
+    setSendingEmail(true);
+    try {
+      await api.post(`/incidents/${sharing.id}/email-insurance`, emailForm);
+      toast.success(`Sent to ${emailForm.to_email}`);
+      setEmailForm({ to_email: "", note: "" });
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to send email");
+    } finally {
+      setSendingEmail(false);
+    }
   };
 
   const saveEdit = async (e) => {
@@ -196,6 +225,11 @@ export default function Incidents() {
                       )}
                     </div>
                     <div className="flex flex-col gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => openShare(i)} data-testid={`share-incident-${i.id}`} title="Share with insurance" className="text-muted-foreground hover:text-primary p-1"><ShareNetwork size={14} /></button>
+                      <button onClick={() => {
+                        const token = localStorage.getItem("token");
+                        window.open(`${API}/incidents/${i.id}/pdf?token=${encodeURIComponent(token)}`, "_blank");
+                      }} data-testid={`pdf-incident-${i.id}`} title="Download insurance PDF" className="text-muted-foreground hover:text-primary p-1"><FilePdf size={14} /></button>
                       <button onClick={() => setEditing({ ...i, driver_id: i.driver_id || "", resolution_notes: i.resolution_notes || "" })} data-testid={`edit-incident-${i.id}`} className="text-muted-foreground hover:text-primary p-1"><PencilSimple size={14} /></button>
                       <button onClick={() => del(i.id)} data-testid={`delete-incident-${i.id}`} className="text-muted-foreground hover:text-primary p-1"><Trash size={14} /></button>
                     </div>
@@ -316,6 +350,54 @@ export default function Incidents() {
           <button onClick={(e) => { e.stopPropagation(); setLightbox(l => ({ ...l, index: (l.index + 1) % l.photos.length })); }} className="absolute right-4 md:right-8 text-white hover:text-primary p-3 bg-black/50 rounded-full disabled:opacity-30" disabled={lightbox.photos.length < 2} data-testid="lightbox-next">
             <CaretRight size={28} weight="bold" />
           </button>
+        </div>
+      )}
+
+      {sharing && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6" onClick={() => setSharing(null)}>
+          <div className="bg-[#121214] border border-border max-w-lg w-full p-6" onClick={(e) => e.stopPropagation()} data-testid="share-incident-modal">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <div className="overline">Insurance & compliance</div>
+                <h3 className="font-display font-bold text-2xl mt-1">Share incident</h3>
+              </div>
+              <button onClick={() => setSharing(null)} className="text-muted-foreground hover:text-primary"><XIcon size={20} /></button>
+            </div>
+
+            <p className="text-sm text-muted-foreground mb-3">Anyone with this link can view and download this incident's report. No login required.</p>
+            {shareUrl ? (
+              <div className="flex gap-2 mb-5">
+                <input readOnly value={shareUrl} data-testid="incident-share-url" className="flex-1 bg-[#0b0b0d] border border-border px-3 py-2.5 text-xs mono focus:border-primary focus:outline-none" />
+                <button onClick={() => { navigator.clipboard.writeText(shareUrl); toast.success("Link copied"); }} data-testid="copy-incident-share" className="flex items-center gap-1 bg-primary text-primary-foreground px-3 py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">
+                  <Copy size={12} /> Copy
+                </button>
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground mb-5">Generating link…</div>
+            )}
+
+            <div className="border-t border-border pt-4">
+              <div className="overline mb-3 flex items-center gap-1"><EnvelopeSimple size={12} /> Or email it to insurance</div>
+              <form onSubmit={sendToInsurance} className="space-y-3">
+                <div>
+                  <label className="overline block mb-1">Insurance contact email</label>
+                  <input required type="email" value={emailForm.to_email} onChange={(e) => setEmailForm({ ...emailForm, to_email: e.target.value })}
+                    data-testid="insurance-email-input" placeholder="adjuster@insurer.com"
+                    className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                </div>
+                <div>
+                  <label className="overline block mb-1">Note (optional)</label>
+                  <textarea rows={2} value={emailForm.note} onChange={(e) => setEmailForm({ ...emailForm, note: e.target.value })}
+                    data-testid="insurance-note-input" placeholder="Any context for the adjuster…"
+                    className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                </div>
+                <button type="submit" disabled={sendingEmail || !shareUrl} data-testid="send-insurance-email"
+                  className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed">
+                  <EnvelopeSimple size={14} /> {sendingEmail ? "Sending…" : "Send to insurance"}
+                </button>
+              </form>
+            </div>
+          </div>
         </div>
       )}
     </div>

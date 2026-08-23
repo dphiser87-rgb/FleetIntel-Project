@@ -24,7 +24,11 @@ import Security from "@/pages/Security";
 import Drivers from "@/pages/Drivers";
 import Incidents from "@/pages/Incidents";
 import PurchaseOrders from "@/pages/PurchaseOrders";
+import DefectReporting from "@/pages/DefectReporting";
+import ComplianceDashboard from "@/pages/ComplianceDashboard";
+import BudgetVsActual from "@/pages/BudgetVsActual";
 import PublicVehicle from "@/pages/PublicVehicle";
+import PublicIncident from "@/pages/PublicIncident";
 
 const Protected = ({ children }) => {
   const { user, loading } = useAuth();
@@ -47,6 +51,7 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/public/vehicle/:token" element={<PublicVehicle />} />
+            <Route path="/public/incident/:token" element={<PublicIncident />} />
             <Route path="/" element={<Protected><CurrencyProvider><Layout /></CurrencyProvider></Protected>}>
               <Route index element={<Dashboard />} />
               <Route path="fleet" element={<Fleet />} />
@@ -62,6 +67,9 @@ function App() {
               <Route path="maintenance" element={<Maintenance />} />
               <Route path="parts" element={<Parts />} />
               <Route path="purchase-orders" element={<PurchaseOrders />} />
+              <Route path="defects" element={<DefectReporting />} />
+              <Route path="compliance" element={<ComplianceDashboard />} />
+              <Route path="budgets" element={<BudgetVsActual />} />
               <Route path="drivers" element={<Drivers />} />
               <Route path="incidents" element={<Incidents />} />
               <Route path="team" element={<Team />} />
