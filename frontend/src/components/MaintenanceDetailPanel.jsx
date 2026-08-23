@@ -2,7 +2,8 @@ import React, { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { ClockCounterClockwise } from "@phosphor-icons/react";
+import { ClockCounterClockwise, DownloadSimple } from "@phosphor-icons/react";
+import { API } from "@/lib/api";
 import QuoteBuilder from "@/components/QuoteBuilder";
 import QuoteApprovalPanel from "@/components/QuoteApprovalPanel";
 
@@ -64,9 +65,21 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
           <div className="p-8 text-sm text-muted-foreground">Loading…</div>
         ) : (
           <>
-            <div className="border-b border-border p-6 shrink-0">
-              <div className="overline">{job.vehicle_name} · {job.vehicle_plate}</div>
-              <h2 className="font-display text-2xl font-bold mt-1">{job.title}</h2>
+            <div className="border-b border-border p-6 shrink-0 flex items-start justify-between gap-4">
+              <div>
+                <div className="overline">{job.vehicle_name} · {job.vehicle_plate}</div>
+                <h2 className="font-display text-2xl font-bold mt-1">{job.title}</h2>
+              </div>
+              <button
+                onClick={() => {
+                  const token = localStorage.getItem("token");
+                  window.open(`${API}/maintenance/${jobId}/pdf?token=${encodeURIComponent(token)}`, "_blank");
+                }}
+                data-testid="download-job-pdf"
+                className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest text-muted-foreground hover:border-primary hover:text-primary shrink-0"
+              >
+                <DownloadSimple size={14} /> Download PDF
+              </button>
             </div>
             <div className="border-b border-border px-6 flex gap-4 shrink-0">
               {["overview", "quotation", "activity"].map((t) => (

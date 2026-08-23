@@ -21,6 +21,7 @@ const STAGE_COLOR = {
 export default function QuoteApprovalPanel({ quote, canDecide, onDecide }) {
   const [reason, setReason] = useState("");
   const [showReject, setShowReject] = useState(false);
+  const [lightbox, setLightbox] = useState(null); // attachment being viewed full-size
 
   const items = quote.items || [];
   const attachments = quote.attachments || [];
@@ -78,7 +79,9 @@ export default function QuoteApprovalPanel({ quote, canDecide, onDecide }) {
             {attachments.map((a) => (
               <div key={a.id} className="border border-border p-2" data-testid={`quote-attachment-${a.id}`}>
                 {a.file_type?.startsWith("image/") ? (
-                  <img src={a.data_url} alt={a.file_name} className="w-full h-20 object-cover mb-1" />
+                  <button type="button" onClick={() => setLightbox(a)} className="block w-full" data-testid={`view-attachment-${a.id}`}>
+                    <img src={a.data_url} alt={a.file_name} className="w-full h-20 object-cover mb-1 cursor-pointer hover:opacity-80 transition-opacity" />
+                  </button>
                 ) : (
                   <a href={a.data_url} download={a.file_name} className="flex items-center gap-1 text-xs text-primary hover:underline mb-1">
                     <DownloadSimple size={12} /> Open file
@@ -88,6 +91,18 @@ export default function QuoteApprovalPanel({ quote, canDecide, onDecide }) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {lightbox && (
+        <div className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-8" onClick={() => setLightbox(null)} data-testid="attachment-lightbox">
+          <div className="absolute top-6 right-6 flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+            <a href={lightbox.data_url} download={lightbox.file_name} className="flex items-center gap-1 text-sm text-white border border-white/40 px-3 py-1.5 hover:bg-white/10" data-testid="download-attachment">
+              <DownloadSimple size={14} /> Save to desktop
+            </a>
+            <button type="button" onClick={() => setLightbox(null)} className="text-white text-2xl leading-none px-2">×</button>
+          </div>
+          <img src={lightbox.data_url} alt={lightbox.file_name} className="max-w-full max-h-full" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
 

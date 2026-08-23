@@ -3626,6 +3626,116 @@ async def inspection_pdf(iid: str, request: Request):
     return StreamingResponse(buf, media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=inspection-{iid[:8]}.pdf"})
 
+@api.get("/maintenance/{mid}/pdf")
+async def maintenance_pdf(mid: str, request: Request):
+    token = request.query_params.get("token") or None
+    user = await user_from_token(token) if token else await get_current_user(request)
+    ws = user["workspace_id"]
+
+    job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=ws)
+    if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
+    v = await fetch_one("select name, plate from vehicles where id = :id", id=job["vehicle_id"]) if job.get("vehicle_id") else None
+    a = await fetch_one("select name from user_profiles where id = :id", id=job["assigned_to"]) if job.get("assigned_to") else None
+    quotes = await fetch_all("select * from quotes where workspace_id = :ws and maintenance_id = :mid order by created_at desc", ws=ws, mid=mid)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.5*inch, bottomMargin=0.5*inch, leftMargin=0.6*inch, rightMargin=0.6*inch)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=22, textColor=colors.HexColor("#0f172a"))
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=13, textColor=colors.HexColor("#334155"), spaceBefore=12, spaceAfter=6)
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontName="Helvetica", fontSize=10)
+    small = ParagraphStyle("small", parent=styles["BodyText"], fontName="Helvetica", fontSize=8, textColor=colors.grey)
+    story = []
+
+    story.append(Paragraph("FleetCost Intelligence", small))
+    story.append(Paragraph("Maintenance Job Summary", h1))
+    header_tbl = Table([
+        ["Job", job.get("title", ""), "Status", (job.get("status") or "").replace("_", " ")],
+        ["Vehicle", f"{v.get('name','?')} ({v.get('plate','?')})" if v else "—", "Priority", job.get("priority", "")],
+        ["Category", job.get("category") or "—", "Assigned to", a.get("name") if a else "Unassigned"],
+        ["Estimated cost", f"${job.get('estimated_cost', 0) or 0:,.2f}", "Actual cost", f"${job.get('actual_cost', 0) or 0:,.2f}"],
+    ], colWidths=[1.1*inch, 2.6*inch, 1.1*inch, 2.6*inch])
+    header_tbl.setStyle(TableStyle([
+        ("FONT", (0,0), (-1,-1), "Helvetica", 9),
+        ("FONT", (0,0), (0,-1), "Helvetica-Bold", 9),
+        ("FONT", (2,0), (2,-1), "Helvetica-Bold", 9),
+        ("TEXTCOLOR", (0,0), (0,-1), colors.HexColor("#64748b")),
+        ("TEXTCOLOR", (2,0), (2,-1), colors.HexColor("#64748b")),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ("LINEBELOW", (0,0), (-1,-1), 0.25, colors.HexColor("#e2e8f0")),
+    ]))
+    story.append(header_tbl)
+
+    if job.get("description"):
+        story.append(Paragraph("Description", h2))
+        story.append(Paragraph(job["description"], body))
+
+    STAGE_LABEL = {"pending_ops": "Pending — Operations", "pending_finance": "Pending — Finance", "approved": "Approved", "rejected": "Rejected"}
+    for q in quotes:
+        story.append(Paragraph(f"Quote — {STAGE_LABEL.get(q['stage'], q['stage'])}", h2))
+        story.append(Paragraph(f"Submitted by {q.get('submitted_by_name','?')} on {q['submitted_at'].strftime('%Y-%m-%d') if q.get('submitted_at') else ''}", small))
+        rows = [["Type", "Description", "Qty", "Unit cost", "VAT", "Line total"]]
+        for it in (q.get("items") or []):
+            qty, unit_cost, vat_pct = float(it.get("qty", 0) or 0), float(it.get("unit_cost", 0) or 0), float(it.get("vat_pct", 0) or 0)
+            rows.append([it.get("type", ""), it.get("description", ""), str(qty), f"${unit_cost:,.2f}", f"{vat_pct}%", f"${qty * unit_cost * (1 + vat_pct/100):,.2f}"])
+        rows.append(["", "", "", "", "Subtotal", f"${float(q.get('subtotal',0) or 0):,.2f}"])
+        rows.append(["", "", "", "", "VAT", f"${float(q.get('vat_total',0) or 0):,.2f}"])
+        rows.append(["", "", "", "", "Total", f"${float(q.get('total',0) or 0):,.2f}"])
+        t = Table(rows, colWidths=[0.8*inch, 2.6*inch, 0.5*inch, 0.9*inch, 0.7*inch, 1.0*inch])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0f172a")),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+            ("FONT", (0,0), (-1,0), "Helvetica-Bold", 9),
+            ("FONT", (0,1), (-1,-1), "Helvetica", 9),
+            ("FONT", (4,-3), (-1,-1), "Helvetica-Bold", 9),
+            ("GRID", (0,0), (-1,len(rows)-4), 0.25, colors.HexColor("#e2e8f0")),
+            ("LINEABOVE", (4,-3), (-1,-3), 0.5, colors.HexColor("#0f172a")),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("LEFTPADDING", (0,0), (-1,-1), 6), ("RIGHTPADDING", (0,0), (-1,-1), 6),
+            ("TOPPADDING", (0,0), (-1,-1), 4), ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ]))
+        story.append(t)
+
+        for decision_key, decision_label in (("ops_decision", "Operations"), ("finance_decision", "Finance")):
+            d = q.get(decision_key)
+            if d:
+                line = f"{decision_label}: <b>{d.get('decision','')}</b> by {d.get('by_name','')}" + (f" — {d['reason']}" if d.get("reason") else "")
+                story.append(Paragraph(line, small))
+
+        attachments = q.get("attachments") or []
+        if attachments:
+            story.append(Spacer(1, 6))
+            story.append(Paragraph(f"Attachments ({len(attachments)})", small))
+            for att in attachments:
+                if str(att.get("file_type", "")).startswith("image/") and att.get("data_url"):
+                    try:
+                        header, b64data = att["data_url"].split(",", 1) if "," in att["data_url"] else ("", att["data_url"])
+                        img_bytes = b64.b64decode(b64data)
+                        img_buf = io.BytesIO(img_bytes)
+                        pil_img = PILImage.open(img_buf)
+                        w, h = pil_img.size
+                        display_w = min(2.5 * inch, w)
+                        display_h = display_w * (h / w) if w else display_w
+                        img_buf.seek(0)
+                        story.append(RLImage(img_buf, width=display_w, height=display_h))
+                    except Exception as e:
+                        logger.warning(f"maintenance pdf: failed to embed attachment {att.get('id')}: {e}")
+                        story.append(Paragraph(f"— {att.get('file_name','')}", body))
+                else:
+                    story.append(Paragraph(f"— {att.get('file_name','')}", body))
+        story.append(Spacer(1, 10))
+
+    if not quotes:
+        story.append(Paragraph("No quote has been submitted for this job yet.", body))
+
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · FleetCost Intelligence", small))
+
+    doc.build(story)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=maintenance-{mid[:8]}.pdf"})
+
 # --- Seed ---
 async def _ensure_user(email: str, name: str, role: str, password: str):
     """Create a Supabase Auth user + user_profiles row if this email doesn't have a profile yet.
