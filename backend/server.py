@@ -494,6 +494,7 @@ class TileConfig(BaseModel):
 class UserPrefs(BaseModel):
     dashboard_tiles: Optional[List[TileConfig]] = None
     currency: Optional[str] = None
+    alert_sound_enabled: Optional[bool] = None
 
 class MaintenanceUpdate(BaseModel):
     status: Optional[Literal["pending", "in_progress", "completed", "cancelled"]] = None
@@ -2486,18 +2487,20 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
         if not mo: continue
         by_v.setdefault(m["vehicle_id"], {}).setdefault(mo, 0)
         by_v[m["vehicle_id"]][mo] += float(m.get("actual_cost", 0) or 0)
-    anomalies = 0
+    anomaly_vehicles = []
     for vid, months in by_v.items():
         if len(months) < 3: continue
         vals = [v for _, v in sorted(months.items())]
         latest = vals[-1]; hist = vals[:-1]
         mean = sum(hist) / len(hist)
         std = (sum((x - mean) ** 2 for x in hist) / len(hist)) ** 0.5
-        if std > 0 and latest > mean + 1.5 * std: anomalies += 1
+        if std > 0 and latest > mean + 1.5 * std: anomaly_vehicles.append({"vehicle_id": vid, "latest": latest, "mean": mean})
+    anomalies = len(anomaly_vehicles)
     overdue_checklists = await _compute_overdue_checklists(user["workspace_id"])
     recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
     recent_insp = await fetch_all(
-        "select id from inspections where workspace_id = :ws and fail_count > 0 and created_at >= :cutoff",
+        "select id, vehicle_id, inspector_name, fail_count, created_at from inspections "
+        "where workspace_id = :ws and fail_count > 0 and created_at >= :cutoff order by created_at desc",
         ws=user["workspace_id"], cutoff=recent_cutoff,
     )
     role = user.get("role")
@@ -2507,15 +2510,35 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
         pending_approvals = await fetch_all(
             "select id from quotes where workspace_id = :ws and stage = :stage", ws=user["workspace_id"], stage=actionable_stage,
         )
-    open_defect_reports = await fetch_one(
-        "select count(*) as c from defects where workspace_id = :ws and status != 'resolved'", ws=user["workspace_id"],
+    open_defect_reports_rows = await fetch_all(
+        "select * from defects where workspace_id = :ws and status != 'resolved' order by created_at desc limit 10",
+        ws=user["workspace_id"],
     )
     budget_rows = await _budget_summary(user["workspace_id"], datetime.now(timezone.utc).year)
     budget_overruns = [r for r in budget_rows if r["status"] == "over_budget"]
+    approval_jobs = []
+    if pending_approvals:
+        approval_jobs = await fetch_all(
+            "select * from quotes where workspace_id = :ws and stage = :stage order by submitted_at limit 10",
+            ws=user["workspace_id"], stage=actionable_stage,
+        )
 
     critical_count = len(critical) + len(open_incidents) + sum(1 for e in expiring if e["days"] < 0)
     warning_count = (anomalies + len(low_stock) + sum(1 for e in expiring if 0 <= e["days"] <= 30) + len(overdue_checklists)
-                      + len(recent_insp) + len(pending_approvals) + open_defect_reports["c"] + len(budget_overruns))
+                      + len(recent_insp) + len(pending_approvals) + len(open_defect_reports_rows) + len(budget_overruns))
+
+    # Enrich vehicle-scoped items with a display name — every popover row below leans on this.
+    v_ids = list({x.get("vehicle_id") for x in critical + open_incidents + open_defect_reports_rows + pending + recent_insp
+                  if x.get("vehicle_id")} | {a["vehicle_id"] for a in anomaly_vehicles})
+    vmap = {v["id"]: v for v in await fetch_all(
+        "select id, name, plate from vehicles where workspace_id = :ws and id = any(:ids)", ws=user["workspace_id"], ids=v_ids,
+    )} if v_ids else {}
+    def vlabel(vid):
+        v = vmap.get(vid)
+        return f"{v['name']} · {v['plate']}" if v else "Unassigned"
+
+    money = lambda n: f"${float(n or 0):,.2f}"
+
     return {
         "critical": critical_count,
         "warnings": warning_count,
@@ -2530,13 +2553,70 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
             "overdue_checklists": len(overdue_checklists),
             "recent_defects": len(recent_insp),
             "approvals": len(pending_approvals),
-            "open_defect_reports": open_defect_reports["c"],
+            "open_defect_reports": len(open_defect_reports_rows),
             "budget_overruns": len(budget_overruns),
         },
         "details": {
             "expiring_drivers": expiring[:10],
             "critical_jobs": [{"id": m["id"], "title": m["title"], "vehicle_id": m["vehicle_id"]} for m in critical[:10]],
             "open_incidents": [{"id": i["id"], "description": i["description"][:60], "severity": i["severity"], "vehicle_id": i["vehicle_id"]} for i in open_incidents[:10]],
+            "maintenance_critical": [
+                {"title": m["title"], "subtitle": vlabel(m.get("vehicle_id")), "right": (m.get("priority") or "").title(), "tone": "critical"}
+                for m in critical[:5]
+            ],
+            "open_incidents_popover": [
+                {"title": f"{(i.get('kind') or '').title()} · {i.get('severity')}", "subtitle": vlabel(i.get("vehicle_id")),
+                 "right": (i.get("severity") or "").title(), "tone": "critical" if i.get("severity") == "severe" else "warning"}
+                for i in open_incidents[:5]
+            ],
+            "overdue_checklists": [
+                {"title": f"{oc['target_name']} — {oc['template_name']}",
+                 "subtitle": "Never inspected" if oc.get("last_completed_at") is None else f"{oc.get('days_overdue', 0)}d overdue",
+                 "right": "Missed" if oc.get("last_completed_at") is None else "Overdue",
+                 "tone": "critical" if oc.get("last_completed_at") is None else "warning"}
+                for oc in overdue_checklists[:5]
+            ],
+            "low_stock_parts": [
+                {"title": f"{p['name']} — {p.get('stock', 0)} unit(s)", "subtitle": f"Min stock: {p.get('reorder_point', 0)} · {p.get('supplier') or '—'}",
+                 "right": "Out of stock" if not p.get("stock") else "Reorder now", "tone": "critical" if not p.get("stock") else "warning"}
+                for p in low_stock[:5]
+            ],
+            "approvals": [
+                {"title": f"Quote — {money(q.get('total'))}", "subtitle": q.get("submitted_by_name") or "—",
+                 "right": "Waiting", "tone": "warning"}
+                for q in approval_jobs[:5]
+            ],
+            "open_defect_reports": [
+                {"title": f"{vlabel(d.get('vehicle_id'))} — {(d.get('category') or '').title()}",
+                 "subtitle": f"{(d.get('severity') or '').title()}" + (f" · {d['location']}" if d.get("location") else ""),
+                 "right": (d.get("severity") or "").title(), "tone": "critical" if d.get("severity") == "critical" else "warning"}
+                for d in open_defect_reports_rows[:5]
+            ],
+            "pending_jobs": [
+                {"title": m["title"], "subtitle": f"{vlabel(m.get('vehicle_id'))} · {m.get('category') or 'general'}",
+                 "right": (m.get("status") or "").replace("_", " ").title(), "tone": "info"}
+                for m in pending[:5]
+            ],
+            "recent_defects": [
+                {"title": f"{vlabel(i.get('vehicle_id'))} — {i.get('fail_count', 0)} failed item(s)",
+                 "subtitle": f"Inspected by {i.get('inspector_name') or '—'}", "right": "New", "tone": "warning"}
+                for i in recent_insp[:5]
+            ],
+            "cost_anomalies": [
+                {"title": vlabel(a["vehicle_id"]), "subtitle": f"{money(a['latest'])} vs {money(a['mean'])} avg",
+                 "right": "Spike", "tone": "warning"}
+                for a in anomaly_vehicles[:5]
+            ],
+            "budget_overruns": [
+                {"title": f"{r['category'].title()} — {money(r['actual'])}", "subtitle": f"{money(r['variance'])} over budget",
+                 "right": "Over Budget", "tone": "critical"}
+                for r in budget_overruns[:5]
+            ],
+            "license_expiring": [
+                {"title": e["name"], "subtitle": f"Expires {e['expiry']}",
+                 "right": "Expired" if e["days"] < 0 else f"{e['days']}d", "tone": "critical" if e["days"] < 0 else "warning"}
+                for e in expiring[:5]
+            ],
         }
     }
 
