@@ -1,10 +1,29 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Trash, FloppyDisk, ClipboardText, Car, Package, Truck } from "@phosphor-icons/react";
+import { Plus, Trash, FloppyDisk, ClipboardText, Car, Package, Truck, Image as ImageIcon } from "@phosphor-icons/react";
+import CategorizedItemsEditor from "@/components/CategorizedItemsEditor";
+import ToggleSwitch from "@/components/ToggleSwitch";
 
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+const SECTION_ICON_COLORS = ["#34C759", "#3B82F6", "#A855F7", "#14B8A6", "#FF3B30", "#0891b2", "#F97316"];
+const sectionIconColor = (id) => SECTION_ICON_COLORS[[...(id || "")].reduce((s, c) => s + c.charCodeAt(0), 0) % SECTION_ICON_COLORS.length];
+
+// Colourful default section icon guessed from its title's keywords — purely cosmetic, replaceable
+// per-section by uploading a real image, same as item icons.
+const SECTION_ICON_KEYWORDS = [
+  [/coupl|hitch/, "🔗"], [/tyre|tire|wheel/, "🛞"], [/brake/, "🛑"], [/fluid/, "💧"],
+  [/light/, "💡"], [/safety/, "🦺"], [/document/, "📄"], [/exterior/, "🚛"],
+  [/interior|cab/, "🪑"], [/engine/, "🔧"], [/batter/, "🔋"], [/fuel/, "⛽"],
+  [/door/, "🚪"], [/mirror/, "🪞"], [/load/, "📦"], [/reflect/, "🔆"],
+];
+const guessSectionIcon = (title) => {
+  const t = (title || "").toLowerCase();
+  const match = SECTION_ICON_KEYWORDS.find(([re]) => re.test(t));
+  return match ? match[1] : "📋";
+};
 
 const SECTIONS = [
   { key: "details", label: "Details" },
@@ -86,9 +105,27 @@ export default function TemplateBuilder() {
   const removeItem = (sid, iid) => setSections(sections.map(s => s.id === sid ? { ...s, items: s.items.filter(i => i.id !== iid) } : s));
   const updateItem = (sid, iid, field, value) => setSections(sections.map(s => s.id === sid ? { ...s, items: s.items.map(i => i.id === iid ? { ...i, [field]: value } : i) } : s));
 
+  const iconUploadRef = useRef(null);
+  const iconUploadTarget = useRef(null);
+  const openIconUpload = (sid, iid) => { iconUploadTarget.current = { scope: "item", sid, iid }; iconUploadRef.current?.click(); };
+  const openSectionIconUpload = (sid) => { iconUploadTarget.current = { scope: "section", sid }; iconUploadRef.current?.click(); };
+  const onIconFileChange = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !iconUploadTarget.current) return;
+    const target = iconUploadTarget.current;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (target.scope === "section") updateSection(target.sid, "icon", reader.result);
+      else updateItem(target.sid, target.iid, "icon", reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const toggleTarget = (tid) => setTargetIds(ids => ids.includes(tid) ? ids.filter(x => x !== tid) : [...ids, tid]);
 
   const itemCount = sections.reduce((s, sec) => s + (sec.items?.length || 0), 0);
+  const usesCategories = sections.some((s) => (s.items || []).some((i) => i.category));
 
   const save = async () => {
     if (!name.trim()) return toast.error("Name is required");
@@ -121,6 +158,7 @@ export default function TemplateBuilder() {
 
   return (
     <div className="noise-bg min-h-screen" data-testid="builder-page">
+      <input ref={iconUploadRef} type="file" accept="image/*" className="hidden" onChange={onIconFileChange} />
       <div className="border-b border-border px-8 py-6 flex items-center gap-4">
         <Link to="/templates" className="w-12 h-12 shrink-0 bg-primary/10 border border-primary/40 flex items-center justify-center" data-testid="builder-back">
           <ClipboardText size={22} weight="bold" className="text-primary" />
@@ -249,7 +287,16 @@ export default function TemplateBuilder() {
             </>
           )}
 
-          {activeSection === "items" && (
+          {activeSection === "items" && usesCategories && (
+            <>
+              <div className="overline font-bold">Items</div>
+              <div className="border-b border-border my-2" />
+              <div className="text-sm text-muted-foreground mb-6">Adjust the item list according to your needs. The order of the list is displayed accordingly in the app.</div>
+              <CategorizedItemsEditor sections={sections} onChange={setSections} />
+            </>
+          )}
+
+          {activeSection === "items" && !usesCategories && (
             <>
               <div className="overline font-bold">Items</div>
               <div className="border-b border-border my-2" />
@@ -260,6 +307,12 @@ export default function TemplateBuilder() {
                   <div key={sec.id} className="border border-border">
                     <div className="border-b border-border p-3 flex items-center gap-3">
                       <div className="mono text-xs w-6 text-muted-foreground">{String(si + 1).padStart(2, "0")}</div>
+                      <button type="button" onClick={() => openSectionIconUpload(sec.id)} data-testid={`section-icon-${si}`}
+                        className="w-9 h-9 shrink-0 flex items-center justify-center text-lg rounded-full opacity-90 hover:opacity-100 transition-opacity"
+                        style={{ background: sec.icon?.startsWith("data:") ? "transparent" : `${sectionIconColor(sec.id)}26` }}
+                        title="Click to upload an image">
+                        {sec.icon?.startsWith("data:") ? <img src={sec.icon} alt="" className="w-9 h-9 object-cover rounded-full" /> : (sec.icon || guessSectionIcon(sec.title))}
+                      </button>
                       <input value={sec.title} onChange={(e) => updateSection(sec.id, "title", e.target.value)}
                         data-testid={`section-title-${si}`}
                         className="flex-1 bg-transparent border-b border-transparent focus:border-primary focus:outline-none text-base font-display font-bold py-1" />
@@ -268,6 +321,9 @@ export default function TemplateBuilder() {
                     <div className="p-3 space-y-2">
                       {sec.items.map((it, ii) => (
                         <div key={it.id} className="flex items-center gap-2 border border-border/50 p-2 flex-wrap" data-testid={`item-${si}-${ii}`}>
+                          <button type="button" onClick={() => openIconUpload(sec.id, it.id)} className="w-8 h-8 shrink-0 flex items-center justify-center text-lg" title="Click to upload an image">
+                            {it.icon?.startsWith("data:") ? <img src={it.icon} alt="" className="w-8 h-8 object-cover rounded-full" /> : (it.icon || <ImageIcon size={16} className="text-muted-foreground" />)}
+                          </button>
                           <input value={it.label} onChange={(e) => updateItem(sec.id, it.id, "label", e.target.value)}
                             className="flex-1 min-w-[140px] px-2 py-1.5 text-sm bg-[#0b0b0d] border border-border focus:border-primary focus:outline-none" />
                           <select value={it.type} onChange={(e) => updateItem(sec.id, it.id, "type", e.target.value)}
@@ -277,10 +333,10 @@ export default function TemplateBuilder() {
                             <option value="text">Text</option>
                             <option value="number">Number</option>
                           </select>
-                          <label className="text-xs flex items-center gap-1 text-muted-foreground">
-                            <input type="checkbox" checked={it.required} onChange={(e) => updateItem(sec.id, it.id, "required", e.target.checked)} />
+                          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             Required
-                          </label>
+                            <ToggleSwitch on={it.required} onClick={() => updateItem(sec.id, it.id, "required", !it.required)} testId={`required-${si}-${ii}`} />
+                          </span>
                           <label className="text-xs flex items-center gap-1 text-muted-foreground" data-testid={`photo-required-${si}-${ii}`}>
                             <input type="checkbox" checked={!!it.photo_required} onChange={(e) => updateItem(sec.id, it.id, "photo_required", e.target.checked)} />
                             Photo required on defect

@@ -259,11 +259,14 @@ class ChecklistItem(BaseModel):
     type: Literal["boolean", "rating", "text", "number"] = "boolean"
     required: bool = True
     photo_required: bool = False
+    category: Optional[Literal["interior", "exterior", "trailer"]] = None
+    icon: Optional[str] = None  # emoji string, or a data: URL once a real image is uploaded
 
 class ChecklistSection(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     title: str
     items: List[ChecklistItem] = []
+    icon: Optional[str] = None  # emoji string, or a data: URL once a real image is uploaded
 
 class TemplateIn(BaseModel):
     name: str
