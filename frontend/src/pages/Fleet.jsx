@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Truck, ClipboardText, Camera, UploadSimple, Heartbeat, FolderSimple } from "@phosphor-icons/react";
+import { Plus, Truck, ClipboardText, UploadSimple, Heartbeat, FolderSimple, PencilSimple } from "@phosphor-icons/react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import GroupManager from "@/components/GroupManager";
+import VehiclePanel from "@/components/VehiclePanel";
 
 const StatusBadge = ({ status }) => {
   const map = {
@@ -32,9 +33,8 @@ export default function Fleet() {
   const [groups, setGroups] = useState([]);
   const [groupFilter, setGroupFilter] = useState("all");
   const [showGroups, setShowGroups] = useState(false);
-  const [showAdd, setShowAdd] = useState(false);
+  const [panelVehicle, setPanelVehicle] = useState(null); // vehicle object | "new" | null
   const [sortBy, setSortBy] = useState("health");
-  const [form, setForm] = useState({ name: "", plate: "", make: "", model: "", year: 2023, type: "truck", odometer: 0, fuel_cost_per_km: 0.35, group_id: "" });
 
   const loadGroups = () => api.get("/vehicle-groups").then(r => setGroups(r.data || []));
   const load = async () => {
@@ -43,6 +43,7 @@ export default function Fleet() {
       api.get("/analytics/fleet-health").catch(() => ({ data: [] })),
     ]);
     setVehicles(v.data); setHealth(h.data || []);
+    setPanelVehicle((prev) => (prev && prev !== "new" ? v.data.find((x) => x.id === prev.id) || null : prev));
   };
   useEffect(() => { load(); loadGroups(); }, []);
 
@@ -58,19 +59,6 @@ export default function Fleet() {
       return sa - sb; // worst first
     });
   }, [vehicles, healthMap, sortBy, groupFilter]);
-
-  const save = async (e) => {
-    e.preventDefault();
-    try {
-      await api.post("/vehicles", { ...form, year: Number(form.year), odometer: Number(form.odometer), fuel_cost_per_km: Number(form.fuel_cost_per_km), group_id: form.group_id || null });
-      toast.success("Vehicle added");
-      setShowAdd(false);
-      setForm({ name: "", plate: "", make: "", model: "", year: 2023, type: "truck", odometer: 0, fuel_cost_per_km: 0.35, group_id: "" });
-      load();
-    } catch { toast.error("Failed to add vehicle"); }
-  };
-
-  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   return (
     <div className="noise-bg min-h-screen">
@@ -91,7 +79,7 @@ export default function Fleet() {
         <button onClick={() => setShowGroups(true)} data-testid="manage-vehicle-groups-btn" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
           <FolderSimple size={14} /> Manage groups
         </button>
-        <button data-testid="add-vehicle-btn" onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
+        <button data-testid="add-vehicle-btn" onClick={() => setPanelVehicle("new")} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
           <Plus size={14} weight="bold" /> Add vehicle
         </button>
         <label className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary cursor-pointer" data-testid="import-vehicles-csv">
@@ -113,57 +101,6 @@ export default function Fleet() {
         </a>
         </div>
       </header>
-
-      {showAdd && (
-        <form onSubmit={save} className="border-b border-border bg-[#0d0d0f] p-6 grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="add-vehicle-form">
-          {[
-            ["name", "Name", "text"], ["plate", "Plate", "text"], ["make", "Make", "text"], ["model", "Model", "text"],
-            ["year", "Year", "number"], ["odometer", "Odometer (km)", "number"], ["fuel_cost_per_km", "Fuel $/km", "number"],
-          ].map(([k, l, t]) => (
-            <div key={k}>
-              <label className="overline block mb-1">{l}</label>
-              <div className="flex gap-1">
-                <input required type={t} value={form[k]} onChange={set(k)} data-testid={`v-${k}`}
-                  className="flex-1 w-full bg-[#121214] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-                {(k === "plate" || k === "odometer") && (
-                  <label className="cursor-pointer border border-border px-2 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-primary flex items-center" data-testid={`ocr-${k}`} title={`Scan ${k} from photo`}>
-                    <Camera size={14} />
-                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
-                      const file = e.target.files?.[0]; if (!file) return;
-                      const reader = new FileReader();
-                      reader.onloadend = async () => {
-                        try {
-                          const { data } = await api.post("/ocr", { image_base64: reader.result, mode: k === "plate" ? "plate" : "odometer" });
-                          setForm(f => ({ ...f, [k]: data.value }));
-                          toast.success(`Scanned: ${data.value}`);
-                        } catch { toast.error("OCR failed"); }
-                      };
-                      reader.readAsDataURL(file);
-                    }} />
-                  </label>
-                )}
-              </div>
-            </div>
-          ))}
-          <div>
-            <label className="overline block mb-1">Type</label>
-            <select value={form.type} onChange={set("type")} className="w-full bg-[#121214] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
-              {["truck","van","car","bus","trailer"].map(t => <option key={t}>{t}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="overline block mb-1">Group</label>
-            <select value={form.group_id} onChange={set("group_id")} data-testid="v-group" className="w-full bg-[#121214] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
-              <option value="">No group</option>
-              {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-            </select>
-          </div>
-          <div className="col-span-2 lg:col-span-4 flex gap-2">
-            <button type="submit" data-testid="save-vehicle" className="bg-primary px-4 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">Save vehicle</button>
-            <button type="button" onClick={() => setShowAdd(false)} className="border border-border px-4 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">Cancel</button>
-          </div>
-        </form>
-      )}
 
       <div className="p-8">
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6" data-testid="vehicle-grid">
@@ -218,6 +155,9 @@ export default function Fleet() {
                   <Link to={`/inspection/${v.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary px-3 py-2 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground transition-colors" data-testid={`inspect-${v.plate}`}>
                     <ClipboardText size={12} /> Inspect
                   </Link>
+                  <button onClick={() => setPanelVehicle(v)} data-testid={`edit-vehicle-${v.plate}`} className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors" title="Edit vehicle">
+                    <PencilSimple size={12} />
+                  </button>
                 </div>
               </div>
             </div>
@@ -242,6 +182,9 @@ export default function Fleet() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <VehiclePanel vehicle={panelVehicle} groups={groups}
+        onClose={() => setPanelVehicle(null)} onSaved={() => { setPanelVehicle(null); load(); }} />
     </div>
   );
 }
