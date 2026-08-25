@@ -16,6 +16,15 @@ const withinPeriod = (iso, period) => {
   return (Date.now() - new Date(iso).getTime()) / 86400000 <= days;
 };
 
+const formatDuration = (startedAt, completedAt) => {
+  if (!startedAt || !completedAt) return "—";
+  const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+  if (!(ms > 0)) return "—";
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return "< 1 minute";
+  return `${mins} minute${mins !== 1 ? "s" : ""}`;
+};
+
 export default function VehicleChecklist() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -103,7 +112,7 @@ export default function VehicleChecklist() {
           {vehicles.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
         </select>
         <select value={driverFilter} onChange={(e) => setDriverFilter(e.target.value)} data-testid="filter-driver" className="bg-[#0b0b0d] border border-border px-2 py-1.5 text-xs uppercase tracking-widest focus:border-primary focus:outline-none">
-          <option value="all">All drivers</option>
+          <option value="all">All completed by</option>
           {drivers.map((d) => <option key={d} value={d}>{d}</option>)}
         </select>
         <select value={period} onChange={(e) => setPeriod(e.target.value)} data-testid="filter-period" className="bg-[#0b0b0d] border border-border px-2 py-1.5 text-xs uppercase tracking-widest focus:border-primary focus:outline-none">
@@ -121,13 +130,15 @@ export default function VehicleChecklist() {
               <thead className="border-b border-border">
                 <tr className="text-left overline">
                   <SortTh label="Vehicle" sortableKey="target_name" testid="sort-vehicle" />
-                  <th className="p-2">Driver</th>
+                  <th className="p-2">Completed By</th>
                   <th className="p-2">Type</th>
                   <th className="p-2">Template</th>
                   <SortTh label="Completed" sortableKey="completed_at" testid="sort-completed" />
                   <th className="p-2">Location</th>
-                  <th className="p-2">Result</th>
+                  <th className="p-2">Roadworthy</th>
                   <SortTh label="Defects" sortableKey="fail_count" testid="sort-defects" />
+                  <th className="p-2">Notes</th>
+                  <th className="p-2">Duration</th>
                 </tr>
               </thead>
               <tbody>
@@ -141,14 +152,16 @@ export default function VehicleChecklist() {
                     <td className="p-2 text-xs text-muted-foreground truncate max-w-[180px]">{r.address || (r.latitude != null ? `${r.latitude.toFixed(3)}, ${r.longitude.toFixed(3)}` : "—")}</td>
                     <td className="p-2">
                       {r.fail_count > 0
-                        ? <span className="text-primary text-xs uppercase tracking-widest font-bold">Defects Found</span>
-                        : <span className="text-[#34C759] text-xs uppercase tracking-widest font-bold">Pass</span>}
+                        ? <span className="text-destructive text-xs uppercase tracking-widest font-bold px-2 py-0.5 border border-destructive/40 bg-destructive/10">No</span>
+                        : <span className="text-[#34C759] text-xs uppercase tracking-widest font-bold px-2 py-0.5 border border-[#34C759]/40 bg-[#34C759]/10">Yes</span>}
                     </td>
-                    <td className="p-2 mono">{r.fail_count || 0}</td>
+                    <td className={`p-2 mono font-bold ${r.fail_count > 0 ? "text-destructive" : "text-[#34C759]"}`}>{r.fail_count || 0}</td>
+                    <td className="p-2 text-xs text-muted-foreground truncate max-w-[220px]" title={r.notes || ""}>{r.notes || "—"}</td>
+                    <td className="p-2 text-xs text-muted-foreground">{formatDuration(r.started_at, r.completed_at)}</td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={8} className="p-12 text-center text-muted-foreground">
+                  <tr><td colSpan={10} className="p-12 text-center text-muted-foreground">
                     <ClipboardText size={32} weight="thin" className="mx-auto mb-3" />
                     No checklist submissions match these filters.
                   </td></tr>

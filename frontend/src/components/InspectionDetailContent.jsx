@@ -21,7 +21,7 @@ export default function InspectionDetailContent({ id, onActioned }) {
         data.template_snapshot ? Promise.resolve({ data: data.template_snapshot }) : api.get(`/templates/${data.template_id}`),
         data.vehicle_id ? api.get(`/vehicles/${data.vehicle_id}`) : api.get(`/assets/${data.asset_id}`),
         api.get("/maintenance"),
-        data.vehicle_id ? api.get("/users").catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
+        api.get("/users").catch(() => ({ data: [] })),
       ]);
       setTemplate(t.data);
       setTarget(v.data);
@@ -36,7 +36,8 @@ export default function InspectionDetailContent({ id, onActioned }) {
   const assignToMaintenance = async () => {
     try {
       await api.post("/maintenance", {
-        vehicle_id: insp.vehicle_id, inspection_id: insp.id,
+        ...(insp.vehicle_id ? { vehicle_id: insp.vehicle_id, odometer: insp.odometer || null } : { asset_id: insp.asset_id }),
+        inspection_id: insp.id,
         title: alloc.title, description: alloc.description, priority: alloc.priority,
         assigned_to: alloc.assigned_to || null,
       });
@@ -114,13 +115,11 @@ export default function InspectionDetailContent({ id, onActioned }) {
                   className="bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
                   {["low", "medium", "high", "critical"].map((p) => <option key={p}>{p}</option>)}
                 </select>
-                {isVehicle && (
-                  <select value={alloc.assigned_to} onChange={(e) => setAlloc({ ...alloc, assigned_to: e.target.value })}
-                    className="bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none md:col-span-2">
-                    <option value="">Unassigned mechanic</option>
-                    {mechanics.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
-                )}
+                <select value={alloc.assigned_to} onChange={(e) => setAlloc({ ...alloc, assigned_to: e.target.value })}
+                  className="bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none md:col-span-2">
+                  <option value="">Unassigned mechanic</option>
+                  {mechanics.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
               </div>
               <div className="flex gap-2">
                 <button onClick={assignToMaintenance} data-testid="confirm-assign-maintenance" className="bg-primary px-4 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">Create job</button>

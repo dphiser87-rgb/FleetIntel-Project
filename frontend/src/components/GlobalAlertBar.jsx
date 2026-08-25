@@ -151,7 +151,17 @@ export default function GlobalAlertBar() {
     api.put("/users/me/prefs", { alert_sound_enabled: next }).catch(() => {});
   };
 
-  if (!alerts || alerts.total === 0 || hidden) return null;
+  if (!alerts || alerts.total === 0) return null;
+
+  if (hidden) {
+    return (
+      <div className="bg-[#0b0b0d] border-b border-border px-8 py-1.5 flex items-center justify-end" data-testid="live-alerts-bar-collapsed">
+        <button onClick={() => setHidden(false)} data-testid="show-alerts-btn" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary">
+          <Warning size={12} /> Show alerts ({alerts.total})
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-[#0b0b0d] border-b border-border px-8 py-3 flex items-center gap-6 flex-wrap relative" data-testid="live-alerts-bar">

@@ -372,6 +372,7 @@ class InspectionIn(BaseModel):
     notes: Optional[str] = ""
     odometer: Optional[float] = None
     completed_at: Optional[str] = None
+    started_at: Optional[str] = None  # captured client-side when the checklist form was opened
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     address: Optional[str] = None
@@ -380,7 +381,8 @@ class InspectionIn(BaseModel):
     client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
 
 class MaintenanceIn(BaseModel):
-    vehicle_id: str
+    vehicle_id: Optional[str] = None
+    asset_id: Optional[str] = None  # exactly one of vehicle_id/asset_id required — enforced in create_maintenance
     inspection_id: Optional[str] = None
     driver_id: Optional[str] = None
     title: str
@@ -392,6 +394,9 @@ class MaintenanceIn(BaseModel):
     assigned_to: Optional[str] = None  # mechanic user id
     parts_cost: float = 0
     labor_cost: float = 0
+    odometer: Optional[float] = None  # required for vehicle jobs only (assets have no odometer) —
+    # enforced in create_maintenance, not here, so an inspection-driven allocation that already
+    # captured it can pass it straight through
 
 class QuoteItem(BaseModel):
     type: Literal["part", "labour", "other"] = "part"
@@ -504,7 +509,8 @@ class MaintenanceUpdate(BaseModel):
     actual_cost: Optional[float] = None
     parts_cost: Optional[float] = None
     labor_cost: Optional[float] = None
-    downtime_hours: Optional[float] = None
+    # downtime_hours is intentionally not settable here — it's derived from started_at/completed_at
+    # in update_maintenance below, not manual entry (was previously a trust-the-user free-text field).
     assigned_to: Optional[str] = None
     notes: Optional[str] = None
 
@@ -1279,17 +1285,19 @@ async def create_inspection(i: InspectionIn, user: dict = Depends(get_current_us
     location_status = i.location_status or "not_attempted"
     if location_status == "not_attempted" and i.latitude is not None:
         location_status = "captured"
+    completed_at_val = _parse_datetime(i.completed_at) if i.completed_at else datetime.now(timezone.utc)
+    started_at_val = _parse_datetime(i.started_at) if i.started_at else completed_at_val
     await execute(
         "insert into inspections (id, workspace_id, template_id, vehicle_id, asset_id, answers, notes, "
-        "odometer, inspector_id, inspector_name, fail_count, status, completed_at, latitude, longitude, "
+        "odometer, inspector_id, inspector_name, fail_count, status, completed_at, started_at, latitude, longitude, "
         "address, location_status, signature, client_submission_id, template_snapshot) values (:id, :ws, :template_id, "
         ":vehicle_id, :asset_id, :answers ::jsonb, :notes, :odometer, :inspector_id, :inspector_name, "
-        ":fail_count, 'completed', :completed_at, :latitude, :longitude, :address, :location_status, :signature, "
+        ":fail_count, 'completed', :completed_at, :started_at, :latitude, :longitude, :address, :location_status, :signature, "
         ":client_submission_id, :template_snapshot ::jsonb)",
         id=iid, ws=ws, template_id=i.template_id, vehicle_id=i.vehicle_id,
         asset_id=i.asset_id, answers=json_dumps(answers), notes=i.notes, odometer=i.odometer,
         inspector_id=user["id"], inspector_name=user["name"], fail_count=fails,
-        completed_at=_parse_datetime(i.completed_at) if i.completed_at else datetime.now(timezone.utc),
+        completed_at=completed_at_val, started_at=started_at_val,
         latitude=i.latitude, longitude=i.longitude, address=address, location_status=location_status, signature=i.signature,
         client_submission_id=i.client_submission_id, template_snapshot=json_dumps(snapshot) if snapshot else None,
     )
@@ -1307,30 +1315,50 @@ MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downti
 # --- Maintenance jobs ---
 @api.get("/maintenance")
 async def list_maintenance(user: dict = Depends(get_current_user)):
+    ws = user["workspace_id"]
     if user.get("role") == "mechanic":
-        return await fetch_all(
+        rows = await fetch_all(
             "select * from maintenance where workspace_id = :ws and assigned_to = :uid order by created_at desc",
-            ws=user["workspace_id"], uid=user["id"],
+            ws=ws, uid=user["id"],
         )
-    return await fetch_all(
-        "select * from maintenance where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
-    )
+    else:
+        rows = await fetch_all("select * from maintenance where workspace_id = :ws order by created_at desc", ws=ws)
+    aids = list({r["asset_id"] for r in rows if r.get("asset_id")})
+    amap = {a["id"]: a for a in (await fetch_all("select id, name, identifier from assets where workspace_id = :ws and id = any(:ids)", ws=ws, ids=aids) if aids else [])}
+    for r in rows:
+        if r.get("asset_id") and r["asset_id"] in amap:
+            r["asset_name"] = amap[r["asset_id"]]["name"]
+            r["asset_identifier"] = amap[r["asset_id"]]["identifier"]
+    return rows
 
 @api.post("/maintenance")
 async def create_maintenance(m: MaintenanceIn, user: dict = Depends(require_module("maintenance", "full"))):
+    if bool(m.vehicle_id) == bool(m.asset_id):
+        raise HTTPException(status_code=400, detail="Provide exactly one of vehicle_id or asset_id")
+    if m.vehicle_id and not (m.odometer and m.odometer > 0):
+        raise HTTPException(status_code=400, detail="Vehicle odometer reading is required to create a job")
     mid = str(uuid.uuid4())
     await execute(
-        "insert into maintenance (id, workspace_id, vehicle_id, inspection_id, driver_id, title, "
+        "insert into maintenance (id, workspace_id, vehicle_id, asset_id, inspection_id, driver_id, title, "
         "description, priority, category, estimated_cost, estimated_hours, assigned_to, parts_cost, labor_cost, "
-        "status, created_by, actual_cost, downtime_hours) values (:id, :ws, :vehicle_id, :inspection_id, "
-        ":driver_id, :title, :description, :priority, :category, :estimated_cost, :estimated_hours, :assigned_to, "
-        ":parts_cost, :labor_cost, 'pending', :created_by, 0, 0)",
+        "odometer, status, created_by, actual_cost, downtime_hours) values (:id, :ws, :vehicle_id, :asset_id, "
+        ":inspection_id, :driver_id, :title, :description, :priority, :category, :estimated_cost, :estimated_hours, "
+        ":assigned_to, :parts_cost, :labor_cost, :odometer, 'pending', :created_by, 0, 0)",
         id=mid, ws=user["workspace_id"], created_by=user["id"], **m.model_dump(),
     )
-    await execute(
-        "update vehicles set status = 'maintenance' where id = :vid and workspace_id = :ws",
-        vid=m.vehicle_id, ws=user["workspace_id"],
-    )
+    if m.vehicle_id:
+        # greatest(): never let a job's odometer reading regress the vehicle's stored value — e.g.
+        # someone logging a job retroactively for older work shouldn't overwrite a more recent reading.
+        await execute(
+            "update vehicles set status = 'maintenance', odometer = greatest(coalesce(odometer, 0), :odo) "
+            "where id = :vid and workspace_id = :ws",
+            odo=m.odometer, vid=m.vehicle_id, ws=user["workspace_id"],
+        )
+    else:
+        await execute(
+            "update assets set status = 'maintenance' where id = :aid and workspace_id = :ws",
+            aid=m.asset_id, ws=user["workspace_id"],
+        )
     doc = await fetch_one("select * from maintenance where id = :id", id=mid)
     await log_event(user, "maintenance.created", "maintenance", mid, {"title": doc["title"], "priority": doc["priority"]})
     return doc
@@ -1342,10 +1370,11 @@ async def get_maintenance(mid: str, user: dict = Depends(get_current_user)):
     if user.get("role") == "mechanic" and m.get("assigned_to") != user["id"]:
         raise HTTPException(status_code=404, detail="Not found")
     v = await fetch_one("select name, plate from vehicles where id = :id", id=m["vehicle_id"]) if m.get("vehicle_id") else None
+    ast = await fetch_one("select name, identifier from assets where id = :id", id=m["asset_id"]) if m.get("asset_id") else None
     d = await fetch_one("select name from drivers where id = :id", id=m["driver_id"]) if m.get("driver_id") else None
     a = await fetch_one("select name from user_profiles where id = :id", id=m["assigned_to"]) if m.get("assigned_to") else None
-    m["vehicle_name"] = v.get("name") if v else None
-    m["vehicle_plate"] = v.get("plate") if v else None
+    m["vehicle_name"] = v.get("name") if v else (ast.get("name") if ast else None)
+    m["vehicle_plate"] = v.get("plate") if v else (ast.get("identifier") if ast else None)
     m["driver_name"] = d.get("name") if d else None
     m["assigned_to_name"] = a.get("name") if a else None
     return m
@@ -1356,14 +1385,27 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Not found")
     if upd.get("status") == "completed":
-        upd["completed_at"] = datetime.now(timezone.utc)
+        completed_at = datetime.now(timezone.utc)
+        upd["completed_at"] = completed_at
         pc = upd.get("parts_cost", job.get("parts_cost", 0))
         lc = upd.get("labor_cost", job.get("labor_cost", 0))
         upd["actual_cost"] = upd.get("actual_cost") or (pc + lc)
-        await execute(
-            "update vehicles set status = 'active' where id = :vid and workspace_id = :ws",
-            vid=job["vehicle_id"], ws=user["workspace_id"],
-        )
+        # Downtime is real elapsed time, not a trust-the-user number: the vehicle was down from
+        # whenever work actually started (started_at) — or, if a job skipped "in_progress" and went
+        # straight to completed, from whenever the job was first opened (created_at) — until now.
+        started = job.get("started_at") or job.get("created_at")
+        if started:
+            upd["downtime_hours"] = round((completed_at - started).total_seconds() / 3600, 1)
+        if job.get("vehicle_id"):
+            await execute(
+                "update vehicles set status = 'active' where id = :vid and workspace_id = :ws",
+                vid=job["vehicle_id"], ws=user["workspace_id"],
+            )
+        else:
+            await execute(
+                "update assets set status = 'active' where id = :aid and workspace_id = :ws",
+                aid=job["asset_id"], ws=user["workspace_id"],
+            )
     if upd.get("status") == "in_progress":
         upd["started_at"] = datetime.now(timezone.utc)
     await update_row("maintenance", mid, user["workspace_id"], upd, MAINTENANCE_COLS)

@@ -33,13 +33,15 @@ export default function Maintenance() {
   const [jobs, setJobs] = useState([]);
   const [quotesByJob, setQuotesByJob] = useState({}); // job_id -> latest quote (for the approval filter)
   const [vehicles, setVehicles] = useState([]);
+  const [assets, setAssets] = useState([]);
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null);
   const [detailJobId, setDetailJobId] = useState(searchParams.get("job") || null);
   const [awaitingApproval, setAwaitingApproval] = useState(searchParams.get("approvals") === "1");
-  const [complete, setComplete] = useState({ actual_cost: "", parts_cost: "", labor_cost: "", downtime_hours: "" });
+  const [complete, setComplete] = useState({ actual_cost: "", parts_cost: "", labor_cost: "" });
   const [showNew, setShowNew] = useState(false);
-  const [newJob, setNewJob] = useState({ vehicle_id: "", title: "", priority: "medium", category: "general" });
+  const [newJobTargetType, setNewJobTargetType] = useState("vehicle"); // vehicle | asset
+  const [newJob, setNewJob] = useState({ vehicle_id: "", asset_id: "", title: "", priority: "medium", category: "general", odometer: "" });
   const [view, setView] = useState("board"); // board | table | audit
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [sortKey, setSortKey] = useState("created_at");
@@ -53,6 +55,7 @@ export default function Maintenance() {
   useEffect(() => {
     load();
     api.get("/vehicles").then(r => setVehicles(r.data));
+    api.get("/assets").then(r => setAssets(r.data)).catch(() => {});
     api.get("/users").then(r => setUsers(r.data));
   }, []);
 
@@ -75,16 +78,20 @@ export default function Maintenance() {
   const createJob = async (e) => {
     e.preventDefault();
     try {
-      await api.post("/maintenance", newJob);
+      const payload = newJobTargetType === "vehicle"
+        ? { vehicle_id: newJob.vehicle_id, title: newJob.title, priority: newJob.priority, category: newJob.category, odometer: Number(newJob.odometer) || 0 }
+        : { asset_id: newJob.asset_id, title: newJob.title, priority: newJob.priority, category: newJob.category };
+      await api.post("/maintenance", payload);
       toast.success("Job created");
       setShowNew(false);
-      setNewJob({ vehicle_id: "", title: "", priority: "medium", category: "general" });
+      setNewJob({ vehicle_id: "", asset_id: "", title: "", priority: "medium", category: "general", odometer: "" });
+      setNewJobTargetType("vehicle");
       load();
-    } catch { toast.error("Failed to create job"); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to create job"); }
   };
 
-  const vName = (id) => vehicles.find(v => v.id === id)?.name || "—";
-  const vPlate = (id) => vehicles.find(v => v.id === id)?.plate || "";
+  const vName = (job) => job.vehicle_id ? (vehicles.find(v => v.id === job.vehicle_id)?.name || "—") : (job.asset_name || "—");
+  const vPlate = (job) => job.vehicle_id ? (vehicles.find(v => v.id === job.vehicle_id)?.plate || "") : (job.asset_identifier || "");
   const tName = (id) => users.find(u => u.id === id)?.name || "Unassigned";
 
   const move = async (job, status) => {
@@ -132,12 +139,11 @@ export default function Maintenance() {
       parts_cost: Number(complete.parts_cost) || selected.parts_cost || 0,
       labor_cost: Number(complete.labor_cost) || selected.labor_cost || 0,
       actual_cost: Number(complete.actual_cost) || null,
-      downtime_hours: Number(complete.downtime_hours) || selected.estimated_hours || 0,
     };
     await api.patch(`/maintenance/${selected.id}`, patch);
     toast.success("Job completed");
     setSelected(null);
-    setComplete({ actual_cost: "", parts_cost: "", labor_cost: "", downtime_hours: "" });
+    setComplete({ actual_cost: "", parts_cost: "", labor_cost: "" });
     load();
   };
 
@@ -224,7 +230,7 @@ export default function Maintenance() {
                         <div className="font-display font-bold text-sm leading-tight">{job.title}</div>
                         <span className={`text-[10px] mono uppercase tracking-widest px-1.5 py-0.5 border ${PRIORITY_COLOR[job.priority] || ""}`}>{job.priority}</span>
                       </div>
-                      <div className="text-xs text-muted-foreground mb-1">{vName(job.vehicle_id)} · <span className="mono">{vPlate(job.vehicle_id)}</span></div>
+                      <div className="text-xs text-muted-foreground mb-1">{vName(job)} · <span className="mono">{vPlate(job)}</span></div>
                       {job.category && <div className="text-[10px] mono uppercase tracking-widest text-[#3B82F6] mb-2">{job.category}</div>}
                       <div className="flex items-center justify-between text-xs">
                         <div className="mono">{money(job.actual_cost || job.estimated_cost)}</div>
@@ -283,7 +289,7 @@ export default function Maintenance() {
                     )}
                     <td className="px-4 py-3">
                       <div className="font-semibold">{job.title}</div>
-                      <div className="text-xs text-muted-foreground">{vName(job.vehicle_id)} · {vPlate(job.vehicle_id)}</div>
+                      <div className="text-xs text-muted-foreground">{vName(job)} · {vPlate(job)}</div>
                     </td>
                     <td className="px-4 py-3"><span className={`text-[10px] mono uppercase tracking-widest px-1.5 py-0.5 border ${PRIORITY_COLOR[job.priority] || ""}`}>{job.priority}</span></td>
                     <td className="px-4 py-3 text-xs uppercase tracking-widest text-muted-foreground">{job.status.replace("_", " ")}</td>
@@ -328,7 +334,6 @@ export default function Maintenance() {
                 ["parts_cost", "Actual parts cost"],
                 ["labor_cost", "Actual labor cost"],
                 ["actual_cost", "Total actual cost (auto if empty)"],
-                ["downtime_hours", "Downtime (hours)"],
               ].map(([k, l]) => (
                 <div key={k}>
                   <label className="overline block mb-1">{l}</label>
@@ -337,6 +342,7 @@ export default function Maintenance() {
                     className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
                 </div>
               ))}
+              <div className="text-xs text-muted-foreground">Downtime is calculated automatically from when the job started to now — no manual entry needed.</div>
               <button onClick={finishJob} data-testid="finish-job-btn" className="w-full bg-primary text-primary-foreground py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">
                 Mark as completed
               </button>
@@ -353,13 +359,40 @@ export default function Maintenance() {
               <h3 className="font-display font-bold text-xl mt-1">Create job</h3>
             </div>
             <form onSubmit={createJob} className="p-4 space-y-3">
-              <div>
-                <label className="overline block mb-1">Vehicle</label>
-                <select required value={newJob.vehicle_id} onChange={(e) => setNewJob({ ...newJob, vehicle_id: e.target.value })} data-testid="new-job-vehicle" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
-                  <option value="">Select vehicle…</option>
-                  {vehicles.map(v => <option key={v.id} value={v.id}>{v.name} · {v.plate}</option>)}
-                </select>
+              <div className="flex gap-2" data-testid="new-job-target-type">
+                {[["vehicle", "Vehicle"], ["asset", "Asset"]].map(([v, l]) => (
+                  <button key={v} type="button" onClick={() => setNewJobTargetType(v)}
+                    className={`flex-1 py-2 text-xs uppercase tracking-widest border ${newJobTargetType === v ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:border-primary hover:text-primary"}`}>
+                    {l}
+                  </button>
+                ))}
               </div>
+              {newJobTargetType === "vehicle" ? (
+                <>
+                  <div>
+                    <label className="overline block mb-1">Vehicle</label>
+                    <select required value={newJob.vehicle_id} onChange={(e) => {
+                      const v = vehicles.find(x => x.id === e.target.value);
+                      setNewJob({ ...newJob, vehicle_id: e.target.value, odometer: v?.odometer || newJob.odometer });
+                    }} data-testid="new-job-vehicle" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                      <option value="">Select vehicle…</option>
+                      {vehicles.map(v => <option key={v.id} value={v.id}>{v.name} · {v.plate}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="overline block mb-1">Current odometer (km) *</label>
+                    <input required type="number" min="1" value={newJob.odometer} onChange={(e) => setNewJob({ ...newJob, odometer: e.target.value })} data-testid="new-job-odometer" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="overline block mb-1">Asset</label>
+                  <select required value={newJob.asset_id} onChange={(e) => setNewJob({ ...newJob, asset_id: e.target.value })} data-testid="new-job-asset" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                    <option value="">Select asset…</option>
+                    {assets.map(a => <option key={a.id} value={a.id}>{a.name} · {a.identifier}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="overline block mb-1">Title</label>
                 <input required value={newJob.title} onChange={(e) => setNewJob({ ...newJob, title: e.target.value })} data-testid="new-job-title" className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
