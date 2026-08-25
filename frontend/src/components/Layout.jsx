@@ -86,6 +86,27 @@ export default function Layout() {
           </div>
         </div>
 
+        <div className="border-b border-border p-4">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-9 h-9 bg-primary/20 border border-primary/40 flex items-center justify-center mono text-xs text-primary">
+              {user?.name?.charAt(0)?.toUpperCase() || "U"}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm truncate" data-testid="user-name">{user?.name}</div>
+              <div className="overline truncate" data-testid="user-role">{user?.role}</div>
+            </div>
+            <NotificationCenter />
+          </div>
+          <button
+            data-testid="logout-btn"
+            onClick={handleLogout}
+            className="w-full flex items-center gap-2 justify-center border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors"
+          >
+            <SignOut size={14} />
+            Sign out
+          </button>
+        </div>
+
         <nav className="flex-1 px-3 py-6 space-y-1 overflow-y-auto">
           {topLevel.map((n) => <NavItem key={n.to} n={n} />)}
           {GROUPS.map((g) => {
@@ -107,27 +128,6 @@ export default function Layout() {
             );
           })}
         </nav>
-
-        <div className="border-t border-border p-4">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 bg-primary/20 border border-primary/40 flex items-center justify-center mono text-xs text-primary">
-              {user?.name?.charAt(0)?.toUpperCase() || "U"}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm truncate" data-testid="user-name">{user?.name}</div>
-              <div className="overline truncate" data-testid="user-role">{user?.role}</div>
-            </div>
-            <NotificationCenter />
-          </div>
-          <button
-            data-testid="logout-btn"
-            onClick={handleLogout}
-            className="w-full flex items-center gap-2 justify-center border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors"
-          >
-            <SignOut size={14} />
-            Sign out
-          </button>
-        </div>
       </aside>
 
       <main className="flex-1 min-w-0 overflow-x-hidden">

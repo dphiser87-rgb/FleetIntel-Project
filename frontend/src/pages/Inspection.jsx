@@ -28,6 +28,7 @@ export default function Inspection() {
   const [signature, setSignature] = useState(null);
   const [location, setLocation] = useState({ status: "idle", latitude: null, longitude: null });
   const clientSubmissionId = React.useRef(crypto.randomUUID()).current;
+  const startedAt = React.useRef(new Date().toISOString()).current;
 
   const captureLocation = () => {
     if (!navigator.geolocation) { setLocation({ status: "unavailable" }); return; }
@@ -48,7 +49,7 @@ export default function Inspection() {
       setTemplates(matching);
       if (matching[0]) setTemplateId(matching[0].id);
     });
-    if (isVehicle) api.get("/users").then(r => setMechanics(r.data.filter(u => u.role === "mechanic")));
+    api.get("/users").then(r => setMechanics(r.data.filter(u => u.role === "mechanic")));
   }, [vehicleId, targetType, isVehicle]);
 
   useEffect(() => {
@@ -100,6 +101,7 @@ export default function Inspection() {
       notes,
       answers: Object.entries(answers).map(([item_id, a]) => ({ item_id, value: String(a.value || ""), note: a.note || "", photo: a.photo || null, defect_type: a.defect_type || null })),
       completed_at: new Date().toISOString(),
+      started_at: startedAt,
       signature,
       latitude: location.latitude,
       longitude: location.longitude,
@@ -110,7 +112,7 @@ export default function Inspection() {
       const { data } = await api.post("/inspections", payload);
       setInspection(data);
       toast.success(`Inspection complete · ${failCount} failed items`);
-      if (isVehicle && failCount > 0) {
+      if (failCount > 0) {
         setAlloc({ ...alloc, title: `Repair from inspection · ${vehicle?.name}`, description: `${failCount} failed items on ${new Date().toLocaleDateString()}` });
         setStep("allocate");
       } else {
@@ -122,7 +124,7 @@ export default function Inspection() {
   const allocate = async () => {
     try {
       await api.post("/maintenance", {
-        vehicle_id: vehicleId,
+        ...(isVehicle ? { vehicle_id: vehicleId, odometer: Number(odometer) || null } : { asset_id: vehicleId }),
         inspection_id: inspection?.id,
         title: alloc.title,
         description: alloc.description,
@@ -322,7 +324,7 @@ export default function Inspection() {
           <Wrench size={20} className="text-primary shrink-0 mt-0.5" />
           <div>
             <div className="text-sm">Inspection identified <span className="text-primary font-bold">{failCount} failed item{failCount !== 1 && "s"}</span></div>
-            <div className="text-xs text-muted-foreground mt-1">Allocate this vehicle to a maintenance job now.</div>
+            <div className="text-xs text-muted-foreground mt-1">Allocate this {isVehicle ? "vehicle" : "asset"} to a maintenance job now.</div>
           </div>
         </div>
         <div className="bg-[#121214] border border-border p-6 space-y-4">
