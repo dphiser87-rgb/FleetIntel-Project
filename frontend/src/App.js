@@ -15,6 +15,8 @@ import VehicleChecklist from "@/pages/VehicleChecklist";
 import Inspection from "@/pages/Inspection";
 import Assets from "@/pages/Assets";
 import Maintenance from "@/pages/Maintenance";
+import MaintenanceSchedules from "@/pages/MaintenanceSchedules";
+import MaintenanceReports from "@/pages/MaintenanceReports";
 import Reports from "@/pages/Reports";
 import Parts from "@/pages/Parts";
 import InspectionReport from "@/pages/InspectionReport";
@@ -65,6 +67,8 @@ function App() {
               <Route path="inspections/:id" element={<InspectionReport />} />
               <Route path="assets" element={<Assets />} />
               <Route path="maintenance" element={<Maintenance />} />
+              <Route path="maintenance-schedules" element={<MaintenanceSchedules />} />
+              <Route path="maintenance-reports" element={<MaintenanceReports />} />
               <Route path="parts" element={<Parts />} />
               <Route path="purchase-orders" element={<PurchaseOrders />} />
               <Route path="defects" element={<DefectReporting />} />

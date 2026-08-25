@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 import auth_supabase
 from db import fetch_one, fetch_all, execute, execute_many, update_row, json_dumps
+from maintenance_scheduling import Interval, compute_due_state, classify_status, reset_schedule_on_completion
 
 # Deterministic (not random) so it's the same value across every environment without needing to
 # persist/share it — was the literal string "default" before workspaces.id became a real uuid column.
@@ -385,6 +386,7 @@ class MaintenanceIn(BaseModel):
     asset_id: Optional[str] = None  # exactly one of vehicle_id/asset_id required — enforced in create_maintenance
     inspection_id: Optional[str] = None
     driver_id: Optional[str] = None
+    schedule_id: Optional[str] = None  # set when this job was generated from a maintenance schedule
     title: str
     description: Optional[str] = ""
     priority: Literal["low", "medium", "high", "critical"] = "medium"
@@ -397,6 +399,7 @@ class MaintenanceIn(BaseModel):
     odometer: Optional[float] = None  # required for vehicle jobs only (assets have no odometer) —
     # enforced in create_maintenance, not here, so an inspection-driven allocation that already
     # captured it can pass it straight through
+    engine_hours: Optional[float] = None
 
 class QuoteItem(BaseModel):
     type: Literal["part", "labour", "other"] = "part"
@@ -513,6 +516,15 @@ class MaintenanceUpdate(BaseModel):
     # in update_maintenance below, not manual entry (was previously a trust-the-user free-text field).
     assigned_to: Optional[str] = None
     notes: Optional[str] = None
+    # Completion meter readings (Feature 6) — feed the schedule's automatic reset when this job is
+    # linked to a maintenance_schedule; harmless no-op for a plain one-off job.
+    odometer: Optional[float] = None
+    engine_hours: Optional[float] = None
+    workshop_name: Optional[str] = None
+    technician: Optional[str] = None
+    vendor: Optional[str] = None
+    external_cost: Optional[float] = None
+    completion_documents: Optional[List[dict]] = None
 
 # --- App ---
 app = FastAPI(title="FleetCost Intelligence API")
@@ -562,6 +574,7 @@ async def register(req: RegisterReq):
             "insert into workspaces (id, name, owner_email) values (:id, :name, :owner_email)",
             id=workspace_id, name=req.workspace_name or f"{req.name}'s Fleet", owner_email=email,
         )
+        await _seed_default_taxonomies(workspace_id)
 
     try:
         supa_user = await auth_supabase.admin_create_user(email, req.password)
@@ -1310,7 +1323,9 @@ async def get_inspection(iid: str, user: dict = Depends(get_current_user)):
     return x
 
 MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downtime_hours",
-                     "assigned_to", "notes", "completed_at", "started_at", "category"}
+                     "assigned_to", "notes", "completed_at", "started_at", "category",
+                     "odometer", "engine_hours", "workshop_name", "technician", "vendor",
+                     "external_cost", "completion_documents"}
 
 # --- Maintenance jobs ---
 @api.get("/maintenance")
@@ -1338,13 +1353,39 @@ async def create_maintenance(m: MaintenanceIn, user: dict = Depends(require_modu
     if m.vehicle_id and not (m.odometer and m.odometer > 0):
         raise HTTPException(status_code=400, detail="Vehicle odometer reading is required to create a job")
     mid = str(uuid.uuid4())
+    due_at_creation = None
+    if m.schedule_id:
+        try:
+            due_row = await fetch_one(
+                "select next_due_date, base_date, base_odometer, base_hours from schedule_due_state "
+                "where schedule_id = :sid and vehicle_id is not distinct from :vid and asset_id is not distinct from :aid",
+                sid=m.schedule_id, vid=m.vehicle_id, aid=m.asset_id,
+            )
+            if due_row:
+                intervals = [Interval(r["trigger_type"], float(r["every_n"]), r["unit"])
+                             for r in await fetch_all("select * from schedule_intervals where schedule_id = :sid", sid=m.schedule_id)]
+                if m.vehicle_id:
+                    v = await fetch_one("select odometer, engine_hours from vehicles where id = :id", id=m.vehicle_id)
+                    ref_odo, ref_hrs = (v or {}).get("odometer"), (v or {}).get("engine_hours")
+                else:
+                    a = await fetch_one("select engine_hours from assets where id = :id", id=m.asset_id)
+                    ref_odo, ref_hrs = None, (a or {}).get("engine_hours")
+                due = compute_due_state(intervals, base_date=due_row["base_date"], base_odometer=due_row["base_odometer"],
+                                         base_hours=due_row["base_hours"], ref_date=datetime.now(timezone.utc).date(),
+                                         ref_odometer=ref_odo, ref_hours=ref_hrs)
+                due_at_creation = due.next_due_date
+        except ValueError:
+            # A distance/engine-hours trigger with no baseline reading yet (e.g. engine_hours never
+            # recorded) can't be evaluated — the Compliance report just won't have a due-date snapshot
+            # for this job, which is a missing data point, not a reason to block job creation.
+            due_at_creation = None
     await execute(
-        "insert into maintenance (id, workspace_id, vehicle_id, asset_id, inspection_id, driver_id, title, "
+        "insert into maintenance (id, workspace_id, vehicle_id, asset_id, inspection_id, driver_id, schedule_id, title, "
         "description, priority, category, estimated_cost, estimated_hours, assigned_to, parts_cost, labor_cost, "
-        "odometer, status, created_by, actual_cost, downtime_hours) values (:id, :ws, :vehicle_id, :asset_id, "
-        ":inspection_id, :driver_id, :title, :description, :priority, :category, :estimated_cost, :estimated_hours, "
-        ":assigned_to, :parts_cost, :labor_cost, :odometer, 'pending', :created_by, 0, 0)",
-        id=mid, ws=user["workspace_id"], created_by=user["id"], **m.model_dump(),
+        "odometer, engine_hours, status, created_by, actual_cost, downtime_hours, due_at_creation) values (:id, :ws, :vehicle_id, :asset_id, "
+        ":inspection_id, :driver_id, :schedule_id, :title, :description, :priority, :category, :estimated_cost, :estimated_hours, "
+        ":assigned_to, :parts_cost, :labor_cost, :odometer, :engine_hours, 'pending', :created_by, 0, 0, :due_at_creation)",
+        id=mid, ws=user["workspace_id"], created_by=user["id"], due_at_creation=due_at_creation, **m.model_dump(),
     )
     if m.vehicle_id:
         # greatest(): never let a job's odometer reading regress the vehicle's stored value — e.g.
@@ -1389,23 +1430,40 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
         upd["completed_at"] = completed_at
         pc = upd.get("parts_cost", job.get("parts_cost", 0))
         lc = upd.get("labor_cost", job.get("labor_cost", 0))
-        upd["actual_cost"] = upd.get("actual_cost") or (pc + lc)
+        ec = upd.get("external_cost", job.get("external_cost", 0)) or 0
+        upd["actual_cost"] = upd.get("actual_cost") or (pc + lc + ec)
         # Downtime is real elapsed time, not a trust-the-user number: the vehicle was down from
         # whenever work actually started (started_at) — or, if a job skipped "in_progress" and went
         # straight to completed, from whenever the job was first opened (created_at) — until now.
         started = job.get("started_at") or job.get("created_at")
         if started:
             upd["downtime_hours"] = round((completed_at - started).total_seconds() / 3600, 1)
+        completion_odo = upd.get("odometer", job.get("odometer"))
+        completion_hrs = upd.get("engine_hours", job.get("engine_hours"))
         if job.get("vehicle_id"):
             await execute(
-                "update vehicles set status = 'active' where id = :vid and workspace_id = :ws",
-                vid=job["vehicle_id"], ws=user["workspace_id"],
+                "update vehicles set status = 'active', odometer = greatest(coalesce(odometer, 0), :odo), "
+                "engine_hours = greatest(coalesce(engine_hours, 0), :hrs) where id = :vid and workspace_id = :ws",
+                odo=completion_odo or 0, hrs=completion_hrs or 0, vid=job["vehicle_id"], ws=user["workspace_id"],
             )
         else:
             await execute(
-                "update assets set status = 'active' where id = :aid and workspace_id = :ws",
-                aid=job["asset_id"], ws=user["workspace_id"],
+                "update assets set status = 'active', engine_hours = greatest(coalesce(engine_hours, 0), :hrs) "
+                "where id = :aid and workspace_id = :ws",
+                hrs=completion_hrs or 0, aid=job["asset_id"], ws=user["workspace_id"],
             )
+        if job.get("schedule_id"):
+            await _reset_schedule_due_state(
+                user["workspace_id"], job["schedule_id"], job.get("vehicle_id"), job.get("asset_id"),
+                completed_at.date(), completion_odo, completion_hrs,
+            )
+        # Feature 7 cascade: completing the job auto-resolves any defect(s) that were converted into
+        # it — Defect + Work Order + Maintenance Event close together as one action, not three.
+        linked_defects = await fetch_all("select id from defects where maintenance_id = :mid and workspace_id = :ws", mid=mid, ws=user["workspace_id"])
+        for ld in linked_defects:
+            await update_row("defects", ld["id"], user["workspace_id"],
+                              {"status": "resolved", "resolved_at": completed_at, "resolution_notes": f"Resolved via maintenance job: {job.get('title', '')}"},
+                              DEFECT_COLS)
     if upd.get("status") == "in_progress":
         upd["started_at"] = datetime.now(timezone.utc)
     await update_row("maintenance", mid, user["workspace_id"], upd, MAINTENANCE_COLS)
@@ -1417,6 +1475,408 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
 async def delete_maintenance(mid: str, user: dict = Depends(require_module("maintenance", "full"))):
     await execute("delete from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     return {"ok": True}
+
+# --- Maintenance Scheduling & Service Reminder module ---
+# Roles: Fleet Manager (manager, operations_manager) create/edit/close schedules — require_module
+# "maintenance" full, same as the existing one-off maintenance jobs. Workshop Manager (workshop_head,
+# mechanic) completes maintenance — already gated the same way on PATCH /maintenance. Executive
+# (finance, finance_staff) gets read-only via require_module(..., "read"). Driver has no dedicated
+# RBAC role in this system — "view upcoming maintenance only" maps to the existing read-level grant
+# every authenticated role already has on this module via PROFILE_PRESETS.
+
+DEFAULT_ASSET_TYPES = [
+    ("Cars", "Vehicles"), ("Vans", "Vehicles"), ("Bakkies", "Vehicles"), ("SUVs", "Vehicles"),
+    ("Rigid Trucks", "Trucks"), ("Tautliners", "Trucks"), ("Tankers", "Trucks"), ("Refrigerated Trucks", "Trucks"),
+    ("Flatbeds", "Trailers"), ("Side Tippers", "Trailers"), ("Lowbeds", "Trailers"), ("Skeletals", "Trailers"),
+    ("Excavators", "Equipment"), ("Loaders", "Equipment"), ("Dumpers", "Equipment"), ("Forklifts", "Equipment"), ("Cranes", "Equipment"),
+    ("Generators", "Other Assets"), ("Compressors", "Other Assets"), ("Pumps", "Other Assets"), ("Fixed Plant", "Other Assets"),
+]
+DEFAULT_MAINTENANCE_TYPES = [
+    ("Minor Service", "Services"), ("Major Service", "Services"), ("OEM Service", "Services"), ("Annual Service", "Services"),
+    ("Tyre Rotation", "Tyres"), ("Tyre Replacement", "Tyres"), ("Wheel Alignment", "Tyres"), ("Wheel Balancing", "Tyres"),
+    ("Oil Change", "Engine"), ("Filter Change", "Engine"), ("Coolant Change", "Engine"), ("Belt Replacement", "Engine"),
+    ("Brake Inspection", "Safety"), ("Brake Pad Replacement", "Safety"), ("Fire Extinguisher Inspection", "Safety"),
+    ("Roadworthy Inspection", "Compliance"), ("License Renewal", "Compliance"), ("COF Renewal", "Compliance"), ("Safety Certification", "Compliance"),
+    # Referenced by DEFAULT_MAINTENANCE_TEMPLATES' Truck/Trailer/Equipment templates below but not
+    # covered by the preset categories above — seeded as "Custom" per Feature 2's "unlimited
+    # user-defined maintenance categories", same as anything a user types in themselves.
+    ("Differential Service", "Custom"), ("Suspension Inspection", "Custom"), ("Wheel Bearing Inspection", "Custom"),
+    ("Structural Inspection", "Custom"), ("Hydraulic Service", "Custom"), ("Engine Service", "Custom"), ("Safety Inspection", "Custom"),
+]
+
+# Feature 8 — default templates. Interval numbers aren't specified in the PRD (only item names are),
+# so these are reasonable fleet-industry defaults; every one is editable/deletable after seeding.
+DEFAULT_MAINTENANCE_TEMPLATES = {
+    "Light Vehicle Template": [
+        ("Minor Service", "time", 3, "months"), ("Major Service", "time", 12, "months"),
+        ("Tyre Rotation", "distance", 10000, "km"), ("Brake Inspection", "time", 6, "months"),
+    ],
+    "Truck Template": [
+        ("Minor Service", "time", 2, "months"), ("Major Service", "time", 6, "months"),
+        ("Wheel Alignment", "distance", 20000, "km"), ("Brake Inspection", "time", 3, "months"),
+        ("Differential Service", "distance", 40000, "km"),
+    ],
+    "Trailer Template": [
+        ("Suspension Inspection", "time", 3, "months"), ("Wheel Bearing Inspection", "distance", 20000, "km"),
+        ("Structural Inspection", "time", 12, "months"),
+    ],
+    "Yellow Equipment Template": [
+        ("Hydraulic Service", "time", 6, "months"), ("Engine Service", "engine_hours", 500, "hours"),
+        ("Safety Inspection", "time", 1, "months"),
+    ],
+}
+
+async def _seed_default_taxonomies(ws: str):
+    """Runs once per new workspace (called from register()) — seed data only, every row stays a
+    normal editable/deletable asset_types|maintenance_types row afterwards (Features 1's "extensible,
+    not a closed list" requirement)."""
+    for name, category in DEFAULT_ASSET_TYPES:
+        await execute(
+            "insert into asset_types (id, workspace_id, name, category) values (:id, :ws, :name, :cat) "
+            "on conflict (workspace_id, name) do nothing",
+            id=str(uuid.uuid4()), ws=ws, name=name, cat=category,
+        )
+    for name, category in DEFAULT_MAINTENANCE_TYPES:
+        await execute(
+            "insert into maintenance_types (id, workspace_id, name, category) values (:id, :ws, :name, :cat) "
+            "on conflict (workspace_id, name) do nothing",
+            id=str(uuid.uuid4()), ws=ws, name=name, cat=category,
+        )
+    mtype_ids = {r["name"]: r["id"] for r in await fetch_all("select id, name from maintenance_types where workspace_id = :ws", ws=ws)}
+    for tname, items in DEFAULT_MAINTENANCE_TEMPLATES.items():
+        existing = await fetch_one("select id from maintenance_templates where workspace_id = :ws and name = :name", ws=ws, name=tname)
+        if existing:
+            continue
+        tid = str(uuid.uuid4())
+        await execute("insert into maintenance_templates (id, workspace_id, name) values (:id, :ws, :name)", id=tid, ws=ws, name=tname)
+        for mtype_name, trigger_type, every_n, unit in items:
+            await execute(
+                "insert into maintenance_template_items (id, template_id, maintenance_type_id, trigger_type, every_n, unit) "
+                "values (:id, :tid, :mtid, :tt, :n, :u)",
+                id=str(uuid.uuid4()), tid=tid, mtid=mtype_ids[mtype_name], tt=trigger_type, n=every_n, u=unit,
+            )
+
+class AssetTypeIn(BaseModel):
+    name: str
+    category: str
+
+class MaintenanceTypeIn(BaseModel):
+    name: str
+    category: str
+
+@api.get("/asset-types")
+async def list_asset_types(user: dict = Depends(require_module("maintenance", "read"))):
+    return await fetch_all(
+        "select * from asset_types where workspace_id = :ws and active = true order by category, name",
+        ws=user["workspace_id"],
+    )
+
+@api.post("/asset-types")
+async def create_asset_type(t: AssetTypeIn, user: dict = Depends(require_module("maintenance", "full"))):
+    tid = str(uuid.uuid4())
+    await execute(
+        "insert into asset_types (id, workspace_id, name, category) values (:id, :ws, :name, :cat)",
+        id=tid, ws=user["workspace_id"], name=t.name, cat=t.category,
+    )
+    return await fetch_one("select * from asset_types where id = :id", id=tid)
+
+@api.get("/maintenance-types")
+async def list_maintenance_types(user: dict = Depends(require_module("maintenance", "read"))):
+    return await fetch_all(
+        "select * from maintenance_types where workspace_id = :ws and active = true order by category, name",
+        ws=user["workspace_id"],
+    )
+
+@api.post("/maintenance-types")
+async def create_maintenance_type(t: MaintenanceTypeIn, user: dict = Depends(require_module("maintenance", "full"))):
+    tid = str(uuid.uuid4())
+    await execute(
+        "insert into maintenance_types (id, workspace_id, name, category) values (:id, :ws, :name, :cat)",
+        id=tid, ws=user["workspace_id"], name=t.name, cat=t.category,
+    )
+    return await fetch_one("select * from maintenance_types where id = :id", id=tid)
+
+
+class ScheduleIntervalIn(BaseModel):
+    trigger_type: Literal["time", "distance", "engine_hours"]
+    every_n: float
+    unit: str
+
+class ScheduleReminderIn(BaseModel):
+    trigger_type: Literal["time", "distance", "engine_hours"]
+    threshold_n: float
+
+class MaintenanceScheduleIn(BaseModel):
+    name: str
+    maintenance_type_id: str
+    asset_type_id: Optional[str] = None
+    description: Optional[str] = ""
+    priority: Literal["low", "medium", "high", "critical"] = "medium"
+    vehicle_ids: List[str] = []
+    asset_ids: List[str] = []
+    intervals: List[ScheduleIntervalIn] = []
+    reminders: List[ScheduleReminderIn] = []
+
+class MaintenanceScheduleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[Literal["low", "medium", "high", "critical"]] = None
+    status: Optional[Literal["active", "paused"]] = None
+    vehicle_ids: Optional[List[str]] = None
+    asset_ids: Optional[List[str]] = None
+    intervals: Optional[List[ScheduleIntervalIn]] = None
+    reminders: Optional[List[ScheduleReminderIn]] = None
+
+
+async def _ensure_due_state_rows(ws: str, schedule_id: str):
+    """Creates a schedule_due_state baseline row (base_date/base_odometer/base_hours = right now,
+    i.e. the schedule's own creation point) for any assigned asset that doesn't have one yet. A row
+    that already exists is left untouched — only completion resets a baseline (Feature 6)."""
+    sched = await fetch_one("select created_at from maintenance_schedules where id = :id and workspace_id = :ws", id=schedule_id, ws=ws)
+    if not sched:
+        return
+    today = datetime.now(timezone.utc).date()
+    assigned = await fetch_all("select * from schedule_assets where schedule_id = :sid", sid=schedule_id)
+    for sa in assigned:
+        existing = await fetch_one(
+            "select id from schedule_due_state where schedule_id = :sid "
+            "and vehicle_id is not distinct from :vid and asset_id is not distinct from :aid",
+            sid=schedule_id, vid=sa["vehicle_id"], aid=sa["asset_id"],
+        )
+        if existing:
+            continue
+        if sa["vehicle_id"]:
+            v = await fetch_one("select odometer, engine_hours from vehicles where id = :id", id=sa["vehicle_id"])
+            base_odo, base_hrs = (v or {}).get("odometer"), (v or {}).get("engine_hours")
+        else:
+            a = await fetch_one("select engine_hours from assets where id = :id", id=sa["asset_id"])
+            base_odo, base_hrs = None, (a or {}).get("engine_hours")
+        await execute(
+            "insert into schedule_due_state (id, schedule_id, vehicle_id, asset_id, base_date, base_odometer, base_hours) "
+            "values (:id, :sid, :vid, :aid, :bd, :bo, :bh)",
+            id=str(uuid.uuid4()), sid=schedule_id, vid=sa["vehicle_id"], aid=sa["asset_id"],
+            bd=today, bo=base_odo, bh=base_hrs,
+        )
+
+async def _reset_schedule_due_state(ws: str, schedule_id: str, vehicle_id: Optional[str], asset_id: Optional[str],
+                                     completion_date, completion_odometer, completion_hours):
+    """Feature 6: on completion, every trigger on the schedule re-bases off THIS completion event,
+    independently per trigger — implemented by simply overwriting the stored baseline; each read
+    (compute_due_state) re-derives next-due per trigger from that new baseline on its own."""
+    await execute(
+        "update schedule_due_state set base_date = :bd, base_odometer = :bo, base_hours = :bh, "
+        "last_fired_thresholds = '[]'::jsonb, updated_at = now() "
+        "where schedule_id = :sid and vehicle_id is not distinct from :vid and asset_id is not distinct from :aid",
+        bd=completion_date, bo=completion_odometer, bh=completion_hours,
+        sid=schedule_id, vid=vehicle_id, aid=asset_id,
+    )
+
+async def _replace_schedule_children(schedule_id: str, ws: str, vehicle_ids: List[str], asset_ids: List[str],
+                                      intervals: List[ScheduleIntervalIn], reminders: List[ScheduleReminderIn]):
+    await execute("delete from schedule_assets where schedule_id = :sid", sid=schedule_id)
+    await execute("delete from schedule_intervals where schedule_id = :sid", sid=schedule_id)
+    await execute("delete from schedule_reminders where schedule_id = :sid", sid=schedule_id)
+    for vid in vehicle_ids:
+        await execute("insert into schedule_assets (id, schedule_id, vehicle_id) values (:id, :sid, :vid)",
+                      id=str(uuid.uuid4()), sid=schedule_id, vid=vid)
+    for aid in asset_ids:
+        await execute("insert into schedule_assets (id, schedule_id, asset_id) values (:id, :sid, :aid)",
+                      id=str(uuid.uuid4()), sid=schedule_id, aid=aid)
+    for iv in intervals:
+        await execute(
+            "insert into schedule_intervals (id, schedule_id, trigger_type, every_n, unit) values (:id, :sid, :tt, :n, :u)",
+            id=str(uuid.uuid4()), sid=schedule_id, tt=iv.trigger_type, n=iv.every_n, u=iv.unit,
+        )
+    for r in reminders:
+        await execute(
+            "insert into schedule_reminders (id, schedule_id, trigger_type, threshold_n) values (:id, :sid, :tt, :n)",
+            id=str(uuid.uuid4()), sid=schedule_id, tt=r.trigger_type, n=r.threshold_n,
+        )
+
+async def _schedule_detail(ws: str, schedule_id: str) -> Optional[dict]:
+    sched = await fetch_one("select * from maintenance_schedules where id = :id and workspace_id = :ws", id=schedule_id, ws=ws)
+    if not sched:
+        return None
+    interval_rows = await fetch_all("select * from schedule_intervals where schedule_id = :sid", sid=schedule_id)
+    reminder_rows = await fetch_all("select * from schedule_reminders where schedule_id = :sid", sid=schedule_id)
+    assigned = await fetch_all("select * from schedule_assets where schedule_id = :sid", sid=schedule_id)
+    due_rows = {
+        (r["vehicle_id"], r["asset_id"]): r
+        for r in await fetch_all("select * from schedule_due_state where schedule_id = :sid", sid=schedule_id)
+    }
+    intervals = [Interval(r["trigger_type"], float(r["every_n"]), r["unit"]) for r in interval_rows]
+    reminders = [(r["trigger_type"], float(r["threshold_n"])) for r in reminder_rows]
+    ref_date = datetime.now(timezone.utc).date()
+
+    assets_out = []
+    for sa in assigned:
+        due_row = due_rows.get((sa["vehicle_id"], sa["asset_id"]))
+        if sa["vehicle_id"]:
+            target = await fetch_one("select id, name, plate, odometer, engine_hours from vehicles where id = :id", id=sa["vehicle_id"])
+            kind, target_id, target_name, target_ref = "vehicle", sa["vehicle_id"], target["name"] if target else None, target
+        else:
+            target = await fetch_one("select id, name, identifier, engine_hours from assets where id = :id", id=sa["asset_id"])
+            kind, target_id, target_name, target_ref = "asset", sa["asset_id"], target["name"] if target else None, target
+        entry = {"kind": kind, "id": target_id, "name": target_name, "status": "awaiting_telematics", "remaining_days": None,
+                 "next_due_date": None, "next_due_distance": None, "next_due_hours": None}
+        if due_row and intervals and target_ref:
+            ref_odo = target_ref.get("odometer") if kind == "vehicle" else None
+            ref_hrs = target_ref.get("engine_hours")
+            due = compute_due_state(intervals, base_date=due_row["base_date"], base_odometer=due_row["base_odometer"],
+                                     base_hours=due_row["base_hours"], ref_date=ref_date, ref_odometer=ref_odo, ref_hours=ref_hrs)
+            status = classify_status(due, reminders)
+            entry.update({
+                "status": status.status, "remaining_days": status.remaining_days,
+                "next_due_date": due.next_due_date.isoformat() if due.next_due_date else None,
+                "next_due_distance": due.next_due_distance, "next_due_hours": due.next_due_hours,
+                "effective_trigger_type": due.effective_trigger_type,
+            })
+        assets_out.append(entry)
+
+    sched["intervals"] = interval_rows
+    sched["reminders"] = reminder_rows
+    sched["assets"] = assets_out
+    # Schedule-level status: worst (most urgent) across its assigned assets — overdue > due_soon >
+    # on_track > awaiting_telematics, so a dashboard tile summing schedules can just read this field.
+    order = {"overdue": 3, "due_soon": 2, "on_track": 1, "awaiting_telematics": 0}
+    sched["status_summary"] = max((a["status"] for a in assets_out), key=lambda s: order[s], default="awaiting_telematics")
+    return sched
+
+@api.get("/maintenance-schedules")
+async def list_maintenance_schedules(user: dict = Depends(require_module("maintenance", "read"))):
+    rows = await fetch_all(
+        "select id from maintenance_schedules where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
+    )
+    return [await _schedule_detail(user["workspace_id"], r["id"]) for r in rows]
+
+@api.post("/maintenance-schedules")
+async def create_maintenance_schedule(s: MaintenanceScheduleIn, user: dict = Depends(require_module("maintenance", "full"))):
+    if not s.vehicle_ids and not s.asset_ids:
+        raise HTTPException(status_code=400, detail="Select at least one asset for this schedule")
+    if not s.intervals:
+        raise HTTPException(status_code=400, detail="Configure at least one interval trigger")
+    sid = str(uuid.uuid4())
+    await execute(
+        "insert into maintenance_schedules (id, workspace_id, name, maintenance_type_id, asset_type_id, "
+        "description, priority, created_by) values (:id, :ws, :name, :mtid, :atid, :description, :priority, :uid)",
+        id=sid, ws=user["workspace_id"], name=s.name, mtid=s.maintenance_type_id, atid=s.asset_type_id,
+        description=s.description, priority=s.priority, uid=user["id"],
+    )
+    await _replace_schedule_children(sid, user["workspace_id"], s.vehicle_ids, s.asset_ids, s.intervals, s.reminders)
+    await _ensure_due_state_rows(user["workspace_id"], sid)
+    await log_event(user, "maintenance_schedule.created", "maintenance_schedule", sid, {"name": s.name})
+    return await _schedule_detail(user["workspace_id"], sid)
+
+@api.get("/maintenance-schedules/{sid}")
+async def get_maintenance_schedule(sid: str, user: dict = Depends(require_module("maintenance", "read"))):
+    detail = await _schedule_detail(user["workspace_id"], sid)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Not found")
+    return detail
+
+@api.patch("/maintenance-schedules/{sid}")
+async def update_maintenance_schedule(sid: str, s: MaintenanceScheduleUpdate, user: dict = Depends(require_module("maintenance", "full"))):
+    existing = await fetch_one("select * from maintenance_schedules where id = :id and workspace_id = :ws", id=sid, ws=user["workspace_id"])
+    if not existing:
+        raise HTTPException(status_code=404, detail="Not found")
+    patch = {k: v for k, v in s.model_dump(exclude={"vehicle_ids", "asset_ids", "intervals", "reminders"}).items() if v is not None}
+    await update_row("maintenance_schedules", sid, user["workspace_id"], patch, {"name", "description", "priority", "status"})
+    if s.vehicle_ids is not None or s.asset_ids is not None or s.intervals is not None or s.reminders is not None:
+        await _replace_schedule_children(
+            sid, user["workspace_id"],
+            s.vehicle_ids if s.vehicle_ids is not None else [r["vehicle_id"] for r in await fetch_all("select vehicle_id from schedule_assets where schedule_id = :sid and vehicle_id is not null", sid=sid)],
+            s.asset_ids if s.asset_ids is not None else [r["asset_id"] for r in await fetch_all("select asset_id from schedule_assets where schedule_id = :sid and asset_id is not null", sid=sid)],
+            s.intervals if s.intervals is not None else [Interval(r["trigger_type"], r["every_n"], r["unit"]) for r in await fetch_all("select * from schedule_intervals where schedule_id = :sid", sid=sid)],
+            s.reminders if s.reminders is not None else [ScheduleReminderIn(trigger_type=r["trigger_type"], threshold_n=r["threshold_n"]) for r in await fetch_all("select * from schedule_reminders where schedule_id = :sid", sid=sid)],
+        )
+        await _ensure_due_state_rows(user["workspace_id"], sid)
+    return await _schedule_detail(user["workspace_id"], sid)
+
+@api.delete("/maintenance-schedules/{sid}")
+async def delete_maintenance_schedule(sid: str, user: dict = Depends(require_module("maintenance", "full"))):
+    await execute("delete from maintenance_schedules where id = :id and workspace_id = :ws", id=sid, ws=user["workspace_id"])
+    return {"ok": True}
+
+
+class TemplateItemIn(BaseModel):
+    maintenance_type_id: str
+    trigger_type: Literal["time", "distance", "engine_hours"]
+    every_n: float
+    unit: str
+
+class MaintenanceTemplateIn(BaseModel):
+    name: str
+    asset_type_id: Optional[str] = None
+    items: List[TemplateItemIn] = []
+
+class ApplyTemplateIn(BaseModel):
+    vehicle_ids: List[str] = []
+    asset_ids: List[str] = []
+
+async def _template_detail(ws: str, tid: str) -> Optional[dict]:
+    t = await fetch_one("select * from maintenance_templates where id = :id and workspace_id = :ws", id=tid, ws=ws)
+    if not t:
+        return None
+    t["items"] = await fetch_all(
+        "select ti.*, mt.name as maintenance_type_name from maintenance_template_items ti "
+        "join maintenance_types mt on mt.id = ti.maintenance_type_id where ti.template_id = :tid",
+        tid=tid,
+    )
+    return t
+
+@api.get("/maintenance-templates")
+async def list_maintenance_templates(user: dict = Depends(require_module("maintenance", "read"))):
+    rows = await fetch_all("select id from maintenance_templates where workspace_id = :ws order by name", ws=user["workspace_id"])
+    return [await _template_detail(user["workspace_id"], r["id"]) for r in rows]
+
+@api.post("/maintenance-templates")
+async def create_maintenance_template(t: MaintenanceTemplateIn, user: dict = Depends(require_module("maintenance", "full"))):
+    tid = str(uuid.uuid4())
+    await execute(
+        "insert into maintenance_templates (id, workspace_id, name, asset_type_id) values (:id, :ws, :name, :atid)",
+        id=tid, ws=user["workspace_id"], name=t.name, atid=t.asset_type_id,
+    )
+    for i in t.items:
+        await execute(
+            "insert into maintenance_template_items (id, template_id, maintenance_type_id, trigger_type, every_n, unit) "
+            "values (:id, :tid, :mtid, :tt, :n, :u)",
+            id=str(uuid.uuid4()), tid=tid, mtid=i.maintenance_type_id, tt=i.trigger_type, n=i.every_n, u=i.unit,
+        )
+    return await _template_detail(user["workspace_id"], tid)
+
+@api.delete("/maintenance-templates/{tid}")
+async def delete_maintenance_template(tid: str, user: dict = Depends(require_module("maintenance", "full"))):
+    await execute("delete from maintenance_templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
+    return {"ok": True}
+
+@api.post("/maintenance-templates/{tid}/apply")
+async def apply_maintenance_template(tid: str, body: ApplyTemplateIn, user: dict = Depends(require_module("maintenance", "full"))):
+    """Feature 8: bulk-creates one schedule per template item, all assigned to the given assets —
+    the user then edits individual schedules afterwards exactly like any other, per the spec."""
+    if not body.vehicle_ids and not body.asset_ids:
+        raise HTTPException(status_code=400, detail="Select at least one asset to apply the template to")
+    template = await _template_detail(user["workspace_id"], tid)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if not template["items"]:
+        raise HTTPException(status_code=400, detail="This template has no items configured")
+    created_ids = []
+    for item in template["items"]:
+        sid = str(uuid.uuid4())
+        await execute(
+            "insert into maintenance_schedules (id, workspace_id, name, maintenance_type_id, asset_type_id, "
+            "priority, created_by) values (:id, :ws, :name, :mtid, :atid, 'medium', :uid)",
+            id=sid, ws=user["workspace_id"], name=f"{template['name']} — {item['maintenance_type_name']}",
+            mtid=item["maintenance_type_id"], atid=template["asset_type_id"], uid=user["id"],
+        )
+        await _replace_schedule_children(
+            sid, user["workspace_id"], body.vehicle_ids, body.asset_ids,
+            [ScheduleIntervalIn(trigger_type=item["trigger_type"], every_n=item["every_n"], unit=item["unit"])], [],
+        )
+        await _ensure_due_state_rows(user["workspace_id"], sid)
+        created_ids.append(sid)
+    await log_event(user, "maintenance_template.applied", "maintenance_template", tid, {"schedules_created": len(created_ids)})
+    return {"schedule_ids": created_ids}
 
 # --- Quote approvals (Workshop -> Operations Manager -> Finance) ---
 OPS_ROLES = ("operations_manager", "admin")
@@ -2962,7 +3422,7 @@ async def email_incident_to_insurance(iid: str, req: EmailInsuranceReq, user: di
     return {"ok": True, "email_id": email_id, "url": f"/public/incident/{token}"}
 
 # --- Defect reports (driver/technician-reported issues, triaged separately from safety Incidents) ---
-DEFECT_COLS = {"category", "severity", "description", "location", "assigned_to", "status", "resolution_notes", "resolved_at", "estimated_cost"}
+DEFECT_COLS = {"category", "severity", "description", "location", "assigned_to", "status", "resolution_notes", "resolved_at", "estimated_cost", "maintenance_id"}
 
 async def _enrich_defects(ws: str, defs: list) -> list:
     v_ids = list({d["vehicle_id"] for d in defs if d.get("vehicle_id")})
@@ -3023,6 +3483,41 @@ async def update_defect(did: str, patch: DefectUpdate, user: dict = Depends(requ
 async def delete_defect(did: str, user: dict = Depends(require_module("defects", "full"))):
     await execute("delete from defects where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
     return {"ok": True}
+
+@api.post("/defects/{did}/convert-to-maintenance")
+async def convert_defect_to_maintenance(did: str, user: dict = Depends(require_module("maintenance", "full"))):
+    """Feature 7: a controller turns a reported defect into a Maintenance Work Order in one action.
+    Completing that job later cascades back and auto-resolves the defect (see update_maintenance's
+    completion branch) — Defect, Work Order, and Maintenance Event close together, not as three
+    separate manual steps."""
+    d = await fetch_one("select * from defects where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
+    if not d:
+        raise HTTPException(status_code=404, detail="Defect not found")
+    if d.get("maintenance_id"):
+        raise HTTPException(status_code=400, detail="Defect is already linked to a maintenance job")
+    if not d.get("vehicle_id"):
+        raise HTTPException(status_code=400, detail="This defect has no vehicle to create a job for")
+    vehicle = await fetch_one("select odometer from vehicles where id = :id and workspace_id = :ws", id=d["vehicle_id"], ws=user["workspace_id"])
+    mid = str(uuid.uuid4())
+    await execute(
+        "insert into maintenance (id, workspace_id, vehicle_id, title, description, priority, category, "
+        "odometer, status, created_by, actual_cost, downtime_hours) values (:id, :ws, :vid, :title, :description, "
+        ":priority, :category, :odometer, 'pending', :uid, 0, 0)",
+        id=mid, ws=user["workspace_id"], vid=d["vehicle_id"],
+        title=f"Defect repair: {d['description'][:80]}", description=d["description"],
+        priority={"low": "low", "medium": "medium", "high": "high", "critical": "critical"}.get(d["severity"], "medium"),
+        category=d["category"] if d["category"] in {"tyres", "engine", "brakes", "electrical", "bodywork", "general"} else None,
+        odometer=vehicle.get("odometer") if vehicle else None, uid=user["id"],
+    )
+    await execute(
+        "update vehicles set status = 'maintenance' where id = :vid and workspace_id = :ws",
+        vid=d["vehicle_id"], ws=user["workspace_id"],
+    )
+    await update_row("defects", did, user["workspace_id"], {"status": "in_progress", "maintenance_id": mid}, DEFECT_COLS)
+    await log_event(user, "defect.converted_to_maintenance", "defect", did, {"maintenance_id": mid})
+    job = await fetch_one("select * from maintenance where id = :id", id=mid)
+    defect = await fetch_one("select * from defects where id = :id", id=did)
+    return {"defect": (await _enrich_defects(user["workspace_id"], [defect]))[0], "job": job}
 
 # --- Fuel logs (real transactions, replacing the old odometer-based estimate) ---
 @api.get("/fuel-logs")
@@ -3861,6 +4356,79 @@ async def cron_overdue_checklists(request: Request):
                 logger.error(f"overdue-checklists digest for {ws.get('id')} failed: {e}")
     asyncio.create_task(_run())
     return {"ok": True, "queued": True}
+
+FLEET_MANAGER_ROLES = ("manager", "operations_manager", "admin")
+
+async def _run_maintenance_reminders(ws: str) -> int:
+    """Feature 9: evaluates every active schedule's due state against its configured time-reminder
+    thresholds (Feature 3) and writes one notification per newly-crossed threshold, per assigned
+    asset. Idempotent across runs — schedule_due_state.last_fired_thresholds tracks what's already
+    fired for the current due cycle, and _reset_schedule_due_state clears it whenever a completion
+    re-bases the schedule, so the next due cycle can fire the same thresholds again."""
+    schedules = await fetch_all("select id, name from maintenance_schedules where workspace_id = :ws and status = 'active'", ws=ws)
+    fired_count = 0
+    for sched in schedules:
+        interval_rows = await fetch_all("select * from schedule_intervals where schedule_id = :sid", sid=sched["id"])
+        reminder_rows = await fetch_all("select * from schedule_reminders where schedule_id = :sid", sid=sched["id"])
+        if not interval_rows or not reminder_rows:
+            continue
+        intervals = [Interval(r["trigger_type"], float(r["every_n"]), r["unit"]) for r in interval_rows]
+        reminders = [(r["trigger_type"], float(r["threshold_n"])) for r in reminder_rows]
+        due_rows = await fetch_all("select * from schedule_due_state where schedule_id = :sid", sid=sched["id"])
+        ref_date = datetime.now(timezone.utc).date()
+        for due_row in due_rows:
+            if due_row["vehicle_id"]:
+                target = await fetch_one("select name, odometer, engine_hours from vehicles where id = :id", id=due_row["vehicle_id"])
+                ref_odo, ref_hrs = (target or {}).get("odometer"), (target or {}).get("engine_hours")
+            else:
+                target = await fetch_one("select name, engine_hours from assets where id = :id", id=due_row["asset_id"])
+                ref_odo, ref_hrs = None, (target or {}).get("engine_hours")
+            if not target:
+                continue
+            due = compute_due_state(intervals, base_date=due_row["base_date"], base_odometer=due_row["base_odometer"],
+                                     base_hours=due_row["base_hours"], ref_date=ref_date, ref_odometer=ref_odo, ref_hours=ref_hrs)
+            already_fired = [(f["trigger_type"], f["threshold_n"]) for f in (due_row["last_fired_thresholds"] or [])]
+            newly_fired = reminders_to_fire(intervals, reminders, due, already_fired)
+            if not newly_fired:
+                continue
+            recipients = await fetch_all("select id from user_profiles where workspace_id = :ws and role = any(:roles)", ws=ws, roles=list(FLEET_MANAGER_ROLES))
+            days = next((s.remaining_days for s in due.triggers if s.trigger_type == "time"), None)
+            message = f"{target['name']}: {sched['name']} due in {days} day{'s' if days != 1 else ''}"
+            for r in recipients:
+                await execute(
+                    "insert into notifications (id, workspace_id, recipient_user_id, type, message, related_schedule_id) "
+                    "values (:id, :ws, :uid, 'maintenance_reminder', :message, :sid)",
+                    id=str(uuid.uuid4()), ws=ws, uid=r["id"], message=message, sid=sched["id"],
+                )
+            await execute(
+                "update schedule_due_state set last_fired_thresholds = :f ::jsonb where id = :id",
+                f=json_dumps([{"trigger_type": t, "threshold_n": n} for t, n in (already_fired + newly_fired)]), id=due_row["id"],
+            )
+            fired_count += len(newly_fired)
+    return fired_count
+
+@api.post("/cron/maintenance-reminders")
+async def cron_maintenance_reminders(request: Request):
+    auth = request.headers.get("Authorization", "")
+    expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    if not expected or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    async def _run():
+        workspaces = await fetch_all("select id from workspaces")
+        for ws in workspaces:
+            try:
+                await _run_maintenance_reminders(ws["id"])
+            except Exception as e:
+                logger.error(f"maintenance reminders for {ws.get('id')} failed: {e}")
+    asyncio.create_task(_run())
+    return {"ok": True, "queued": True}
+
+@api.post("/workspace/send-maintenance-reminders-now")
+async def send_maintenance_reminders_now(user: dict = Depends(require_module("maintenance", "full"))):
+    """Manual trigger of the reminder sweep for this workspace — same underlying logic as the cron."""
+    count = await _run_maintenance_reminders(user["workspace_id"])
+    await log_event(user, "maintenance_reminders.sent", "workspace", user["workspace_id"], {"count": count})
+    return {"sent": count}
 
 @api.post("/workspace/send-overdue-checklists-alert")
 async def send_overdue_checklists_now(user: dict = Depends(get_current_user)):

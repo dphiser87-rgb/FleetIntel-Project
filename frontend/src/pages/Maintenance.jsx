@@ -38,7 +38,10 @@ export default function Maintenance() {
   const [selected, setSelected] = useState(null);
   const [detailJobId, setDetailJobId] = useState(searchParams.get("job") || null);
   const [awaitingApproval, setAwaitingApproval] = useState(searchParams.get("approvals") === "1");
-  const [complete, setComplete] = useState({ actual_cost: "", parts_cost: "", labor_cost: "" });
+  const [complete, setComplete] = useState({
+    actual_cost: "", parts_cost: "", labor_cost: "", external_cost: "",
+    workshop_name: "", technician: "", vendor: "", odometer: "", engine_hours: "", documents: [],
+  });
   const [showNew, setShowNew] = useState(false);
   const [newJobTargetType, setNewJobTargetType] = useState("vehicle"); // vehicle | asset
   const [newJob, setNewJob] = useState({ vehicle_id: "", asset_id: "", title: "", priority: "medium", category: "general", odometer: "" });
@@ -138,13 +141,26 @@ export default function Maintenance() {
       status: "completed",
       parts_cost: Number(complete.parts_cost) || selected.parts_cost || 0,
       labor_cost: Number(complete.labor_cost) || selected.labor_cost || 0,
+      external_cost: Number(complete.external_cost) || 0,
       actual_cost: Number(complete.actual_cost) || null,
+      workshop_name: complete.workshop_name || null,
+      technician: complete.technician || null,
+      vendor: complete.vendor || null,
+      odometer: complete.odometer ? Number(complete.odometer) : null,
+      engine_hours: complete.engine_hours ? Number(complete.engine_hours) : null,
+      completion_documents: complete.documents,
     };
     await api.patch(`/maintenance/${selected.id}`, patch);
     toast.success("Job completed");
     setSelected(null);
-    setComplete({ actual_cost: "", parts_cost: "", labor_cost: "" });
+    setComplete({ actual_cost: "", parts_cost: "", labor_cost: "", external_cost: "", workshop_name: "", technician: "", vendor: "", odometer: "", engine_hours: "", documents: [] });
     load();
+  };
+
+  const addCompletionDocument = (file) => {
+    const reader = new FileReader();
+    reader.onloadend = () => setComplete((c) => ({ ...c, documents: [...c.documents, { file_name: file.name, file_type: file.type, data_url: reader.result }] }));
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -324,24 +340,65 @@ export default function Maintenance() {
 
       {selected && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6" onClick={() => setSelected(null)}>
-          <div className="bg-[#121214] border border-border max-w-md w-full" onClick={(e) => e.stopPropagation()} data-testid="complete-modal">
+          <div className="bg-[#121214] border border-border max-w-lg w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="complete-modal">
             <div className="border-b border-border p-4">
               <div className="overline">Complete job</div>
               <h3 className="font-display font-bold text-xl mt-1">{selected.title}</h3>
             </div>
-            <div className="p-4 space-y-3">
-              {[
-                ["parts_cost", "Actual parts cost"],
-                ["labor_cost", "Actual labor cost"],
-                ["actual_cost", "Total actual cost (auto if empty)"],
-              ].map(([k, l]) => (
-                <div key={k}>
-                  <label className="overline block mb-1">{l}</label>
-                  <input type="number" value={complete[k]} onChange={(e) => setComplete({...complete, [k]: e.target.value})}
-                    data-testid={`complete-${k}`}
-                    className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+            <div className="p-4 space-y-4">
+              <div>
+                <div className="overline mb-2">Basic Information</div>
+                <div className="grid grid-cols-2 gap-3">
+                  {[["workshop_name", "Workshop Name"], ["technician", "Technician"], ["vendor", "Vendor"]].map(([k, l]) => (
+                    <div key={k}>
+                      <label className="overline block mb-1">{l}</label>
+                      <input value={complete[k]} onChange={(e) => setComplete({ ...complete, [k]: e.target.value })} data-testid={`complete-${k}`}
+                        className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
+              <div>
+                <div className="overline mb-2">Cost Information</div>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    ["parts_cost", "Parts Cost"], ["labor_cost", "Labour Cost"],
+                    ["external_cost", "External Cost"], ["actual_cost", "Total Cost (auto if empty)"],
+                  ].map(([k, l]) => (
+                    <div key={k}>
+                      <label className="overline block mb-1">{l}</label>
+                      <input type="number" value={complete[k]} onChange={(e) => setComplete({ ...complete, [k]: e.target.value })}
+                        data-testid={`complete-${k}`}
+                        className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="overline mb-2">Meter Reading</div>
+                <div className="grid grid-cols-2 gap-3">
+                  {[["odometer", "Odometer (km)"], ["engine_hours", "Engine Hours"]].map(([k, l]) => (
+                    <div key={k}>
+                      <label className="overline block mb-1">{l}</label>
+                      <input type="number" value={complete[k]} onChange={(e) => setComplete({ ...complete, [k]: e.target.value })}
+                        data-testid={`complete-${k}`}
+                        className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="overline mb-2">Documentation</div>
+                <label className="flex items-center justify-center gap-2 border border-dashed border-border py-3 text-xs uppercase tracking-widest text-muted-foreground hover:border-primary hover:text-primary cursor-pointer" data-testid="complete-doc-upload">
+                  Attach invoice, job card, photos, or service report
+                  <input type="file" className="hidden" multiple onChange={(e) => { [...e.target.files].forEach(addCompletionDocument); e.target.value = ""; }} />
+                </label>
+                {complete.documents.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {complete.documents.map((d, i) => <div key={i} className="text-xs text-muted-foreground">{d.file_name}</div>)}
+                  </div>
+                )}
+              </div>
               <div className="text-xs text-muted-foreground">Downtime is calculated automatically from when the job started to now — no manual entry needed.</div>
               <button onClick={finishJob} data-testid="finish-job-btn" className="w-full bg-primary text-primary-foreground py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">
                 Mark as completed

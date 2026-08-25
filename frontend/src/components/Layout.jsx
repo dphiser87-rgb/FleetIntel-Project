@@ -7,6 +7,7 @@ import { hasAccess } from "@/lib/access";
 import {
   ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise,
   ShieldCheck, UserCircle, Warning, Stack, ListChecks, Receipt, ShieldCheckered, Calculator, CaretDown, WarningOctagon,
+  CalendarCheck,
 } from "@phosphor-icons/react";
 
 const nav = [
@@ -18,6 +19,8 @@ const nav = [
   { to: "/templates", label: "Checklist Templates", icon: ListChecks, id: "nav-templates", moduleKey: "templates", group: "Operations" },
   { to: "/compliance", label: "Compliance Dashboard", icon: ShieldCheckered, id: "nav-compliance", moduleKey: "vehicle_checklist", group: "Operations" },
   { to: "/maintenance", label: "Workshop Management", icon: Wrench, id: "nav-maintenance", moduleKey: "maintenance", group: "Operations" },
+  { to: "/maintenance-schedules", label: "Maintenance Schedules", icon: CalendarCheck, id: "nav-maintenance-schedules", moduleKey: "maintenance", group: "Operations" },
+  { to: "/maintenance-reports", label: "Maintenance Reports", icon: ChartBar, id: "nav-maintenance-reports", moduleKey: "maintenance", group: "Operations" },
   { to: "/defects", label: "Defect Reporting", icon: WarningOctagon, id: "nav-defects", moduleKey: "defects", group: "Operations" },
   { to: "/incidents", label: "Incidents", icon: Warning, id: "nav-incidents", moduleKey: "incidents", group: "Operations" },
   { to: "/parts", label: "Parts", icon: Package, id: "nav-parts", moduleKey: "parts", group: "Finance" },
