@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { CheckCircle, XCircle, Paperclip, DownloadSimple } from "@phosphor-icons/react";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const STAGE_LABEL = {
   pending_ops: "Pending — Operations",
@@ -19,6 +19,7 @@ const STAGE_COLOR = {
 // Shared read-only quote view + decision action block, used by both the Operations Manager and
 // Finance review steps — which actions render (or whether any do) is driven entirely by `canDecide`.
 export default function QuoteApprovalPanel({ quote, canDecide, onDecide }) {
+  const { currency } = useCurrency();
   const [reason, setReason] = useState("");
   const [showReject, setShowReject] = useState(false);
   const [lightbox, setLightbox] = useState(null); // attachment being viewed full-size
@@ -58,17 +59,17 @@ export default function QuoteApprovalPanel({ quote, canDecide, onDecide }) {
                 <td className="p-2 text-xs uppercase text-muted-foreground">{it.type}</td>
                 <td className="p-2">{it.description}</td>
                 <td className="p-2 mono">{it.qty}</td>
-                <td className="p-2 mono">{money(it.unit_cost)}</td>
+                <td className="p-2 mono">{formatMoneyFull(it.unit_cost, currency, 2)}</td>
                 <td className="p-2 mono">{it.vat_pct}%</td>
-                <td className="p-2 mono">{money(it.qty * it.unit_cost * (1 + it.vat_pct / 100))}</td>
+                <td className="p-2 mono">{formatMoneyFull(it.qty * it.unit_cost * (1 + it.vat_pct / 100), currency, 2)}</td>
               </tr>
             ))}
           </tbody>
         </table>
         <div className="flex justify-end gap-6 p-3 border-t border-border text-sm">
-          <div>Subtotal <span className="mono ml-2">{money(quote.subtotal)}</span></div>
-          <div>VAT <span className="mono ml-2">{money(quote.vat_total)}</span></div>
-          <div className="font-bold">Total <span className="mono ml-2 text-primary">{money(quote.total)}</span></div>
+          <div>Subtotal <span className="mono ml-2">{formatMoneyFull(quote.subtotal, currency, 2)}</span></div>
+          <div>VAT <span className="mono ml-2">{formatMoneyFull(quote.vat_total, currency, 2)}</span></div>
+          <div className="font-bold">Total <span className="mono ml-2 text-primary">{formatMoneyFull(quote.total, currency, 2)}</span></div>
         </div>
       </div>
 

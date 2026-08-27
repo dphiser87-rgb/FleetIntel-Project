@@ -2,14 +2,15 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { CheckCircle, CalendarBlank, CaretRight } from "@phosphor-icons/react";
 import { STATUS_COLOR, STATUS_LABEL, remainingLabel } from "./ScheduleAssetList";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 // Feature 5 — one asset's maintenance history AND forecast on a single scrollable timeline: past
 // completed jobs (blue-grey, per the color standard's Completed state) above a "Today" marker,
 // forecasted future services (colored by due status, driven by the interval engine from Feature 2)
 // below it.
 export default function AssetMaintenanceTimeline({ kind, id, schedules, onDrillEvent }) {
+  const { currency } = useCurrency();
   const [jobs, setJobs] = useState(null);
 
   useEffect(() => {
@@ -63,7 +64,7 @@ export default function AssetMaintenanceTimeline({ kind, id, schedules, onDrillE
                 <div className="text-sm font-semibold truncate">{j.title}</div>
                 <div className="text-xs text-muted-foreground">{new Date(j.completed_at).toLocaleDateString(undefined, { month: "short", year: "numeric" })}</div>
               </div>
-              <span className="mono text-sm text-muted-foreground shrink-0">{money(j.actual_cost)}</span>
+              <span className="mono text-sm text-muted-foreground shrink-0">{formatMoneyFull(j.actual_cost, currency)}</span>
               <CaretRight size={14} className="text-muted-foreground shrink-0" />
             </button>
           ))}

@@ -3,8 +3,7 @@ import { useParams } from "react-router-dom";
 import { API } from "@/lib/api";
 import axios from "axios";
 import { ShieldCheck, XCircle, ChartLine, DownloadSimple } from "@phosphor-icons/react";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { formatMoneyFull } from "@/lib/currency";
 
 const SEVERITY_STYLES = {
   severe: "border-primary text-primary bg-primary/10",
@@ -70,7 +69,7 @@ export default function PublicIncident() {
         <div className="grid grid-cols-2 md:grid-cols-4 border border-border grid-borders" data-testid="public-incident-summary">
           {[
             ["Driver", driver?.name || "Unassigned"],
-            ["Reported cost", money(incident.reported_cost)],
+            ["Reported cost", formatMoneyFull(incident.reported_cost, workspace.currency)],
             ["Status", incident.resolved ? "Resolved" : "Open"],
             ["Photos", (incident.photos || []).length],
           ].map(([l, v]) => (

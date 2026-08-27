@@ -6,11 +6,11 @@ import { CheckCircle, Play, ArrowRight, Plus, Kanban, Table as TableIcon, ClockC
 import { useAuth } from "@/contexts/AuthContext";
 import { hasAccess } from "@/lib/access";
 import MaintenanceDetailPanel from "@/components/MaintenanceDetailPanel";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const OPS_ROLES = ["operations_manager", "admin"];
 const FINANCE_ROLES = ["finance", "admin"];
-
-const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 const COLUMNS = [
   { key: "pending", label: "Pending", accent: "border-t-[#8E8E93]" },
@@ -29,6 +29,7 @@ const CATEGORIES = ["tyres", "engine", "brakes", "electrical", "bodywork", "gene
 
 export default function Maintenance() {
   const { user } = useAuth();
+  const { currency } = useCurrency();
   const [searchParams, setSearchParams] = useSearchParams();
   const [jobs, setJobs] = useState([]);
   const [quotesByJob, setQuotesByJob] = useState({}); // job_id -> latest quote (for the approval filter)
@@ -247,7 +248,7 @@ export default function Maintenance() {
                     <div className="overline">{col.label}</div>
                     <div className="mono text-2xl font-bold mt-1">{items.length}</div>
                   </div>
-                  <div className="mono text-xs text-muted-foreground">{money(items.reduce((s, i) => s + (i.actual_cost || i.estimated_cost || 0), 0))}</div>
+                  <div className="mono text-xs text-muted-foreground">{formatMoneyFull(items.reduce((s, i) => s + (i.actual_cost || i.estimated_cost || 0), 0), currency)}</div>
                 </div>
                 <div className="p-3 space-y-3 min-h-[200px]">
                   {items.map(job => (
@@ -263,7 +264,7 @@ export default function Maintenance() {
                       <div className="text-xs text-muted-foreground mb-1">{vName(job)} · <span className="mono">{vPlate(job)}</span></div>
                       {job.category && <div className="text-[10px] mono uppercase tracking-widest text-[#3B82F6] mb-2">{job.category}</div>}
                       <div className="flex items-center justify-between text-xs">
-                        <div className="mono">{money(job.actual_cost || job.estimated_cost)}</div>
+                        <div className="mono">{formatMoneyFull(job.actual_cost || job.estimated_cost, currency)}</div>
                         <div className="text-muted-foreground">{new Date(job.created_at).toLocaleDateString()}</div>
                       </div>
                       <div className="flex gap-2 mt-3 pt-3 border-t border-border/60">
@@ -324,7 +325,7 @@ export default function Maintenance() {
                     <td className="px-4 py-3"><span className={`text-[10px] mono uppercase tracking-widest px-1.5 py-0.5 border ${PRIORITY_COLOR[job.priority] || ""}`}>{job.priority}</span></td>
                     <td className="px-4 py-3 text-xs uppercase tracking-widest text-muted-foreground">{job.status.replace("_", " ")}</td>
                     <td className="px-4 py-3 text-xs">{tName(job.assigned_to)}</td>
-                    <td className="px-4 py-3 mono">{money(job.actual_cost || job.estimated_cost)}</td>
+                    <td className="px-4 py-3 mono">{formatMoneyFull(job.actual_cost || job.estimated_cost, currency)}</td>
                     <td className="px-4 py-3 mono text-muted-foreground text-xs">{new Date(job.created_at).toLocaleDateString()}</td>
                   </tr>
                 ))}

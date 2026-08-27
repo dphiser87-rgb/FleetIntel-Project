@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 function Table({ title, rows, cols, testId }) {
   return (
@@ -27,6 +27,7 @@ function Table({ title, rows, cols, testId }) {
 }
 
 export default function MaintenanceReports() {
+  const { currency } = useCurrency();
   const [jobs, setJobs] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [defects, setDefects] = useState([]);
@@ -142,10 +143,10 @@ export default function MaintenanceReports() {
         </section>
 
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Table title={`Cost by Vehicle · Total ${money(totalSpend)}`} testId="cost-by-vehicle"
-            cols={["Vehicle", "Total Cost"]} rows={costByVehicle.map(([n, c]) => [n, money(c)])} />
+          <Table title={`Cost by Vehicle · Total ${formatMoneyFull(totalSpend, currency)}`} testId="cost-by-vehicle"
+            cols={["Vehicle", "Total Cost"]} rows={costByVehicle.map(([n, c]) => [n, formatMoneyFull(c, currency)])} />
           <Table title="Cost by Maintenance Type" testId="cost-by-type"
-            cols={["Category", "Total Cost"]} rows={costByType.map(([n, c]) => [n, money(c)])} />
+            cols={["Category", "Total Cost"]} rows={costByType.map(([n, c]) => [n, formatMoneyFull(c, currency)])} />
         </section>
 
         <section>
@@ -167,7 +168,7 @@ export default function MaintenanceReports() {
             {forecast.map((f) => (
               <div key={f.label} className="bg-[#121214] border border-border p-5">
                 <div className="overline">Projected Spend · {f.label}</div>
-                <div className="mono text-2xl font-bold mt-2">{money(f.total)}</div>
+                <div className="mono text-2xl font-bold mt-2">{formatMoneyFull(f.total, currency)}</div>
                 <div className="text-xs text-muted-foreground mt-1">{f.count} service{f.count !== 1 ? "s" : ""} due</div>
               </div>
             ))}

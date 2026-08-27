@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { Plus, MagnifyingGlass, X as XIcon, Wrench } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { hasAccess } from "@/lib/access";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const CATEGORIES = ["tyres", "engine", "brakes", "electrical", "bodywork", "general"];
 const SEVERITIES = ["low", "medium", "high", "critical"];
@@ -23,10 +25,10 @@ const STATUS_STYLES = {
 };
 
 const PRICING_ROLES = ["workshop_head", "operations_manager", "finance", "admin"];
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
 export default function DefectReporting() {
   const { user } = useAuth();
+  const { currency } = useCurrency();
   const canManage = hasAccess(user, "defects", "full");
   const canConvert = hasAccess(user, "maintenance", "full");
   const canPrice = PRICING_ROLES.includes(user?.role);
@@ -158,7 +160,7 @@ export default function DefectReporting() {
                       {d.location && <span>· {d.location}</span>}
                       {d.reported_by_name && <span>By: <span className="text-foreground">{d.reported_by_name}</span></span>}
                       {d.assigned_to_name && <span>Assigned: <span className="text-foreground">{d.assigned_to_name}</span></span>}
-                      {canPrice && d.estimated_cost > 0 && <span className="mono">· {money(d.estimated_cost)}</span>}
+                      {canPrice && d.estimated_cost > 0 && <span className="mono">· {formatMoneyFull(d.estimated_cost, currency, 2)}</span>}
                     </div>
                     {d.resolution_notes && <div className="mt-2 text-xs text-muted-foreground italic border-l-2 border-primary/40 pl-2">{d.resolution_notes}</div>}
                     {d.maintenance_id && (

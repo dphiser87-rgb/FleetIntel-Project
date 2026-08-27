@@ -54,6 +54,10 @@ DEFAULT_WORKSPACE_ID = str(uuid.uuid5(uuid.NAMESPACE_DNS, "fleetintel-default-wo
 
 # --- Email guardrails & sender (Resend) ---
 RESEND_API_URL = "https://api.resend.com/emails"
+CURRENCY_SYMBOLS = {
+    "USD": "$", "ZAR": "R", "NGN": "₦", "KES": "KSh", "GHS": "GH₵",
+    "EGP": "E£", "MAD": "DH", "TZS": "TSh", "UGX": "USh", "ETB": "Br",
+}
 _SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
 _CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
              "send us your password", "enter your password below", "confirm your card number",
@@ -3404,7 +3408,7 @@ async def public_vehicle(token: str):
     if not v: raise HTTPException(status_code=404, detail="Not found or link revoked")
     workspace_id = v.pop("workspace_id")
     v.pop("share_token", None)
-    workspace = await fetch_one("select name from workspaces where id = :id", id=workspace_id) or {"name": "Fleet"}
+    workspace = await fetch_one("select name, currency from workspaces where id = :id", id=workspace_id) or {"name": "Fleet", "currency": "USD"}
     # inspections + safety-relevant maintenance history
     inspections = await fetch_all(
         "select * from inspections where vehicle_id = :vid order by created_at desc limit 50", vid=v["id"],
@@ -3844,7 +3848,7 @@ async def public_incident(token: str):
     if not inc: raise HTTPException(status_code=404, detail="Not found or link revoked")
     workspace_id = inc.pop("workspace_id")
     inc.pop("share_token", None)
-    workspace = await fetch_one("select name from workspaces where id = :id", id=workspace_id) or {"name": "Fleet"}
+    workspace = await fetch_one("select name, currency from workspaces where id = :id", id=workspace_id) or {"name": "Fleet", "currency": "USD"}
     v = await fetch_one("select name, plate, make, model from vehicles where id = :id", id=inc["vehicle_id"]) if inc.get("vehicle_id") else None
     d = await fetch_one("select name, license_number from drivers where id = :id", id=inc["driver_id"]) if inc.get("driver_id") else None
     return {"workspace": workspace, "incident": inc, "vehicle": v, "driver": d}
@@ -3870,7 +3874,8 @@ async def email_incident_to_insurance(iid: str, req: EmailInsuranceReq, user: di
     else:
         token = inc["share_token"]
     v = await fetch_one("select name, plate from vehicles where id = :id", id=inc["vehicle_id"]) if inc.get("vehicle_id") else None
-    ws = await fetch_one("select name from workspaces where id = :id", id=user["workspace_id"]) or {"name": "Fleet"}
+    ws = await fetch_one("select name, currency from workspaces where id = :id", id=user["workspace_id"]) or {"name": "Fleet", "currency": "USD"}
+    currency_symbol = CURRENCY_SYMBOLS.get(ws.get("currency"), "$")
     link = f"{FRONTEND_URL}/public/incident/{token}"
     vehicle_line = f"{v.get('name','')} ({v.get('plate','')})" if v else "—"
     note_html = f'<p style="margin:0 0 16px 0">{escape(req.note)}</p>' if req.note else ""
@@ -3885,7 +3890,7 @@ async def email_incident_to_insurance(iid: str, req: EmailInsuranceReq, user: di
         f'<tr><td style="padding:10px;background:#f8fafc;font-weight:bold;width:35%">Vehicle</td><td style="padding:10px;background:#f8fafc">{escape(vehicle_line)}</td></tr>'
         f'<tr><td style="padding:10px;background:#f8fafc;font-weight:bold">Kind</td><td style="padding:10px;background:#f8fafc">{escape((inc.get("kind") or "").title())}</td></tr>'
         f'<tr><td style="padding:10px;background:#f8fafc;font-weight:bold">Severity</td><td style="padding:10px;background:#f8fafc">{escape((inc.get("severity") or "").title())}</td></tr>'
-        f'<tr><td style="padding:10px;background:#f8fafc;font-weight:bold">Reported cost</td><td style="padding:10px;background:#f8fafc">${inc.get("reported_cost", 0) or 0:,.2f}</td></tr>'
+        f'<tr><td style="padding:10px;background:#f8fafc;font-weight:bold">Reported cost</td><td style="padding:10px;background:#f8fafc">{currency_symbol}{inc.get("reported_cost", 0) or 0:,.2f}</td></tr>'
         f'</table>'
         f'<p style="margin:20px 0"><a href="{escape(link)}" style="display:inline-block;background:#0f172a;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px">View and download incident report</a></p>'
         f'<p style="margin:16px 0 0 0;font-size:12px;color:#888">Sent by {escape(ws["name"])} via FleetCost Intelligence. We never ask for your password or card details by email.</p>'

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 export default function LevelGroupAnalysis({ groupId, onDrillVehicle }) {
+  const { currency } = useCurrency();
   const [data, setData] = useState(null);
 
   useEffect(() => {
@@ -29,9 +30,9 @@ export default function LevelGroupAnalysis({ groupId, onDrillVehicle }) {
         {[
           ["Vehicles", vehicle_count],
           ["Driver count", driver_count],
-          ["Fuel cost", money(fuel_cost)],
-          ["Maintenance cost", money(maintenance_cost)],
-          ["Tyre cost", money(tyre_cost)],
+          ["Fuel cost", formatMoneyFull(fuel_cost, currency)],
+          ["Maintenance cost", formatMoneyFull(maintenance_cost, currency)],
+          ["Tyre cost", formatMoneyFull(tyre_cost, currency)],
         ].map(([label, value]) => (
           <div key={label} className="bg-[#121214] border border-border p-4">
             <div className="overline">{label}</div>

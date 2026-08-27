@@ -6,13 +6,14 @@ import { ClockCounterClockwise, DownloadSimple } from "@phosphor-icons/react";
 import { API } from "@/lib/api";
 import QuoteBuilder from "@/components/QuoteBuilder";
 import QuoteApprovalPanel from "@/components/QuoteApprovalPanel";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const OPS_ROLES = ["operations_manager", "admin"];
 const FINANCE_ROLES = ["finance", "admin"];
 
 export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, onChange }) {
+  const { currency } = useCurrency();
   const [tab, setTab] = useState("overview");
   const [job, setJob] = useState(null);
   const [quotes, setQuotes] = useState([]);
@@ -95,7 +96,7 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
                   {[
                     ["Status", job.status], ["Priority", job.priority], ["Category", job.category || "—"],
                     ["Assigned to", job.assigned_to_name || "Unassigned"],
-                    ["Estimated cost", money(job.estimated_cost)], ["Actual cost", money(job.actual_cost)],
+                    ["Estimated cost", formatMoneyFull(job.estimated_cost, currency)], ["Actual cost", formatMoneyFull(job.actual_cost, currency)],
                   ].map(([l, v]) => (
                     <div key={l} className="border border-border p-3">
                       <div className="overline">{l}</div>

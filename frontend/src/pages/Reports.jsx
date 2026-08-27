@@ -2,10 +2,11 @@ import React, { useEffect, useState } from "react";
 import { api, API } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line, Legend, ComposedChart, Area } from "recharts";
 import { DownloadSimple } from "@phosphor-icons/react";
-
-const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 export default function Reports() {
+  const { currency } = useCurrency();
   const [trend, setTrend] = useState([]);
   const [byVehicle, setByVehicle] = useState([]);
   const [byCat, setByCat] = useState([]);
@@ -123,9 +124,9 @@ export default function Reports() {
                     <td className="p-3">{vName(m.vehicle_id)}</td>
                     <td className="p-3"><span className="overline">{m.priority}</span></td>
                     <td className="p-3"><span className="overline">{m.status}</span></td>
-                    <td className="p-3 text-right mono">{money(m.parts_cost)}</td>
-                    <td className="p-3 text-right mono">{money(m.labor_cost)}</td>
-                    <td className="p-3 text-right mono">{money(m.actual_cost || m.estimated_cost)}</td>
+                    <td className="p-3 text-right mono">{formatMoneyFull(m.parts_cost, currency)}</td>
+                    <td className="p-3 text-right mono">{formatMoneyFull(m.labor_cost, currency)}</td>
+                    <td className="p-3 text-right mono">{formatMoneyFull(m.actual_cost || m.estimated_cost, currency)}</td>
                     <td className="p-3 text-right mono">{m.downtime_hours || 0}h</td>
                   </tr>
                 ))}

@@ -1,8 +1,9 @@
 import React from "react";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 export default function MaintCostBreakdown({ job }) {
+  const { currency } = useCurrency();
   const rows = [
     { label: "Labour", value: job.labor_cost || 0, color: "#3B82F6" },
     { label: "Parts", value: job.parts_cost || 0, color: "#14B8A6" },
@@ -26,17 +27,17 @@ export default function MaintCostBreakdown({ job }) {
                 <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: r.color }} />
                 {r.label}
               </div>
-              <span className="mono text-sm">{money(r.value)}</span>
+              <span className="mono text-sm">{formatMoneyFull(r.value, currency)}</span>
             </div>
           ))}
           <div className="flex items-center justify-between px-4 py-3 bg-[#121214]">
             <span className="text-sm font-bold">Total Actual Cost</span>
-            <span className="mono text-lg font-bold text-primary">{money(job.actual_cost)}</span>
+            <span className="mono text-lg font-bold text-primary">{formatMoneyFull(job.actual_cost, currency)}</span>
           </div>
           {job.estimated_cost != null && (
             <div className="flex items-center justify-between px-4 py-3">
               <span className="text-sm text-muted-foreground">Estimated cost</span>
-              <span className="mono text-sm text-muted-foreground">{money(job.estimated_cost)}</span>
+              <span className="mono text-sm text-muted-foreground">{formatMoneyFull(job.estimated_cost, currency)}</span>
             </div>
           )}
         </div>

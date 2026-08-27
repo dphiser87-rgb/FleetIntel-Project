@@ -20,7 +20,7 @@ export function formatMoney(value, code = "USD") {
   return `${symbol}${abbrev}`;
 }
 
-export function formatMoneyFull(value, code = "USD") {
+export function formatMoneyFull(value, code = "USD", decimals = 0) {
   const symbol = CURRENCIES[code]?.symbol ?? "$";
-  return `${symbol}${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return `${symbol}${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
 }

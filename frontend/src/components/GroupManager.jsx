@@ -6,6 +6,8 @@ import {
 } from "@phosphor-icons/react";
 import GroupColorPicker from "@/components/GroupColorPicker";
 import { DEFAULT_GROUP_COLOR } from "@/lib/color";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const emptyMeta = {
   vehicle: { fleet_type: "", branch: "", region: "", cost_centre: "" },
@@ -21,6 +23,7 @@ export default function GroupManager({
   groups, onChange, endpoint = "/vehicle-groups",
   emptyHint = "No groups yet. Create one to organize vehicles for \"view by group\" tiles.",
 }) {
+  const { currency } = useCurrency();
   const kind = KIND_BY_ENDPOINT[endpoint] || "vehicle";
   const entityEndpoint = ENTITY_ENDPOINT[kind];
   const entityLabel = ENTITY_LABEL[kind];
@@ -220,10 +223,10 @@ export default function GroupManager({
       { label: "Vehicles selected", value: members.length },
       { label: "Avg fleet health", value: avgHealth !== null ? `${avgHealth}` : "—" },
       { label: "Open defects", value: openDefects },
-      { label: "Monthly cost", value: `$${Math.round(maintCost + fuelCost).toLocaleString()}` },
-      { label: "Cost per km", value: `$${avgCostPerKm.toFixed(2)}` },
+      { label: "Monthly cost", value: formatMoneyFull(maintCost + fuelCost, currency) },
+      { label: "Cost per km", value: formatMoneyFull(avgCostPerKm, currency, 2) },
     ];
-  }, [editingGroup, kind, members, health, maintenance, fuelLogs]);
+  }, [editingGroup, kind, members, health, maintenance, fuelLogs, currency]);
 
   if (view === "form") {
     return (

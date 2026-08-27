@@ -4,10 +4,11 @@ import { api } from "@/lib/api";
 import { CaretLeft, ClipboardText, Wrench, ShareNetwork, Copy, X as XIcon, Warning as WarningIcon, ClockCounterClockwise, Heartbeat } from "@phosphor-icons/react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, CartesianGrid } from "recharts";
 import { toast } from "sonner";
-
-const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 export default function VehicleDetail() {
+  const { currency } = useCurrency();
   const { id } = useParams();
   const [v, setV] = useState(null);
   const [insp, setInsp] = useState([]);
@@ -110,8 +111,8 @@ export default function VehicleDetail() {
           <div className="grid grid-cols-2 md:grid-cols-4 border border-border grid-borders">
             {[
               ["Odometer", `${(v.odometer || 0).toLocaleString()} km`],
-              ["Fuel cost", `${money(v.fuel_cost_per_km)}/km`],
-              ["Total spent", money(totalCost)],
+              ["Fuel cost", `${formatMoneyFull(v.fuel_cost_per_km, currency)}/km`],
+              ["Total spent", formatMoneyFull(totalCost, currency)],
               ["Inspections", insp.length],
             ].map(([l, val]) => (
               <div key={l} className="p-5 bg-[#121214]">
@@ -131,7 +132,7 @@ export default function VehicleDetail() {
                     <div className="text-sm">{m.title}</div>
                     <div className="overline mt-1">{m.status} · {new Date(m.created_at).toLocaleDateString()}</div>
                   </div>
-                  <div className="mono">{money(m.actual_cost || m.estimated_cost)}</div>
+                  <div className="mono">{formatMoneyFull(m.actual_cost || m.estimated_cost, currency)}</div>
                 </div>
               ))}
               {maint.length === 0 && <div className="text-sm text-muted-foreground py-4">No maintenance records.</div>}
@@ -186,7 +187,7 @@ export default function VehicleDetail() {
                   <div className="overline">{e.type}</div>
                   <div className="text-sm mt-0.5">{e.title}</div>
                   {e.by && <div className="text-xs text-muted-foreground mt-1">by {e.by}</div>}
-                  {e.meta?.cost != null && <div className="mono text-xs mt-1">${e.meta.cost.toLocaleString()}</div>}
+                  {e.meta?.cost != null && <div className="mono text-xs mt-1">{formatMoneyFull(e.meta.cost, currency)}</div>}
                   {e.meta?.description && <div className="text-xs text-muted-foreground mt-1">{e.meta.description}</div>}
                   <div className="text-[10px] mono text-muted-foreground mt-1">{(e.at || "").slice(0, 16).replace("T", " ")}</div>
                 </div>
