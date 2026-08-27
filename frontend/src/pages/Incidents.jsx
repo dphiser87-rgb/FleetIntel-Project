@@ -3,14 +3,14 @@ import { Link } from "react-router-dom";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
 import { Warning, DownloadSimple, Trash, PencilSimple, X as XIcon, MagnifyingGlass, CaretLeft, CaretRight, Image as ImageIcon, FilePdf, ShareNetwork, Copy, EnvelopeSimple } from "@phosphor-icons/react";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const SEVERITY_STYLES = {
   severe: "border-primary text-primary bg-primary/10",
   moderate: "border-[#FFCC00] text-[#FFCC00] bg-[#FFCC00]/10",
   minor: "border-muted-foreground text-muted-foreground bg-white/5",
 };
-
-const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 const toCsv = (rows) => {
   if (!rows.length) return "";
@@ -23,6 +23,7 @@ const toCsv = (rows) => {
 };
 
 export default function Incidents() {
+  const { currency } = useCurrency();
   const [incidents, setIncidents] = useState([]);
   const [drivers, setDrivers] = useState([]);
   const [severity, setSeverity] = useState("all");
@@ -159,7 +160,7 @@ export default function Incidents() {
             ["Severe", totals.severe, "text-primary"],
             ["Moderate", totals.moderate, "text-[#FFCC00]"],
             ["Minor", totals.minor, "text-muted-foreground"],
-            ["Reported cost", money(totals.cost), "text-foreground"],
+            ["Reported cost", formatMoneyFull(totals.cost, currency), "text-foreground"],
           ].map(([l, val, cls]) => (
             <div key={l} className="p-5 bg-[#121214]">
               <div className="overline">{l}</div>
@@ -208,7 +209,7 @@ export default function Incidents() {
                         {i.vehicle_id && <Link to={`/fleet/${i.vehicle_id}`} className="hover:text-primary">{i.vehicle_name || "Vehicle"} · {i.vehicle_plate}</Link>}
                         {i.driver_name && <span>Driver: <span className="text-foreground">{i.driver_name}</span></span>}
                         {i.location && <span>· {i.location}</span>}
-                        {i.reported_cost > 0 && <span className="mono">· {money(i.reported_cost)}</span>}
+                        {i.reported_cost > 0 && <span className="mono">· {formatMoneyFull(i.reported_cost, currency)}</span>}
                       </div>
                       {i.resolution_notes && <div className="mt-2 text-xs text-muted-foreground italic border-l-2 border-primary/40 pl-2">Resolution: {i.resolution_notes}</div>}
                       {(i.photos || []).length > 0 && (
@@ -257,7 +258,7 @@ export default function Incidents() {
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">
                     {b.severe > 0 && <span className="text-primary mono">{b.severe} severe · </span>}
-                    <span className="mono">{money(b.cost)}</span> total
+                    <span className="mono">{formatMoneyFull(b.cost, currency)}</span> total
                   </div>
                 </div>
               ))}

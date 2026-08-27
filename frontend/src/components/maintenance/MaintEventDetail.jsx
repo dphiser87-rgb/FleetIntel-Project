@@ -1,12 +1,13 @@
 import React from "react";
 import { CurrencyDollar, FileText } from "@phosphor-icons/react";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 // Feature 4's "Maintenance Details Panel" step — the completed-work view of Feature 6's fields
 // (Basic Info, Meter Reading, Documentation), with a "Cost" click drilling one level deeper into
 // the Cost Breakdown panel per the spec's exact chain.
 export default function MaintEventDetail({ job, vehicles, assets, onDrillCost }) {
+  const { currency } = useCurrency();
   const vehicle = job.vehicle_id ? vehicles.find((v) => v.id === job.vehicle_id) : null;
   const asset = job.asset_id ? assets.find((a) => a.id === job.asset_id) : null;
 
@@ -51,7 +52,7 @@ export default function MaintEventDetail({ job, vehicles, assets, onDrillCost })
       <button onClick={() => onDrillCost(job)} data-testid="drill-cost-btn"
         className="w-full flex items-center justify-between border border-primary/40 bg-primary/5 px-4 py-3 hover:bg-primary/10 transition-colors">
         <span className="flex items-center gap-2 text-sm font-semibold"><CurrencyDollar size={18} className="text-primary" /> Cost</span>
-        <span className="mono text-lg font-bold text-primary">{money(job.actual_cost)}</span>
+        <span className="mono text-lg font-bold text-primary">{formatMoneyFull(job.actual_cost, currency)}</span>
       </button>
 
       {(job.completion_documents || []).length > 0 && (

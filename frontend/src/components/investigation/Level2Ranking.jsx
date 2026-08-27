@@ -3,8 +3,9 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { ArrowDown, ArrowUp } from "@phosphor-icons/react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from "recharts";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 const isMoney = (k) => /cost|price|amount|spend|value/i.test(k);
 const isPct = (k) => /pct|percent|rate/i.test(k);
 
@@ -17,6 +18,7 @@ const PERIODS = [
 ];
 
 export default function Level2Ranking({ kpiKey, initialGroupBy, groups, onDrillVehicle, onDrillGroup }) {
+  const { currency } = useCurrency();
   const [groupBy, setGroupBy] = useState(initialGroupBy || "vehicle");
   const [period, setPeriod] = useState("all");
   const [data, setData] = useState(null);
@@ -59,7 +61,7 @@ export default function Level2Ranking({ kpiKey, initialGroupBy, groups, onDrillV
       const up = val > 0;
       return <span className={up ? "text-[#FF3B30]" : "text-[#34C759]"}>{up ? "+" : ""}{val}%</span>;
     }
-    if (typeof val === "number" && isMoney(col)) return money(val);
+    if (typeof val === "number" && isMoney(col)) return formatMoneyFull(val, currency);
     if (typeof val === "number" && isPct(col)) return `${val}%`;
     if (typeof val === "number") return val.toLocaleString();
     return String(val);
@@ -73,7 +75,7 @@ export default function Level2Ranking({ kpiKey, initialGroupBy, groups, onDrillV
         {data ? (
           <div className="mt-1">
             <span className="mono text-3xl text-primary font-bold">
-              {isMoney(data.unit) || data.unit === "$" ? money(data.total) : `${data.total.toLocaleString()}${data.unit === "%" ? "%" : ""}`}
+              {isMoney(data.unit) || data.unit === "$" ? formatMoneyFull(data.total, currency) : `${data.total.toLocaleString()}${data.unit === "%" ? "%" : ""}`}
             </span>
             <span className="text-muted-foreground ml-2 text-sm">{data.unit !== "$" && data.unit !== "%" ? data.unit : ""} · {rows.length} rows</span>
           </div>

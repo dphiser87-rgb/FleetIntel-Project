@@ -5,8 +5,8 @@ import { toast } from "sonner";
 import { Plus, Receipt, ArrowSquareOut } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { hasAccess } from "@/lib/access";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const STATUS_COLOR = {
   po_issued: "text-[#34C759] border-[#34C759]",
@@ -15,6 +15,7 @@ const STATUS_COLOR = {
 
 export default function PurchaseOrders() {
   const { user } = useAuth();
+  const { currency } = useCurrency();
   const canCreatePO = hasAccess(user, "purchase_orders", "full");
   const [orders, setOrders] = useState([]);
   const [showNew, setShowNew] = useState(false);
@@ -87,7 +88,7 @@ export default function PurchaseOrders() {
                 <tr key={po.id} className="border-b border-border/50" data-testid={`po-${po.id}`}>
                   <td className="p-3 mono">{po.po_number}</td>
                   <td className="p-3">{po.supplier || "—"}</td>
-                  <td className="p-3 mono">{money(po.amount)}</td>
+                  <td className="p-3 mono">{formatMoneyFull(po.amount, currency, 2)}</td>
                   <td className="p-3">
                     <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border ${STATUS_COLOR[po.status] || ""}`}>{(po.status || "").replace("_", " ")}</span>
                   </td>

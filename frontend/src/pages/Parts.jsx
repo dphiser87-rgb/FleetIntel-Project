@@ -2,10 +2,11 @@ import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Plus, Minus, Warning, Package, Trash, DownloadSimple } from "@phosphor-icons/react";
 import { api, API } from "@/lib/api";
-
-const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 export default function Parts() {
+  const { currency } = useCurrency();
   const [parts, setParts] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ name: "", sku: "", category: "general", stock: 0, reorder_point: 5, unit_cost: 0, supplier: "", supplier_email: "" });
@@ -48,7 +49,7 @@ export default function Parts() {
         <div className="flex items-center gap-6">
           <div>
             <div className="overline">Total value</div>
-            <div className="mono text-xl font-bold mt-1">{money(totalValue)}</div>
+            <div className="mono text-xl font-bold mt-1">{formatMoneyFull(totalValue, currency, 2)}</div>
           </div>
           <div>
             <div className="overline">Low stock</div>
@@ -137,8 +138,8 @@ export default function Parts() {
                     <td className="p-3 text-xs text-muted-foreground uppercase tracking-wider">{p.category}</td>
                     <td className="p-3 text-right mono">{p.stock}</td>
                     <td className="p-3 text-right mono text-muted-foreground">{p.reorder_point}</td>
-                    <td className="p-3 text-right mono">{money(p.unit_cost)}</td>
-                    <td className="p-3 text-right mono">{money((p.stock || 0) * (p.unit_cost || 0))}</td>
+                    <td className="p-3 text-right mono">{formatMoneyFull(p.unit_cost, currency, 2)}</td>
+                    <td className="p-3 text-right mono">{formatMoneyFull((p.stock || 0) * (p.unit_cost || 0), currency, 2)}</td>
                     <td className="p-3">
                       <div className="flex gap-1">
                         <button onClick={() => adjust(p, 1)} data-testid={`add-stock-${p.sku}`} className="border border-border p-1 hover:border-[#34C759] hover:text-[#34C759]"><Plus size={12} /></button>

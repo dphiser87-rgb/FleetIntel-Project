@@ -1,10 +1,11 @@
 import React from "react";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const CATEGORY_LABEL = { maintenance: "Service & repair history", fuel: "Fuel purchases", downtime: "Downtime-linked jobs" };
 
 export default function LevelCostBreakdown({ category, maintenance, fuelLogs, onDrillTransaction }) {
+  const { currency } = useCurrency();
   const isFuel = category === "fuel";
   const rows = isFuel
     ? fuelLogs
@@ -35,10 +36,10 @@ export default function LevelCostBreakdown({ category, maintenance, fuelLogs, on
               >
                 <td className="p-2">{isFuel ? (r.occurred_at || "").slice(0, 10) : r.title}</td>
                 {!isFuel && <td className="p-2 text-xs uppercase text-muted-foreground">{r.status}</td>}
-                {!isFuel && <td className="p-2 mono">{money(r.parts_cost)}</td>}
-                {!isFuel && <td className="p-2 mono">{money(r.labor_cost)}</td>}
+                {!isFuel && <td className="p-2 mono">{formatMoneyFull(r.parts_cost, currency)}</td>}
+                {!isFuel && <td className="p-2 mono">{formatMoneyFull(r.labor_cost, currency)}</td>}
                 <td className="p-2 mono">{isFuel ? `${r.litres} L` : `${r.downtime_hours || 0} h`}</td>
-                <td className="p-2 mono">{money(isFuel ? r.cost : (r.actual_cost || r.estimated_cost))}</td>
+                <td className="p-2 mono">{formatMoneyFull(isFuel ? r.cost : (r.actual_cost || r.estimated_cost), currency)}</td>
               </tr>
             ))}
             {rows.length === 0 && (

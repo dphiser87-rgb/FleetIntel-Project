@@ -3,8 +3,7 @@ import { useParams } from "react-router-dom";
 import { API } from "@/lib/api";
 import axios from "axios";
 import { ShieldCheck, Truck, CheckCircle, XCircle, Wrench, ChartLine } from "@phosphor-icons/react";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { formatMoneyFull } from "@/lib/currency";
 
 export default function PublicVehicle() {
   const { token } = useParams();
@@ -59,7 +58,7 @@ export default function PublicVehicle() {
             ["Inspections", summary.total_inspections],
             ["Maintenance jobs", summary.total_maintenance],
             ["Recent failed items", summary.recent_fail_count],
-            ["Lifetime cost", money(summary.total_maintenance_cost)],
+            ["Lifetime cost", formatMoneyFull(summary.total_maintenance_cost, workspace.currency)],
           ].map(([l, v]) => (
             <div key={l} className="p-5 bg-[#121214]">
               <div className="overline">{l}</div>
@@ -111,7 +110,7 @@ export default function PublicVehicle() {
                     <td className="p-2 mono text-xs">{(m.completed_at || "").slice(0, 10)}</td>
                     <td className="p-2">{m.title}</td>
                     <td className="p-2"><span className="overline">{m.priority}</span></td>
-                    <td className="p-2 text-right mono">{money(m.actual_cost)}</td>
+                    <td className="p-2 text-right mono">{formatMoneyFull(m.actual_cost, workspace.currency)}</td>
                   </tr>
                 ))}
                 {maintenance_history.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-muted-foreground">No completed maintenance.</td></tr>}

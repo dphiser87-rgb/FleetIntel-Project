@@ -8,12 +8,14 @@ import ScheduleFormPanel from "@/components/maintenance/ScheduleFormPanel";
 import ApplyTemplatePanel from "@/components/maintenance/ApplyTemplatePanel";
 import MaintenanceSchedulingHub from "@/components/maintenance/MaintenanceSchedulingHub";
 import { STATUS_COLOR, STATUS_LABEL, flattenAssets } from "@/components/maintenance/ScheduleAssetList";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 const STATUS_RANK = { overdue: 0, due_soon: 1, on_track: 2, awaiting_telematics: 3 };
 
 export default function MaintenanceSchedules() {
   const { user } = useAuth();
+  const { currency } = useCurrency();
   const canManage = hasAccess(user, "maintenance", "full");
   const [schedules, setSchedules] = useState([]);
   const [vehicles, setVehicles] = useState([]);
@@ -102,8 +104,8 @@ export default function MaintenanceSchedules() {
         <div className="grid grid-cols-2 md:grid-cols-4 border border-border border-t-0 grid-borders">
           {[
             ["Completed This Month", kpis.completedThisMonth, "text-muted-foreground"],
-            ["Workshop Spend", money(kpis.workshopSpend), "text-foreground"],
-            ["Average Cost / Asset", money(kpis.avgCostPerAsset), "text-foreground"],
+            ["Workshop Spend", formatMoneyFull(kpis.workshopSpend, currency), "text-foreground"],
+            ["Average Cost / Asset", formatMoneyFull(kpis.avgCostPerAsset, currency), "text-foreground"],
             ["Assets Out of Service", kpis.outOfService, "text-primary"],
           ].map(([l, v, cls]) => (
             <div key={l} className="p-5 bg-[#121214]">

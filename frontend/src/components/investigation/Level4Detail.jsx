@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const Field = ({ label, value }) => (
   <div>
@@ -12,6 +12,7 @@ const Field = ({ label, value }) => (
 );
 
 function FuelDetail({ id }) {
+  const { currency } = useCurrency();
   const [rec, setRec] = useState(null);
   useEffect(() => { api.get(`/fuel-logs/${id}`).then((r) => setRec(r.data)).catch(() => toast.error("Unable to load fuel transaction")); }, [id]);
   if (!rec) return <div className="text-muted-foreground text-sm p-6">Loading…</div>;
@@ -20,7 +21,7 @@ function FuelDetail({ id }) {
       <Field label="Vehicle" value={`${rec.vehicle_name} (${rec.vehicle_plate})`} />
       <Field label="Driver" value={rec.driver_name} />
       <Field label="Litres purchased" value={`${rec.litres} L`} />
-      <Field label="Cost" value={money(rec.cost)} />
+      <Field label="Cost" value={formatMoneyFull(rec.cost, currency)} />
       <Field label="Location" value={rec.location} />
       <Field label="Date" value={(rec.occurred_at || "").slice(0, 16).replace("T", " ")} />
       {rec.odometer != null && <Field label="Odometer" value={`${rec.odometer.toLocaleString()} km`} />}
@@ -29,6 +30,7 @@ function FuelDetail({ id }) {
 }
 
 function MaintenanceDetail({ id }) {
+  const { currency } = useCurrency();
   const [rec, setRec] = useState(null);
   useEffect(() => { api.get(`/maintenance/${id}`).then((r) => setRec(r.data)).catch(() => toast.error("Unable to load maintenance job")); }, [id]);
   if (!rec) return <div className="text-muted-foreground text-sm p-6">Loading…</div>;
@@ -39,10 +41,10 @@ function MaintenanceDetail({ id }) {
         <Field label="Workshop / mechanic" value={rec.assigned_to_name || "Unassigned"} />
         <Field label="Status" value={rec.status} />
         <Field label="Priority" value={rec.priority} />
-        <Field label="Invoice total" value={money(rec.actual_cost || rec.estimated_cost)} />
+        <Field label="Invoice total" value={formatMoneyFull(rec.actual_cost || rec.estimated_cost, currency)} />
         <Field label="Vehicle downtime" value={`${rec.downtime_hours || 0} h`} />
-        <Field label="Labour" value={money(rec.labor_cost)} />
-        <Field label="Parts" value={money(rec.parts_cost)} />
+        <Field label="Labour" value={formatMoneyFull(rec.labor_cost, currency)} />
+        <Field label="Parts" value={formatMoneyFull(rec.parts_cost, currency)} />
         <Field label="Started" value={(rec.started_at || "").slice(0, 10)} />
         <Field label="Completed" value={(rec.completed_at || "").slice(0, 10)} />
       </div>
@@ -57,6 +59,7 @@ function MaintenanceDetail({ id }) {
 }
 
 function IncidentDetail({ id }) {
+  const { currency } = useCurrency();
   const [rec, setRec] = useState(null);
   const [lightbox, setLightbox] = useState(null);
   useEffect(() => { api.get(`/incidents/${id}`).then((r) => setRec(r.data)).catch(() => toast.error("Unable to load incident")); }, [id]);
@@ -68,7 +71,7 @@ function IncidentDetail({ id }) {
         <Field label="Driver report by" value={rec.driver_name} />
         <Field label="Kind" value={rec.kind} />
         <Field label="Severity" value={rec.severity} />
-        <Field label="Reported cost" value={money(rec.reported_cost)} />
+        <Field label="Reported cost" value={formatMoneyFull(rec.reported_cost, currency)} />
         <Field label="Resolution status" value={rec.resolved ? "Resolved" : "Open"} />
         <Field label="Occurred" value={(rec.occurred_at || "").slice(0, 16).replace("T", " ")} />
         <Field label="Location" value={rec.location} />

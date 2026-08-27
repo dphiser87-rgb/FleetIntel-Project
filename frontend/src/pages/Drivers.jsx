@@ -6,6 +6,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import GroupManager from "@/components/GroupManager";
 import DriverPanel from "@/components/DriverPanel";
 import LicenseExpiryBadge from "@/components/LicenseExpiryBadge";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const STATUS_COLOR = {
   active: "border-primary text-primary",
@@ -19,6 +21,7 @@ const daysUntil = (iso) => {
 };
 
 export default function Drivers() {
+  const { currency } = useCurrency();
   const [drivers, setDrivers] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [tripLogs, setTripLogs] = useState([]);
@@ -246,7 +249,7 @@ export default function Drivers() {
                 ["License", detail.driver.license_number],
                 ["Expiry", detail.driver.license_expiry],
                 ["Assigned", detail.vehicle?.name || "—"],
-                ["Total cost", `$${detail.total_cost.toLocaleString()}`],
+                ["Total cost", formatMoneyFull(detail.total_cost, currency)],
               ].map(([l, v]) => (
                 <div key={l} className="p-4 bg-[#0b0b0d]">
                   <div className="overline">{l}</div>
@@ -272,7 +275,7 @@ export default function Drivers() {
                 {detail.maintenance.slice(0, 10).map(m => (
                   <div key={m.id} className="flex items-center justify-between border-b border-border/50 py-2 text-sm">
                     <div>{m.title} <span className="overline ml-2">{m.status}</span></div>
-                    <div className="mono">${(m.actual_cost || m.estimated_cost || 0).toLocaleString()}</div>
+                    <div className="mono">{formatMoneyFull(m.actual_cost || m.estimated_cost, currency)}</div>
                   </div>
                 ))}
                 {detail.maintenance.length === 0 && <div className="text-sm text-muted-foreground">No records.</div>}

@@ -17,9 +17,8 @@ import CreateTileModal from "@/components/tile-config/CreateTileModal";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { RadialBarChart, RadialBar, PolarAngleAxis } from "recharts";
 import { useCurrency } from "@/lib/CurrencyContext";
-import { formatMoney } from "@/lib/currency";
+import { formatMoney, formatMoneyFull } from "@/lib/currency";
 
-const money = (n) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 const COLORS = ["#34C759", "#FF3B30", "#FFCC00", "#3B82F6", "#A855F7"];
 const CHART = {
@@ -53,7 +52,7 @@ const ALL_TILES = [
   // --- Existing tiles, kept ---
   { key: "total_fleet_cost", label: "Total fleet cost", icon: Wallet, color: CHART.gold, get: k => k?.total_fleet_cost ?? 0, sub: () => "Maintenance + fuel + downtime", max: () => 15000, money: true, higher_better: false, breakdown: "both", investigate: true },
   { key: "total_vehicles", label: "Total vehicles", icon: Truck, color: CHART.green, get: k => k?.total_vehicles ?? 0, sub: k => `${k?.active ?? 0} active · ${k?.in_maintenance ?? 0} in maint`, max: k => k?.total_vehicles ?? 10, higher_better: true, breakdown: "group", investigate: true },
-  { key: "total_maintenance_cost", label: "Maintenance cost", icon: Wrench, color: CHART.gold, get: k => k?.total_maintenance_cost ?? 0, sub: k => `Parts ${money(k?.total_parts_cost)} + labor ${money(k?.total_labor_cost)}`, max: () => 10000, money: true, higher_better: false, breakdown: "both", investigate: true, spark: t => t.map(x => x.total) },
+  { key: "total_maintenance_cost", label: "Maintenance cost", icon: Wrench, color: CHART.gold, get: k => k?.total_maintenance_cost ?? 0, sub: (k, currency) => `Parts ${formatMoneyFull(k?.total_parts_cost, currency)} + labor ${formatMoneyFull(k?.total_labor_cost, currency)}`, max: () => 10000, money: true, higher_better: false, breakdown: "both", investigate: true, spark: t => t.map(x => x.total) },
   { key: "downtime_cost", label: "Downtime cost", icon: ClockCounterClockwise, color: CHART.blue, get: k => k?.total_downtime_cost ?? 0, sub: k => `${k?.total_downtime_hours ?? 0}h across the fleet`, max: () => 5000, money: true, higher_better: false, breakdown: "both", investigate: true },
   { key: "utilization", label: "Fleet utilization", icon: TrendUp, color: CHART.green, get: k => k?.utilization_pct ?? 0, sub: k => `${k?.active ?? 0} of ${k?.total_vehicles ?? 0} active`, suffix: "%", max: () => 100, higher_better: true, breakdown: null, investigate: true },
   { key: "fuel_cost", label: "Fuel cost", icon: GasPump, color: CHART.gold, get: k => k?.total_fuel_cost ?? 0, sub: () => "Logged fuel transactions", max: () => 10000, money: true, higher_better: false, breakdown: "both", investigate: true },
@@ -186,7 +185,7 @@ const GaugeTile = ({ tile, kpi, cfg, trend, currency, onClick, onGear }) => {
           </div>
         )}
         {chartType === "number" && <div className="mt-3" style={{ height: 20 }} />}
-        <div className="text-xs text-muted-foreground">{tile.sub(kpi)}</div>
+        <div className="text-xs text-muted-foreground">{tile.sub(kpi, currency)}</div>
         <div className="overline mt-2" style={{ color: iconColor }}>
           {tile.link ? "View details →" : "Investigate →"}
         </div>
@@ -340,7 +339,7 @@ export default function Dashboard() {
                     <div className="mono text-primary text-sm">+{a.delta_pct}%</div>
                   </div>
                   <div className="text-xs text-muted-foreground mt-1 mono">{a.plate} · {a.month}</div>
-                  <div className="text-xs mono mt-2">{money(a.spend)} <span className="text-muted-foreground">vs avg {money(a.mean)}</span></div>
+                  <div className="text-xs mono mt-2">{formatMoneyFull(a.spend, currency)} <span className="text-muted-foreground">vs avg {formatMoneyFull(a.mean, currency)}</span></div>
                 </Link>
               ))}
             </div>
@@ -366,7 +365,7 @@ export default function Dashboard() {
               </div>
               <div>
                 <div className="overline">Forecast · {nextForecast.month}</div>
-                <div className="mono text-2xl font-bold mt-1">{money(nextForecast.total)}</div>
+                <div className="mono text-2xl font-bold mt-1">{formatMoneyFull(nextForecast.total, currency)}</div>
                 <div className="text-xs text-muted-foreground mt-1">Projected maintenance spend next month (linear trend)</div>
               </div>
             </div>
@@ -459,7 +458,7 @@ export default function Dashboard() {
                     <div className="text-sm truncate">{m.title}</div>
                     <div className="overline mt-1">{m.status} · {m.priority}</div>
                   </div>
-                  <div className="mono text-sm">{money(m.actual_cost || m.estimated_cost)}</div>
+                  <div className="mono text-sm">{formatMoneyFull(m.actual_cost || m.estimated_cost, currency)}</div>
                 </div>
               ))}
               {maint.length === 0 && <div className="text-sm text-muted-foreground py-6 text-center">No maintenance jobs yet.</div>}

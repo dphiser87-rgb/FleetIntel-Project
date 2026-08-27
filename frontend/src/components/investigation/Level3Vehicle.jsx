@@ -7,8 +7,8 @@ import {
 import {
   Wrench, GasPump, ClockCounterClockwise, Warning, ClipboardText, Bug, Plus, User,
 } from "@phosphor-icons/react";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const PERIODS = [
   { value: "all", label: "All time" },
@@ -33,6 +33,7 @@ const DeltaBadge = ({ pct }) => {
 };
 
 export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) {
+  const { currency } = useCurrency();
   const [period, setPeriod] = useState("all");
   const [data, setData] = useState(null);
   const [showFuelForm, setShowFuelForm] = useState(false);
@@ -114,7 +115,7 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) 
             data-testid={`cost-tile-${category || "total"}`}
           >
             <div className="overline">{label}</div>
-            <div className="mono text-xl font-bold mt-1">{money(value)}<DeltaBadge pct={delta} /></div>
+            <div className="mono text-xl font-bold mt-1">{formatMoneyFull(value, currency)}<DeltaBadge pct={delta} /></div>
           </div>
         ))}
       </div>
@@ -183,7 +184,7 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) 
             {fuel_logs.slice(0, 10).map((f) => (
               <div key={f.id} className="flex items-center justify-between text-xs border-b border-border/50 py-1.5">
                 <span className="text-muted-foreground">{(f.occurred_at || "").slice(0, 10)} · {f.location || "—"}</span>
-                <span className="mono">{f.litres}L · {money(f.cost)}</span>
+                <span className="mono">{f.litres}L · {formatMoneyFull(f.cost, currency)}</span>
               </div>
             ))}
             {fuel_logs.length === 0 && <div className="text-xs text-muted-foreground text-center py-4">No fuel purchases logged.</div>}
@@ -221,7 +222,7 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) 
             {maintenance.slice(0, 10).map((m) => (
               <div key={m.id} className="flex items-center justify-between text-xs border-b border-border/50 py-1.5">
                 <span className="truncate">{m.title}</span>
-                <span className="mono shrink-0 ml-2">{money(m.actual_cost || m.estimated_cost)}</span>
+                <span className="mono shrink-0 ml-2">{formatMoneyFull(m.actual_cost || m.estimated_cost, currency)}</span>
               </div>
             ))}
             {maintenance.length === 0 && <div className="text-xs text-muted-foreground text-center py-4">No maintenance jobs.</div>}
@@ -251,7 +252,7 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) 
                     <div className="text-[10px] mono text-muted-foreground shrink-0">{(e.at || "").slice(0, 10)}</div>
                   </div>
                   {e.by && <div className="text-xs text-muted-foreground mt-0.5">by {e.by}</div>}
-                  {e.meta?.cost != null && e.meta.cost > 0 && <div className="mono text-xs mt-0.5">{money(e.meta.cost)}</div>}
+                  {e.meta?.cost != null && e.meta.cost > 0 && <div className="mono text-xs mt-0.5">{formatMoneyFull(e.meta.cost, currency)}</div>}
                 </div>
               </button>
             );

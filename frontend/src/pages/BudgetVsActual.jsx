@@ -5,8 +5,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { FloppyDisk } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { hasAccess } from "@/lib/access";
-
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const STATUS_LABEL = { on_track: "On Track", near_limit: "Near Limit", over_budget: "Over Budget" };
 const STATUS_COLOR = {
@@ -17,6 +17,7 @@ const STATUS_COLOR = {
 
 export default function BudgetVsActual() {
   const { user } = useAuth();
+  const { currency } = useCurrency();
   const canEdit = hasAccess(user, "reports", "full");
   const year = new Date().getFullYear();
   const [data, setData] = useState(null);
@@ -60,8 +61,8 @@ export default function BudgetVsActual() {
 
       <div className="p-8 space-y-6">
         <div className="grid grid-cols-2 md:grid-cols-4 border border-border grid-borders" data-testid="budget-stats">
-          {[["YTD Budget", money(data.ytd_budget), "text-foreground"], ["YTD Actual", money(data.ytd_actual), "text-foreground"],
-            ["Total Variance", money(data.ytd_actual - data.ytd_budget), data.ytd_actual > data.ytd_budget ? "text-primary" : "text-[#34C759]"],
+          {[["YTD Budget", formatMoneyFull(data.ytd_budget, currency), "text-foreground"], ["YTD Actual", formatMoneyFull(data.ytd_actual, currency), "text-foreground"],
+            ["Total Variance", formatMoneyFull(data.ytd_actual - data.ytd_budget, currency), data.ytd_actual > data.ytd_budget ? "text-primary" : "text-[#34C759]"],
             ["Budget Utilisation", `${utilization}%`, utilization > 100 ? "text-primary" : "text-foreground"]].map(([l, v, cls]) => (
             <div key={l} className="p-5 bg-[#121214]">
               <div className="overline">{l}</div>
@@ -76,7 +77,7 @@ export default function BudgetVsActual() {
             <div className="flex gap-4 flex-wrap text-sm">
               {overruns.map(c => (
                 <div key={c.category} className="text-primary">
-                  {c.category} <span className="mono">+{money(c.variance)} over budget</span>
+                  {c.category} <span className="mono">+{formatMoneyFull(c.variance, currency)} over budget</span>
                 </div>
               ))}
             </div>
@@ -115,10 +116,10 @@ export default function BudgetVsActual() {
                       <input type="number" min="0" defaultValue={c.budget} data-testid={`budget-input-${c.category}`}
                         onChange={(e) => setEdits({ ...edits, [c.category]: e.target.value })}
                         className="w-28 bg-[#0b0b0d] border border-border px-2 py-1 text-sm focus:border-primary focus:outline-none" />
-                    ) : money(c.budget)}
+                    ) : formatMoneyFull(c.budget, currency)}
                   </td>
-                  <td className="px-4 py-3 mono">{money(c.actual)}</td>
-                  <td className={`px-4 py-3 mono ${c.variance > 0 ? "text-primary" : "text-[#34C759]"}`}>{c.variance > 0 ? "+" : ""}{money(c.variance)}</td>
+                  <td className="px-4 py-3 mono">{formatMoneyFull(c.actual, currency)}</td>
+                  <td className={`px-4 py-3 mono ${c.variance > 0 ? "text-primary" : "text-[#34C759]"}`}>{c.variance > 0 ? "+" : ""}{formatMoneyFull(c.variance, currency)}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <div className="w-20 h-1.5 bg-white/5">

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 import {
   Truck, ClipboardText, Wrench, Package, UsersThree, CheckCircle, Warning, ClockCounterClockwise, UserCirclePlus, UserCheck, PencilSimple,
   FolderSimple, FolderPlus, FolderMinus, Palette, TrashSimple, Receipt, XCircle,
@@ -50,22 +52,20 @@ const timeAgo = (iso) => {
   return `${Math.floor(s/86400)}d ago`;
 };
 
-const money = (n) => `$${Number(n || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}`;
-
-const renderMeta = (action, meta = {}) => {
+const renderMeta = (action, meta = {}, currency) => {
   if (action === "vehicle.created") return <><span className="mono text-primary">{meta.plate}</span> · {meta.name}</>;
   if (action === "template.created") return <>{meta.name}</>;
   if (action === "inspection.completed") return <>{meta.fail_count} failed item{meta.fail_count !== 1 && "s"}</>;
   if (action === "maintenance.created") return <>{meta.title} <span className="text-muted-foreground">· priority {meta.priority}</span></>;
-  if (action === "maintenance.completed") return <>{meta.title} <span className="mono text-white">{money(meta.actual_cost)}</span></>;
+  if (action === "maintenance.completed") return <>{meta.title} <span className="mono text-white">{formatMoneyFull(meta.actual_cost, currency)}</span></>;
   if (action === "maintenance.in_progress" || action === "maintenance.cancelled") return <>{meta.title}</>;
   if (action === "part.adjusted") return <>{meta.name} <span className={`mono ${meta.delta >= 0 ? "text-[#34C759]" : "text-primary"}`}>{meta.delta >= 0 ? "+" : ""}{meta.delta}</span> <span className="text-muted-foreground">→ {meta.new_stock} on hand</span></>;
   if (action === "invite.created") return <>{meta.email} <span className="text-muted-foreground">as {meta.role}</span></>;
   if (action === "invite.accepted") return <>{meta.email} <span className="text-muted-foreground">as {meta.role}</span></>;
-  if (action === "quote.submitted") return <>{money(meta.total)} total</>;
+  if (action === "quote.submitted") return <>{formatMoneyFull(meta.total, currency)} total</>;
   if (action === "quote.ops_approved" || action === "quote.finance_approved") return <>Approved</>;
   if (action === "quote.ops_rejected" || action === "quote.finance_rejected") return <>{meta.reason}</>;
-  if (action === "purchase_order.created") return <>{meta.po_number} <span className="mono text-white">{money(meta.amount)}</span></>;
+  if (action === "purchase_order.created") return <>{meta.po_number} <span className="mono text-white">{formatMoneyFull(meta.amount, currency)}</span></>;
   if (action.endsWith(".created") || action.endsWith(".updated") || action.endsWith(".deleted")) return <>{meta.name}</>;
   if (action.endsWith(".color_changed")) return <>{meta.name} <span className="text-muted-foreground">{meta.from || "default"} → {meta.to}</span></>;
   if (action.endsWith(".member_added") || action.endsWith(".member_removed")) return <>{meta.name} <span className="text-muted-foreground">· {meta.count} record{meta.count !== 1 && "s"}</span></>;
@@ -73,6 +73,7 @@ const renderMeta = (action, meta = {}) => {
 };
 
 export default function AuditLog() {
+  const { currency } = useCurrency();
   const [events, setEvents] = useState([]);
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
@@ -137,7 +138,7 @@ export default function AuditLog() {
                     <span className="text-sm text-white">{e.user_name}</span>
                     <span className="text-xs text-muted-foreground">{meta.label}</span>
                   </div>
-                  <div className="text-sm mt-1">{renderMeta(e.action, e.meta)}</div>
+                  <div className="text-sm mt-1">{renderMeta(e.action, e.meta, currency)}</div>
                   <div className="overline mt-2">{timeAgo(e.at)} · <span className="mono normal-case tracking-normal">{e.user_email}</span></div>
                 </div>
               </div>
