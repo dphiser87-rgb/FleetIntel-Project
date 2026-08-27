@@ -44,7 +44,8 @@ export default function Maintenance() {
   });
   const [showNew, setShowNew] = useState(false);
   const [newJobTargetType, setNewJobTargetType] = useState("vehicle"); // vehicle | asset
-  const [newJob, setNewJob] = useState({ vehicle_id: "", asset_id: "", title: "", priority: "medium", category: "general", odometer: "" });
+  const [newJob, setNewJob] = useState({ vehicle_id: "", asset_id: "", schedule_id: "", title: "", priority: "medium", category: "general", odometer: "" });
+  const [schedules, setSchedules] = useState([]);
   const [view, setView] = useState("board"); // board | table | audit
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [sortKey, setSortKey] = useState("created_at");
@@ -60,7 +61,19 @@ export default function Maintenance() {
     api.get("/vehicles").then(r => setVehicles(r.data));
     api.get("/assets").then(r => setAssets(r.data)).catch(() => {});
     api.get("/users").then(r => setUsers(r.data));
+    api.get("/maintenance-schedules").then(r => setSchedules(r.data || [])).catch(() => {});
   }, []);
+
+  // Schedules assigned to whichever vehicle/asset is currently selected in the New Job form — a job
+  // can only reset a schedule it's actually linked to, so don't offer schedules for other assets.
+  const targetId = newJobTargetType === "vehicle" ? newJob.vehicle_id : newJob.asset_id;
+  const eligibleSchedules = schedules.filter(s => s.assets.some(a => a.kind === newJobTargetType && a.id === targetId));
+  useEffect(() => {
+    if (newJob.schedule_id && !eligibleSchedules.some(s => s.id === newJob.schedule_id)) {
+      setNewJob(j => ({ ...j, schedule_id: "" }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetId, newJobTargetType]);
 
   useEffect(() => {
     if (view === "audit") api.get("/audit", { params: { entity_type: "maintenance" } }).then(r => setAudit(r.data || []));
@@ -84,10 +97,11 @@ export default function Maintenance() {
       const payload = newJobTargetType === "vehicle"
         ? { vehicle_id: newJob.vehicle_id, title: newJob.title, priority: newJob.priority, category: newJob.category, odometer: Number(newJob.odometer) || 0 }
         : { asset_id: newJob.asset_id, title: newJob.title, priority: newJob.priority, category: newJob.category };
+      if (newJob.schedule_id) payload.schedule_id = newJob.schedule_id;
       await api.post("/maintenance", payload);
       toast.success("Job created");
       setShowNew(false);
-      setNewJob({ vehicle_id: "", asset_id: "", title: "", priority: "medium", category: "general", odometer: "" });
+      setNewJob({ vehicle_id: "", asset_id: "", schedule_id: "", title: "", priority: "medium", category: "general", odometer: "" });
       setNewJobTargetType("vehicle");
       load();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed to create job"); }
@@ -448,6 +462,22 @@ export default function Maintenance() {
                     <option value="">Select asset…</option>
                     {assets.map(a => <option key={a.id} value={a.id}>{a.name} · {a.identifier}</option>)}
                   </select>
+                </div>
+              )}
+              {targetId && (
+                <div>
+                  <label className="overline block mb-1">Linked schedule (optional)</label>
+                  <select value={newJob.schedule_id} onChange={(e) => setNewJob({ ...newJob, schedule_id: e.target.value })} data-testid="new-job-schedule"
+                    className="w-full bg-[#0b0b0d] border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                    <option value="">Not linked to a schedule</option>
+                    {eligibleSchedules.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                  {eligibleSchedules.length === 0 && (
+                    <div className="text-xs text-muted-foreground mt-1">No maintenance schedules cover this {newJobTargetType} yet.</div>
+                  )}
+                  {newJob.schedule_id && (
+                    <div className="text-xs text-primary mt-1">Completing this job will reset the schedule's next-due date.</div>
+                  )}
                 </div>
               )}
               <div>

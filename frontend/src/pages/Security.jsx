@@ -1,26 +1,49 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { ShieldCheck, ShieldWarning, QrCode, EnvelopeSimple, ClockCounterClockwise, Copy, ArrowsClockwise, CurrencyCircleDollar } from "@phosphor-icons/react";
+import { ShieldCheck, ShieldWarning, QrCode, Copy, ArrowsClockwise, LockKey } from "@phosphor-icons/react";
 import { formatApiErrorDetail } from "@/lib/api";
-import { useCurrency } from "@/lib/CurrencyContext";
-import { CURRENCIES } from "@/lib/currency";
+import { useAuth } from "@/contexts/AuthContext";
+
+const LOCKOUT_MINUTES = 15; // mirrors backend server.py's LOCKOUT_COOLDOWN_MINUTES
 
 export default function Security() {
-  const { currency, setCurrency } = useCurrency();
+  const { user } = useAuth();
+  const canManage = user && ["admin", "manager"].includes(user.role);
   const [status, setStatus] = useState(null);
   const [setup, setSetup] = useState(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
-  const [digestSending, setDigestSending] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState(null);
   const [recoveryStatus, setRecoveryStatus] = useState(null);
+  const [minPasswordLength, setMinPasswordLength] = useState(null);
+  const [lockoutEnabled, setLockoutEnabled] = useState(false);
+  const [lockoutThreshold, setLockoutThreshold] = useState(5);
 
   const load = () => {
     api.get("/auth/2fa/status").then(r => setStatus(r.data.enabled));
     api.get("/auth/2fa/recovery-status").then(r => setRecoveryStatus(r.data)).catch(() => {});
+    api.get("/workspace").then((r) => {
+      setMinPasswordLength(r.data.workspace.min_password_length ?? 8);
+      setLockoutEnabled(r.data.workspace.lockout_enabled ?? false);
+      setLockoutThreshold(r.data.workspace.lockout_threshold ?? 5);
+    }).catch(() => {});
   };
   useEffect(() => { load(); }, []);
+
+  const saveMinPasswordLength = async (n) => {
+    setMinPasswordLength(n);
+    try { await api.patch("/workspace", { min_password_length: n }); } catch (e) { toast.error("Failed to save"); }
+  };
+  const toggleLockout = async () => {
+    const next = !lockoutEnabled;
+    setLockoutEnabled(next);
+    try { await api.patch("/workspace", { lockout_enabled: next }); } catch (e) { toast.error("Failed to save"); setLockoutEnabled(!next); }
+  };
+  const saveLockoutThreshold = async (n) => {
+    setLockoutThreshold(n);
+    try { await api.patch("/workspace", { lockout_threshold: n }); } catch (e) { toast.error("Failed to save"); }
+  };
 
   const startSetup = async () => {
     try {
@@ -62,21 +85,11 @@ export default function Security() {
     } catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
   };
 
-  const sendDigest = async () => {
-    setDigestSending(true);
-    try {
-      const { data } = await api.post("/workspace/send-digest");
-      if (data.sent) toast.success("Weekly digest emailed to the workspace owner");
-      else toast.error("No supplier email configured or send failed");
-    } catch (e) { toast.error("Failed"); }
-    finally { setDigestSending(false); }
-  };
-
   return (
     <div className="noise-bg min-h-screen">
       <header className="border-b border-border px-8 py-6">
         <div className="overline">Account</div>
-        <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="security-title">Security & schedule</h1>
+        <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="security-title">Security</h1>
       </header>
 
       <div className="p-8 grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-5xl">
@@ -151,48 +164,64 @@ export default function Security() {
           )}
         </div>
 
-        <div className="bg-[#121214] border border-border p-6" data-testid="currency-card">
+        <div className="bg-[#121214] border border-border p-6" data-testid="password-policy-card">
           <div className="flex items-center gap-3 mb-1">
-            <CurrencyCircleDollar size={22} className="text-primary" />
-            <div className="overline">Display preferences</div>
+            <LockKey size={22} className="text-primary" />
+            <div className="overline">Access policy</div>
           </div>
-          <h3 className="font-display text-2xl font-bold tracking-tight">Currency</h3>
+          <h3 className="font-display text-2xl font-bold tracking-tight">Password & lockout</h3>
           <div className="mt-2 text-sm text-muted-foreground">
-            Dashboard tiles and tile configuration show costs in this currency.
+            Applies workspace-wide, to every teammate's login.
+            {!canManage && " Only admins and managers can change this."}
           </div>
-          <select
-            value={currency}
-            onChange={(e) => { setCurrency(e.target.value); toast.success(`Currency set to ${e.target.value}`); }}
-            data-testid="currency-select"
-            className="mt-4 w-full bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none"
-          >
-            {Object.entries(CURRENCIES).map(([code, c]) => (
-              <option key={code} value={code}>{code} — {c.label} ({c.symbol})</option>
-            ))}
-          </select>
-        </div>
 
-        <div className="bg-[#121214] border border-border p-6" data-testid="digest-card">
-          <div className="flex items-center gap-3 mb-1">
-            <ClockCounterClockwise size={22} className="text-primary" />
-            <div className="overline">Automated reports</div>
-          </div>
-          <h3 className="font-display text-2xl font-bold tracking-tight">Weekly digest email</h3>
-          <div className="mt-2 text-sm text-muted-foreground">
-            Every Monday at 13:00 UTC we send the workspace owner a PDF summary of KPIs, cost anomalies, pending jobs and low-stock parts.
-          </div>
-          <div className="mt-4 flex items-center gap-2">
-            <EnvelopeSimple size={16} className="text-muted-foreground" />
-            <div className="text-xs text-muted-foreground">
-              Recipient: <span className="mono text-white">workspace owner email</span>
+          <div className="mt-5">
+            <label className="text-xs uppercase tracking-widest text-muted-foreground mb-1.5 block">Minimum password length</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" min="6" max="64"
+                value={minPasswordLength ?? ""}
+                disabled={!canManage || minPasswordLength === null}
+                data-testid="min-password-length-input"
+                onChange={(e) => saveMinPasswordLength(Math.max(6, Number(e.target.value) || 8))}
+                className="w-20 bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm mono focus:border-primary focus:outline-none disabled:opacity-50"
+              />
+              <span className="text-sm text-muted-foreground">characters</span>
+            </div>
+            <div className="text-xs text-muted-foreground mt-1.5">
+              Enforced when a new teammate registers or accepts an invite. Doesn't cover a self-service password reset — that flow is hosted by Supabase outside this app.
             </div>
           </div>
-          <div className="mt-4 border-t border-border pt-4">
-            <button onClick={sendDigest} disabled={digestSending} data-testid="send-digest-now" className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90 disabled:opacity-60">
-              <EnvelopeSimple size={14} /> {digestSending ? "Sending…" : "Send digest now"}
-            </button>
-            <div className="text-xs text-muted-foreground mt-3">
-              Use this to preview what your scheduled email looks like.
+
+          <div className="mt-5 pt-5 border-t border-border">
+            <div className="flex items-center justify-between">
+              <label className="text-xs uppercase tracking-widest text-muted-foreground">Lock account after failed logins</label>
+              <button
+                type="button"
+                disabled={!canManage}
+                onClick={toggleLockout}
+                data-testid="toggle-lockout"
+                className={`shrink-0 w-11 h-6 rounded-full border transition-colors relative disabled:opacity-50 ${lockoutEnabled ? "bg-primary border-primary" : "bg-[#0b0b0d] border-border"}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${lockoutEnabled ? "translate-x-[22px]" : "translate-x-0"}`} />
+              </button>
+            </div>
+            {lockoutEnabled && (
+              <div className="flex items-center gap-2 mt-3">
+                <span className="text-sm text-muted-foreground">Lock after</span>
+                <input
+                  type="number" min="3" max="20"
+                  value={lockoutThreshold}
+                  disabled={!canManage}
+                  data-testid="lockout-threshold-input"
+                  onChange={(e) => saveLockoutThreshold(Math.max(3, Number(e.target.value) || 5))}
+                  className="w-16 bg-[#0b0b0d] border border-border px-3 py-2 text-sm mono focus:border-primary focus:outline-none disabled:opacity-50"
+                />
+                <span className="text-sm text-muted-foreground">failed attempts, for {LOCKOUT_MINUTES} minutes</span>
+              </div>
+            )}
+            <div className="text-xs text-muted-foreground mt-2">
+              A locked teammate can be unlocked early from their profile on the Team page.
             </div>
           </div>
         </div>

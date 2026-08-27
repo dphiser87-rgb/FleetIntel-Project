@@ -16,7 +16,11 @@ export default function InvestigationHub({ root, groups, onClose }) {
 
   useEffect(() => {
     if (root) {
-      setStack([{ type: "ranking", kpiKey: root.key, groupBy: root.groupBy, label: root.label }]);
+      // root.type lets a caller start the stack somewhere other than the ranking level — e.g. the
+      // Executive Dashboard's "Top Vehicles" list jumps straight to a vehicle's own cost breakdown
+      // (Level3Vehicle) instead of opening a ranking list of one. Falls back to the original
+      // ranking-only shape ({key, groupBy, label}) for existing callers like Dashboard.jsx.
+      setStack([root.type ? root : { type: "ranking", kpiKey: root.key, groupBy: root.groupBy, label: root.label }]);
     } else {
       setStack([]);
     }

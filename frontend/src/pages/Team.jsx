@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { UserPlus, Copy, Trash, PencilSimple, ArrowUp, ArrowDown, DownloadSimple, Prohibit } from "@phosphor-icons/react";
+import { UserPlus, Copy, Trash, PencilSimple, ArrowUp, ArrowDown, DownloadSimple, Prohibit, Key } from "@phosphor-icons/react";
 import { formatApiErrorDetail } from "@/lib/api";
 import TeamMemberPanel from "@/components/TeamMemberPanel";
 import { ROLE_COLOR } from "@/lib/access";
@@ -21,6 +21,9 @@ export default function Team() {
   const [presets, setPresets] = useState({});
   const [vehicleGroups, setVehicleGroups] = useState([]);
   const [driverGroups, setDriverGroups] = useState([]);
+  const [assetGroups, setAssetGroups] = useState([]);
+  const [vehicles, setVehicles] = useState([]);
+  const [assets, setAssets] = useState([]);
   const [selected, setSelected] = useState(null);
   const ROLES = Object.keys(presets).length ? Object.keys(presets) : FALLBACK_ROLES;
 
@@ -44,6 +47,9 @@ export default function Team() {
     api.get("/permissions/presets").then((r) => { setModuleKeys(r.data.module_keys); setPresets(r.data.presets); });
     api.get("/vehicle-groups").then((r) => setVehicleGroups(r.data || [])).catch(() => {});
     api.get("/driver-groups").then((r) => setDriverGroups(r.data || [])).catch(() => {});
+    api.get("/asset-groups").then((r) => setAssetGroups(r.data || [])).catch(() => {});
+    api.get("/vehicles").then((r) => setVehicles(r.data || [])).catch(() => {});
+    api.get("/assets").then((r) => setAssets(r.data || [])).catch(() => {});
   }, []);
 
   const saveName = async () => {
@@ -104,6 +110,14 @@ export default function Team() {
     load();
   };
 
+  const bulkResetPassword = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Email a password reset link to ${selectedIds.size} member(s)?`)) return;
+    await Promise.all(Array.from(selectedIds).map((id) => api.post(`/users/${id}/reset-password`)));
+    toast.success("Password reset emails sent");
+    setSelectedIds(new Set());
+  };
+
   const exportCsv = () => {
     const token = localStorage.getItem("token");
     window.open(`${API}/export/users.csv?token=${encodeURIComponent(token)}`, "_blank");
@@ -140,17 +154,6 @@ export default function Team() {
           <div className="mono text-xs text-muted-foreground">
             {members.length} member{members.length !== 1 && "s"} · {invites.filter(i => !i.used_by).length} pending invite{invites.filter(i => !i.used_by).length !== 1 && "s"}
           </div>
-          <div className="flex items-center gap-2 border border-border px-3 py-2">
-            <label className="overline">Licence warning window</label>
-            <input type="number" min="1" value={ws.license_warning_days ?? 30} data-testid="license-warning-days-input"
-              onChange={async (e) => {
-                const days = Number(e.target.value) || 30;
-                setWs({ ...ws, license_warning_days: days });
-                await api.patch("/workspace", { license_warning_days: days });
-              }}
-              className="w-14 bg-[#0b0b0d] border border-border px-2 py-1 text-sm mono focus:border-primary focus:outline-none" />
-            <span className="text-xs text-muted-foreground">days</span>
-          </div>
         </div>
       </header>
 
@@ -175,9 +178,14 @@ export default function Team() {
                   {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
                 {selectedIds.size > 0 && (
-                  <button onClick={bulkDeactivate} data-testid="bulk-deactivate" className="flex items-center gap-1 border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
-                    <Prohibit size={12} /> Deactivate ({selectedIds.size})
-                  </button>
+                  <>
+                    <button onClick={bulkResetPassword} data-testid="bulk-reset-password" className="flex items-center gap-1 border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
+                      <Key size={12} /> Reset password ({selectedIds.size})
+                    </button>
+                    <button onClick={bulkDeactivate} data-testid="bulk-deactivate" className="flex items-center gap-1 border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
+                      <Prohibit size={12} /> Deactivate ({selectedIds.size})
+                    </button>
+                  </>
                 )}
                 <button onClick={exportCsv} data-testid="download-team-csv" className="flex items-center gap-1 border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
                   <DownloadSimple size={12} /> Download
@@ -214,6 +222,9 @@ export default function Team() {
                     <td className="p-3 text-xs text-muted-foreground" onClick={() => setSelected(m)}>{m.active_from || m.active_until ? `${m.active_from || "…"} → ${m.active_until || "…"}` : "Unlimited"}</td>
                     <td className="p-3" onClick={() => setSelected(m)}>
                       <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border ${(m.status || "active") === "active" ? "border-[#34C759] text-[#34C759]" : "border-muted-foreground text-muted-foreground"}`}>{m.status || "active"}</span>
+                      {m.locked_until && new Date(m.locked_until) > new Date() && (
+                        <span className="ml-1 text-[10px] mono uppercase tracking-widest px-2 py-1 border border-[#FF3B30]/60 text-[#FF3B30]">Locked</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -297,6 +308,7 @@ export default function Team() {
 
       <TeamMemberPanel member={selected} moduleKeys={moduleKeys} presets={presets}
         vehicleGroups={vehicleGroups} driverGroups={driverGroups}
+        assetGroups={assetGroups} vehicles={vehicles} assets={assets}
         onClose={() => setSelected(null)} onChange={load} />
     </div>
   );
