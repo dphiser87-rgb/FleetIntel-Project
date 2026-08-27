@@ -6,7 +6,9 @@ import { CurrencyProvider } from "@/lib/CurrencyContext";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import ResetPassword from "@/pages/ResetPassword";
 import Dashboard from "@/pages/Dashboard";
+import ExecutiveDashboard from "@/pages/ExecutiveDashboard";
 import Fleet from "@/pages/Fleet";
 import VehicleDetail from "@/pages/VehicleDetail";
 import Templates from "@/pages/Templates";
@@ -15,12 +17,16 @@ import VehicleChecklist from "@/pages/VehicleChecklist";
 import Inspection from "@/pages/Inspection";
 import Assets from "@/pages/Assets";
 import Maintenance from "@/pages/Maintenance";
+import MaintenanceSchedules from "@/pages/MaintenanceSchedules";
+import MaintenanceReports from "@/pages/MaintenanceReports";
 import Reports from "@/pages/Reports";
+import ReportCenter from "@/pages/ReportCenter";
 import Parts from "@/pages/Parts";
 import InspectionReport from "@/pages/InspectionReport";
 import Team from "@/pages/Team";
 import AuditLog from "@/pages/AuditLog";
 import Security from "@/pages/Security";
+import Settings from "@/pages/Settings";
 import Drivers from "@/pages/Drivers";
 import Incidents from "@/pages/Incidents";
 import PurchaseOrders from "@/pages/PurchaseOrders";
@@ -50,10 +56,12 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/public/vehicle/:token" element={<PublicVehicle />} />
             <Route path="/public/incident/:token" element={<PublicIncident />} />
             <Route path="/" element={<Protected><CurrencyProvider><Layout /></CurrencyProvider></Protected>}>
               <Route index element={<Dashboard />} />
+              <Route path="executive-dashboard" element={<ExecutiveDashboard />} />
               <Route path="fleet" element={<Fleet />} />
               <Route path="fleet/:id" element={<VehicleDetail />} />
               <Route path="templates" element={<Templates />} />
@@ -65,6 +73,8 @@ function App() {
               <Route path="inspections/:id" element={<InspectionReport />} />
               <Route path="assets" element={<Assets />} />
               <Route path="maintenance" element={<Maintenance />} />
+              <Route path="maintenance-schedules" element={<MaintenanceSchedules />} />
+              <Route path="maintenance-reports" element={<MaintenanceReports />} />
               <Route path="parts" element={<Parts />} />
               <Route path="purchase-orders" element={<PurchaseOrders />} />
               <Route path="defects" element={<DefectReporting />} />
@@ -75,7 +85,9 @@ function App() {
               <Route path="team" element={<Team />} />
               <Route path="audit" element={<AuditLog />} />
               <Route path="security" element={<Security />} />
+              <Route path="settings" element={<Settings />} />
               <Route path="reports" element={<Reports />} />
+              <Route path="report-center" element={<ReportCenter />} />
             </Route>
           </Routes>
         </BrowserRouter>

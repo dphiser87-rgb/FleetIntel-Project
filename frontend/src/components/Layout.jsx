@@ -7,10 +7,12 @@ import { hasAccess } from "@/lib/access";
 import {
   ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise,
   ShieldCheck, UserCircle, Warning, Stack, ListChecks, Receipt, ShieldCheckered, Calculator, CaretDown, WarningOctagon,
+  CalendarCheck, Brain, Gear, FileText,
 } from "@phosphor-icons/react";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: Gauge, end: true, id: "nav-dashboard", moduleKey: "dashboard" },
+  { to: "/executive-dashboard", label: "Executive Dashboard", icon: Brain, id: "nav-executive-dashboard", moduleKey: "executive_dashboard" },
   { to: "/fleet", label: "Fleet", icon: Truck, id: "nav-fleet", moduleKey: "fleet" },
   { to: "/assets", label: "Assets", icon: Stack, id: "nav-assets", moduleKey: "assets" },
   { to: "/drivers", label: "Drivers", icon: UserCircle, id: "nav-drivers", moduleKey: "drivers" },
@@ -18,15 +20,19 @@ const nav = [
   { to: "/templates", label: "Checklist Templates", icon: ListChecks, id: "nav-templates", moduleKey: "templates", group: "Operations" },
   { to: "/compliance", label: "Compliance Dashboard", icon: ShieldCheckered, id: "nav-compliance", moduleKey: "vehicle_checklist", group: "Operations" },
   { to: "/maintenance", label: "Workshop Management", icon: Wrench, id: "nav-maintenance", moduleKey: "maintenance", group: "Operations" },
+  { to: "/maintenance-schedules", label: "Maintenance Schedules", icon: CalendarCheck, id: "nav-maintenance-schedules", moduleKey: "maintenance", group: "Operations" },
+  { to: "/maintenance-reports", label: "Maintenance Reports", icon: ChartBar, id: "nav-maintenance-reports", moduleKey: "maintenance", group: "Operations" },
   { to: "/defects", label: "Defect Reporting", icon: WarningOctagon, id: "nav-defects", moduleKey: "defects", group: "Operations" },
   { to: "/incidents", label: "Incidents", icon: Warning, id: "nav-incidents", moduleKey: "incidents", group: "Operations" },
   { to: "/parts", label: "Parts", icon: Package, id: "nav-parts", moduleKey: "parts", group: "Finance" },
   { to: "/purchase-orders", label: "Purchase Orders", icon: Receipt, id: "nav-purchase-orders", moduleKey: "purchase_orders", group: "Finance" },
   { to: "/budgets", label: "Budget vs Actual", icon: Calculator, id: "nav-budgets", moduleKey: "reports", group: "Finance" },
   { to: "/reports", label: "Reports", icon: ChartBar, id: "nav-reports", moduleKey: "reports", group: "Finance" },
+  { to: "/report-center", label: "Report Center", icon: FileText, id: "nav-report-center", moduleKey: "reports", group: "Finance" },
   { to: "/team", label: "Team", icon: UsersThree, id: "nav-team", moduleKey: "team" },
   { to: "/audit", label: "Activity", icon: ClockCounterClockwise, id: "nav-audit", moduleKey: "audit" },
   { to: "/security", label: "Security", icon: ShieldCheck, id: "nav-security", moduleKey: "security" },
+  { to: "/settings", label: "Account Settings", icon: Gear, id: "nav-settings" },
 ];
 
 const GROUPS = ["Operations", "Finance"];
@@ -55,7 +61,7 @@ export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const visibleNav = nav.filter((n) => hasAccess(user, n.moduleKey, "read"));
+  const visibleNav = nav.filter((n) => !n.moduleKey || hasAccess(user, n.moduleKey, "read"));
   const topLevel = visibleNav.filter((n) => !n.group);
   const [collapsed, setCollapsed] = useState({});
 
@@ -66,7 +72,7 @@ export default function Layout() {
   const matched = [...nav].sort((a, b) => b.to.length - a.to.length).find(
     (n) => location.pathname === n.to || (n.to !== "/" && location.pathname.startsWith(n.to + "/"))
   );
-  if (matched && !hasAccess(user, matched.moduleKey, "read")) {
+  if (matched && matched.moduleKey && !hasAccess(user, matched.moduleKey, "read")) {
     return <Navigate to="/" replace />;
   }
 

@@ -47,7 +47,7 @@ export default function LevelGroupAnalysis({ groupId, onDrillVehicle }) {
             <thead className="border-b border-border">
               <tr className="text-left overline">
                 <th className="p-2">Vehicle</th>
-                <th className="p-2">Plate</th>
+                <th className="p-2">Licence Plate</th>
                 <th className="p-2">Status</th>
               </tr>
             </thead>

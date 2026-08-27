@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, MagnifyingGlass, X as XIcon } from "@phosphor-icons/react";
+import { Plus, MagnifyingGlass, X as XIcon, Wrench } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { hasAccess } from "@/lib/access";
 
@@ -28,6 +28,7 @@ const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFract
 export default function DefectReporting() {
   const { user } = useAuth();
   const canManage = hasAccess(user, "defects", "full");
+  const canConvert = hasAccess(user, "maintenance", "full");
   const canPrice = PRICING_ROLES.includes(user?.role);
   const [defects, setDefects] = useState([]);
   const [vehicles, setVehicles] = useState([]);
@@ -73,6 +74,14 @@ export default function DefectReporting() {
       setForm({ vehicle_id: "", category: "general", severity: "medium", description: "", location: "", assigned_to: "", estimated_cost: "" });
       load();
     } catch { toast.error("Failed to report defect"); }
+  };
+
+  const convertToMaintenance = async (id) => {
+    try {
+      await api.post(`/defects/${id}/convert-to-maintenance`);
+      toast.success("Maintenance work order created — completing it will auto-resolve this defect");
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to convert defect"); }
   };
 
   const saveEdit = async (e) => {
@@ -152,13 +161,26 @@ export default function DefectReporting() {
                       {canPrice && d.estimated_cost > 0 && <span className="mono">· {money(d.estimated_cost)}</span>}
                     </div>
                     {d.resolution_notes && <div className="mt-2 text-xs text-muted-foreground italic border-l-2 border-primary/40 pl-2">{d.resolution_notes}</div>}
+                    {d.maintenance_id && (
+                      <div className="mt-2 flex items-center gap-1 text-xs text-primary" data-testid={`defect-linked-job-${d.id}`}>
+                        <Wrench size={12} /> Linked to a maintenance work order — resolves automatically on completion
+                      </div>
+                    )}
                   </div>
-                  {canManage && (
-                    <button onClick={() => setEditing({ ...d, assigned_to: d.assigned_to || "", estimated_cost: d.estimated_cost || "" })} data-testid={`edit-defect-${d.id}`}
-                      className="opacity-60 group-hover:opacity-100 text-xs uppercase tracking-widest text-muted-foreground hover:text-primary border border-border px-2 py-1">
-                      Update
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {canConvert && d.status !== "resolved" && !d.maintenance_id && d.vehicle_id && (
+                      <button onClick={() => convertToMaintenance(d.id)} data-testid={`convert-defect-${d.id}`}
+                        className="opacity-60 group-hover:opacity-100 flex items-center gap-1 text-xs uppercase tracking-widest text-muted-foreground hover:text-primary border border-border px-2 py-1">
+                        <Wrench size={12} /> Convert to Work Order
+                      </button>
+                    )}
+                    {canManage && (
+                      <button onClick={() => setEditing({ ...d, assigned_to: d.assigned_to || "", estimated_cost: d.estimated_cost || "" })} data-testid={`edit-defect-${d.id}`}
+                        className="opacity-60 group-hover:opacity-100 text-xs uppercase tracking-widest text-muted-foreground hover:text-primary border border-border px-2 py-1">
+                        Update
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

@@ -7,14 +7,14 @@ export function CurrencyProvider({ children }) {
   const [currency, setCurrencyState] = useState("USD");
 
   useEffect(() => {
-    api.get("/users/me/prefs").then((r) => {
-      if (r.data?.currency) setCurrencyState(r.data.currency);
+    api.get("/workspace").then((r) => {
+      if (r.data?.workspace?.currency) setCurrencyState(r.data.workspace.currency);
     }).catch(() => {});
   }, []);
 
   const setCurrency = useCallback((code) => {
     setCurrencyState(code);
-    api.put("/users/me/prefs", { currency: code }).catch(() => {});
+    api.patch("/workspace", { currency: code }).catch(() => {});
   }, []);
 
   return (

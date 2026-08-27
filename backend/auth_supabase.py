@@ -58,14 +58,28 @@ async def admin_delete_user(user_id: str) -> None:
     await _client.delete(f"{_AUTH_BASE}/admin/users/{user_id}", headers=_ADMIN_HEADERS)
 
 
-async def send_password_reset_email(email: str) -> None:
-    """Triggers Supabase's own password-reset email flow — best-effort, doesn't reveal whether the
-    email exists (Supabase returns 200 either way)."""
-    await _client.post(
-        f"{_AUTH_BASE}/recover",
-        headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Content-Type": "application/json"},
-        json={"email": email},
+async def admin_update_user_email(user_id: str, email: str) -> None:
+    """Changes a Supabase Auth user's login email (service-role, skips the confirmation-link flow —
+    the app's own PATCH /users/me is already behind an authenticated session)."""
+    resp = await _client.put(
+        f"{_AUTH_BASE}/admin/users/{user_id}",
+        headers=_ADMIN_HEADERS,
+        json={"email": email, "email_confirm": True},
     )
+    if resp.status_code >= 400:
+        raise SupabaseAuthError(resp.status_code, resp.json().get("msg") or resp.text)
+
+
+async def admin_set_password(user_id: str, password: str) -> None:
+    """Directly sets a Supabase Auth user's password (service-role) — used by the app's own first-party
+    reset-token flow (server.py's /auth/reset-password), not Supabase's hosted /recover email."""
+    resp = await _client.put(
+        f"{_AUTH_BASE}/admin/users/{user_id}",
+        headers=_ADMIN_HEADERS,
+        json={"password": password},
+    )
+    if resp.status_code >= 400:
+        raise SupabaseAuthError(resp.status_code, resp.json().get("msg") or resp.text)
 
 
 async def password_sign_in(email: str, password: str) -> dict:

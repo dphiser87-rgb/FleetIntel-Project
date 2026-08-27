@@ -3,6 +3,7 @@
 const MODULE_KEYS = [
   "dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
   "templates", "maintenance", "parts", "team", "audit", "reports", "security", "purchase_orders", "defects",
+  "executive_dashboard",
 ];
 
 function defaultPermissions(role) {
@@ -14,19 +15,21 @@ function defaultPermissions(role) {
     case "manager":
       return { ...full, security: "read", team: "read" };
     case "inspector":
-      return { ...readAll, vehicle_checklist: "full", templates: "full", fleet: "read" };
+      return { ...readAll, vehicle_checklist: "full", templates: "full", fleet: "read", executive_dashboard: "none" };
     case "mechanic":
-      return { ...readAll, maintenance: "full", parts: "full", defects: "full" };
+      return { ...readAll, maintenance: "full", parts: "full", defects: "full", executive_dashboard: "none" };
     case "operations_manager":
-      return { ...readAll, maintenance: "full", parts: "full", fleet: "full", reports: "full", defects: "full" };
+      return { ...readAll, maintenance: "full", parts: "full", fleet: "full", reports: "full", defects: "full", executive_dashboard: "none" };
     case "finance":
-      return { ...readAll, parts: "full", reports: "full", purchase_orders: "full" };
+      return { ...readAll, parts: "full", reports: "full", purchase_orders: "full", executive_dashboard: "read" };
     case "workshop_head":
-      return { ...readAll, maintenance: "full", purchase_orders: "read", parts: "read", fleet: "read", defects: "full" };
+      return { ...readAll, maintenance: "full", purchase_orders: "read", parts: "read", fleet: "read", defects: "full", executive_dashboard: "none" };
     case "operations_staff":
-      return { ...readAll, maintenance: "full", vehicle_checklist: "full", templates: "full", parts: "full", purchase_orders: "read", defects: "full" };
+      return { ...readAll, maintenance: "full", vehicle_checklist: "full", templates: "full", parts: "full", purchase_orders: "read", defects: "full", executive_dashboard: "none" };
     case "finance_staff":
-      return { ...readAll, parts: "read", reports: "read", purchase_orders: "read", maintenance: "read", vehicle_checklist: "read", templates: "read" };
+      return { ...readAll, parts: "read", reports: "read", purchase_orders: "read", maintenance: "read", vehicle_checklist: "read", templates: "read", executive_dashboard: "none" };
+    case "executive":
+      return readAll;
     default:
       return Object.fromEntries(MODULE_KEYS.map((m) => [m, "none"]));
   }
@@ -51,6 +54,7 @@ export const ROLE_LABEL = {
   finance: "Finance Manager",
   finance_staff: "Finance Staff",
   workshop_head: "Workshop Head",
+  executive: "Executive",
 };
 
 export const ROLE_COLOR = {
@@ -63,4 +67,5 @@ export const ROLE_COLOR = {
   operations_staff: "border-[#F59E0B]/60 text-[#F59E0B]/80",
   finance: "border-[#14B8A6] text-[#14B8A6]",
   finance_staff: "border-[#14B8A6]/60 text-[#14B8A6]/80",
+  executive: "border-white text-white",
 };

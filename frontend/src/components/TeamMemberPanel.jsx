@@ -12,13 +12,29 @@ const FALLBACK_ROLES = ["admin", "manager", "inspector", "mechanic"];
 
 const roleColor = (r) => ROLE_COLOR[r] || "border-muted-foreground text-muted-foreground";
 
+const isLocked = (m) => m?.locked_until && new Date(m.locked_until) > new Date();
+
+const scopeSummary = (groupIds, itemIds) => {
+  const g = (groupIds || []).length, i = (itemIds || []).length;
+  if (!g && !i) return "All";
+  const parts = [];
+  if (g) parts.push(`${g} group(s)`);
+  if (i) parts.push(`${i} individual`);
+  return parts.join(" + ");
+};
+
+const emptyPermissions = {
+  modules: {}, vehicle_group_ids: [], vehicle_ids: [], asset_group_ids: [], asset_ids: [],
+  driver_group_ids: [], trip_data_access: true, address_access: true,
+};
+
 const emptyForm = {
   name: "", username: "", email: "", company_department: "", cell: "", additional_info: "",
   role: "manager", active_from: "", active_until: "", account_type: "",
-  permissions: { modules: {}, vehicle_group_ids: [], driver_group_ids: [], trip_data_access: true, address_access: true },
+  permissions: emptyPermissions,
 };
 
-export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGroups, driverGroups, onClose, onChange }) {
+export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGroups, driverGroups, assetGroups, vehicles, assets, onClose, onChange }) {
   const [mode, setMode] = useState("view"); // view | edit
   const [tab, setTab] = useState("details");
   const [form, setForm] = useState(emptyForm);
@@ -35,7 +51,7 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
     // Members created before System Rights existed have empty stored permissions — fall back to
     // their role's preset rather than showing an all-"no access" matrix.
     const hasStoredPerms = member.permissions?.modules && Object.keys(member.permissions.modules).length > 0;
-    const perms = hasStoredPerms ? member.permissions : JSON.parse(JSON.stringify(presets[member.role] || { modules: {}, vehicle_group_ids: [], driver_group_ids: [], trip_data_access: true, address_access: true }));
+    const perms = hasStoredPerms ? member.permissions : JSON.parse(JSON.stringify(presets[member.role] || emptyPermissions));
     const f = {
       name: member.name || "", username: member.username || "", email: member.email || "",
       company_department: member.company_department || "", cell: member.cell || "",
@@ -98,6 +114,11 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
     await api.post(`/users/${member.id}/reset-password`);
     toast.success("Password reset email sent");
   };
+  const unlock = async () => {
+    await api.post(`/users/${member.id}/unlock`);
+    toast.success("Account unlocked");
+    onChange();
+  };
   const duplicate = async () => {
     await api.post(`/users/${member.id}/duplicate`);
     toast.success("Invite created with the same profile — check pending invites");
@@ -117,7 +138,7 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
 
   const effectivePermissions = (member.permissions?.modules && Object.keys(member.permissions.modules).length > 0)
     ? member.permissions
-    : (presets[member.role] || { modules: {}, vehicle_group_ids: [], driver_group_ids: [], trip_data_access: true, address_access: true });
+    : (presets[member.role] || emptyPermissions);
 
   return (
     <Sheet open={!!member} onOpenChange={(o) => !o && (mode === "edit" ? cancelEdit() : onClose())}>
@@ -149,6 +170,17 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
             <div className="p-6 space-y-4 flex-1">
               {tab === "details" ? (
                 <>
+                  {isLocked(member) && (
+                    <div className="bg-[#2A0F0F] border border-[#FF3B30]/40 p-4 flex items-center justify-between" data-testid="locked-banner">
+                      <div>
+                        <div className="overline text-[#FF3B30]">Locked out</div>
+                        <div className="text-sm mt-1">Too many failed login attempts — locked until {new Date(member.locked_until).toLocaleTimeString()}.</div>
+                      </div>
+                      <button onClick={unlock} data-testid="unlock-member" className="shrink-0 flex items-center gap-1 border border-[#FF3B30]/60 text-[#FF3B30] px-3 py-2 text-xs uppercase tracking-widest hover:bg-[#FF3B30]/10">
+                        Unlock now
+                      </button>
+                    </div>
+                  )}
                   <div className="bg-[#121214] border border-border p-4 grid grid-cols-2 gap-3">
                     {[["Name", member.name], ["Username", member.username || "—"], ["Email", member.email],
                       ["Company/department", member.company_department || "—"],
@@ -185,8 +217,15 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div className="bg-[#121214] border border-border p-3"><div className="overline">Trip data access</div><div className="mt-1">{effectivePermissions.trip_data_access ? "Allowed" : "Restricted"}</div></div>
                     <div className="bg-[#121214] border border-border p-3"><div className="overline">Address access</div><div className="mt-1">{effectivePermissions.address_access ? "Allowed" : "Restricted"}</div></div>
-                    <div className="bg-[#121214] border border-border p-3"><div className="overline">Vehicle/asset scope</div><div className="mt-1">{(effectivePermissions.vehicle_group_ids || []).length ? `${effectivePermissions.vehicle_group_ids.length} group(s)` : "All"}</div></div>
-                    <div className="bg-[#121214] border border-border p-3"><div className="overline">Driver scope</div><div className="mt-1">{(effectivePermissions.driver_group_ids || []).length ? `${effectivePermissions.driver_group_ids.length} group(s)` : "All"}</div></div>
+                    <div className="bg-[#121214] border border-border p-3">
+                      <div className="overline">Vehicle scope</div>
+                      <div className="mt-1">{scopeSummary(effectivePermissions.vehicle_group_ids, effectivePermissions.vehicle_ids)}</div>
+                    </div>
+                    <div className="bg-[#121214] border border-border p-3">
+                      <div className="overline">Asset scope</div>
+                      <div className="mt-1">{scopeSummary(effectivePermissions.asset_group_ids, effectivePermissions.asset_ids)}</div>
+                    </div>
+                    <div className="bg-[#121214] border border-border p-3 col-span-2"><div className="overline">Driver scope</div><div className="mt-1">{(effectivePermissions.driver_group_ids || []).length ? `${effectivePermissions.driver_group_ids.length} group(s)` : "All"}</div></div>
                   </div>
                 </>
               )}
@@ -199,14 +238,15 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
             </div>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto flex">
-            <div className="w-[180px] shrink-0 border-r border-border py-4 px-3">
-              <div className="overline px-2 mb-2">Details</div>
-              <button onClick={() => setTab("details")} className={`w-full text-left px-2 py-2 text-sm border-l-2 ${tab === "details" ? "border-primary text-primary bg-primary/10" : "border-transparent text-muted-foreground"}`}>User data</button>
-              <div className="overline px-2 mb-2 mt-4">User Rights</div>
-              <button onClick={() => setTab("rights")} className={`w-full text-left px-2 py-2 text-sm border-l-2 ${tab === "rights" ? "border-primary text-primary bg-primary/10" : "border-transparent text-muted-foreground"}`}>Permissions</button>
-            </div>
-            <div className="flex-1 p-6 space-y-4">
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 flex overflow-hidden">
+              <div className="w-[180px] shrink-0 border-r border-border py-4 px-3 overflow-y-auto">
+                <div className="overline px-2 mb-2">Details</div>
+                <button onClick={() => setTab("details")} className={`w-full text-left px-2 py-2 text-sm border-l-2 ${tab === "details" ? "border-primary text-primary bg-primary/10" : "border-transparent text-muted-foreground"}`}>User data</button>
+                <div className="overline px-2 mb-2 mt-4">User Rights</div>
+                <button onClick={() => setTab("rights")} className={`w-full text-left px-2 py-2 text-sm border-l-2 ${tab === "rights" ? "border-primary text-primary bg-primary/10" : "border-transparent text-muted-foreground"}`}>Permissions</button>
+              </div>
+              <div className="flex-1 p-6 space-y-4 overflow-y-auto">
               {tab === "details" ? (
                 <>
                   <Field label="Name *" value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
@@ -281,7 +321,7 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
                     </label>
                   </div>
                   <div>
-                    <label className="text-xs uppercase tracking-widest text-muted-foreground mb-1.5 block">Vehicle & asset access (empty = all)</label>
+                    <label className="text-xs uppercase tracking-widest text-muted-foreground mb-1.5 block">Vehicle groups (empty = all)</label>
                     <div className="flex flex-wrap gap-2">
                       {vehicleGroups.map((g) => (
                         <button key={g.id} onClick={() => toggleScopeId("vehicle_group_ids", g.id)}
@@ -292,6 +332,24 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
                       {vehicleGroups.length === 0 && <span className="text-xs text-muted-foreground">No vehicle groups yet.</span>}
                     </div>
                   </div>
+                  <ItemScopePicker label="Individual vehicles (in addition to groups above)" items={vehicles}
+                    labelKey="name" subKey="plate" selected={form.permissions.vehicle_ids || []}
+                    onToggle={(id) => toggleScopeId("vehicle_ids", id)} testId="vehicle-scope" />
+                  <div>
+                    <label className="text-xs uppercase tracking-widest text-muted-foreground mb-1.5 block">Asset groups (empty = all)</label>
+                    <div className="flex flex-wrap gap-2">
+                      {assetGroups.map((g) => (
+                        <button key={g.id} onClick={() => toggleScopeId("asset_group_ids", g.id)}
+                          className={`px-2 py-1 text-xs border flex items-center gap-1 ${form.permissions.asset_group_ids?.includes(g.id) ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground"}`}>
+                          <span className="w-2 h-2 rounded-sm" style={{ background: g.color || "#636366" }} /> {g.name}
+                        </button>
+                      ))}
+                      {assetGroups.length === 0 && <span className="text-xs text-muted-foreground">No asset groups yet.</span>}
+                    </div>
+                  </div>
+                  <ItemScopePicker label="Individual assets (in addition to groups above)" items={assets}
+                    labelKey="name" subKey="kind" selected={form.permissions.asset_ids || []}
+                    onToggle={(id) => toggleScopeId("asset_ids", id)} testId="asset-scope" />
                   <div>
                     <label className="text-xs uppercase tracking-widest text-muted-foreground mb-1.5 block">Driver access (empty = all)</label>
                     <div className="flex flex-wrap gap-2">
@@ -306,15 +364,41 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
                   </div>
                 </>
               )}
-              <div className="flex gap-2 pt-4 border-t border-border">
-                <button onClick={save} data-testid="save-member" className="bg-primary px-4 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">Save</button>
-                <button onClick={cancelEdit} className="border border-border px-4 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">Cancel</button>
               </div>
+            </div>
+            <div className="border-t border-border p-4 flex gap-2 shrink-0">
+              <button onClick={save} data-testid="save-member" className="bg-primary px-4 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">Save</button>
+              <button onClick={cancelEdit} className="border border-border px-4 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">Cancel</button>
             </div>
           </div>
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+function ItemScopePicker({ label, items, labelKey, subKey, selected, onToggle, testId }) {
+  const [q, setQ] = useState("");
+  const filtered = q ? items.filter((it) => (it[labelKey] || "").toLowerCase().includes(q.toLowerCase())) : items;
+  return (
+    <div>
+      <label className="text-xs uppercase tracking-widest text-muted-foreground mb-1.5 block">{label}</label>
+      {items.length > 8 && (
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" data-testid={`${testId}-search`}
+          className="w-full mb-1.5 bg-[#121214] border border-border px-3 py-1.5 text-xs focus:border-primary focus:outline-none" />
+      )}
+      <div className="max-h-40 overflow-y-auto border border-border divide-y divide-border/50">
+        {filtered.map((it) => (
+          <label key={it.id} className="flex items-center gap-2 text-sm px-3 py-1.5 cursor-pointer hover:bg-[#141416]" data-testid={`${testId}-${it.id}`}>
+            <input type="checkbox" checked={selected.includes(it.id)} onChange={() => onToggle(it.id)} />
+            <span className="truncate">{it[labelKey]}</span>
+            {it[subKey] && <span className="text-xs text-muted-foreground ml-auto shrink-0">{it[subKey]}</span>}
+          </label>
+        ))}
+        {filtered.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">None found.</div>}
+      </div>
+      {selected.length > 0 && <div className="text-xs text-muted-foreground mt-1">{selected.length} selected</div>}
+    </div>
   );
 }
 

@@ -1,0 +1,304 @@
+import React, { useEffect, useState } from "react";
+import { api, formatApiErrorDetail } from "@/lib/api";
+import { toast } from "sonner";
+import { UserCircle, CurrencyCircleDollar, BellSimple, EnvelopeSimple, SpeakerHigh, IdentificationCard, Image as ImageIcon, Trash } from "@phosphor-icons/react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { CURRENCIES } from "@/lib/currency";
+
+const DIGESTS = [
+  { key: "weekly_digest", label: "Weekly KPI digest", description: "Every Monday at 13:00 UTC — KPIs, cost anomalies, pending jobs and low-stock parts." },
+  { key: "health_digest", label: "Fleet health digest", description: "A list of at-risk and watch-status vehicles with their top contributing factors." },
+  { key: "overdue_checklists", label: "Overdue checklists alert", description: "Scheduled checklists that have gone past their configured frequency." },
+];
+
+export default function Settings() {
+  const { user, refreshUser } = useAuth();
+  const { currency, setCurrency } = useCurrency();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [prefs, setPrefs] = useState(null);
+  const [canManage, setCanManage] = useState(false);
+  const [digestSending, setDigestSending] = useState(false);
+  const [licenseWarningDays, setLicenseWarningDays] = useState(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [reportLogo, setReportLogo] = useState(null);
+  const [logoSaving, setLogoSaving] = useState(false);
+
+  useEffect(() => {
+    if (user) { setName(user.name || ""); setEmail(user.email || ""); setSoundEnabled(user.prefs?.alert_sound_enabled !== false); }
+  }, [user]);
+
+  useEffect(() => {
+    api.get("/workspace").then((r) => {
+      setPrefs(r.data.workspace.notification_prefs || {});
+      setLicenseWarningDays(r.data.workspace.license_warning_days ?? 30);
+      setReportLogo(r.data.workspace.report_logo || null);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setCanManage(user && ["admin", "manager"].includes(user.role));
+  }, [user]);
+
+  const saveLicenseWarningDays = async (days) => {
+    setLicenseWarningDays(days);
+    try {
+      await api.patch("/workspace", { license_warning_days: days });
+    } catch (e) { toast.error("Failed to save"); }
+  };
+
+  const uploadLogo = (file) => {
+    if (!file.type.startsWith("image/")) { toast.error("Please choose an image file"); return; }
+    const r = new FileReader();
+    r.onloadend = async () => {
+      setLogoSaving(true);
+      setReportLogo(r.result);
+      try {
+        await api.patch("/workspace", { report_logo: r.result });
+        toast.success("Report logo updated");
+      } catch (e) {
+        toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Failed to save logo");
+      } finally { setLogoSaving(false); }
+    };
+    r.readAsDataURL(file);
+  };
+
+  const removeLogo = async () => {
+    setReportLogo(null);
+    try {
+      await api.patch("/workspace", { report_logo: "" });
+      toast.success("Report logo removed");
+    } catch (e) { toast.error("Failed to remove logo"); }
+  };
+
+  const toggleSound = async () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    try {
+      await api.put("/users/me/prefs", { alert_sound_enabled: next });
+    } catch (e) { toast.error("Failed to save"); setSoundEnabled(!next); }
+  };
+
+  const saveProfile = async (e) => {
+    e.preventDefault();
+    setProfileSaving(true);
+    try {
+      await api.patch("/users/me", { name, email });
+      await refreshUser();
+      toast.success("Profile updated");
+    } catch (e) {
+      toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Failed to update profile");
+    } finally { setProfileSaving(false); }
+  };
+
+  const toggleDigest = async (key) => {
+    const next = { ...prefs, [key]: !(prefs?.[key] !== false) };
+    setPrefs(next);
+    try {
+      await api.patch("/workspace", { notification_prefs: { [key]: next[key] } });
+    } catch (e) {
+      toast.error("Failed to save — reverting");
+      setPrefs(prefs);
+    }
+  };
+
+  const sendDigest = async () => {
+    setDigestSending(true);
+    try {
+      const { data } = await api.post("/workspace/send-digest");
+      if (data.sent) toast.success("Weekly digest emailed to the workspace owner");
+      else toast.error("No owner email configured or send failed");
+    } catch (e) { toast.error("Failed"); }
+    finally { setDigestSending(false); }
+  };
+
+  return (
+    <div className="noise-bg min-h-screen">
+      <header className="border-b border-border px-8 py-6">
+        <div className="overline">Account</div>
+        <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="settings-title">Account Settings</h1>
+      </header>
+
+      <div className="p-8 max-w-5xl space-y-8">
+        <div>
+          <div className="overline mb-3">Personal</div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-[#121214] border border-border p-6" data-testid="profile-card">
+              <div className="flex items-center gap-3 mb-1">
+                <UserCircle size={22} className="text-primary" />
+                <div className="overline">Your profile</div>
+              </div>
+              <h3 className="font-display text-2xl font-bold tracking-tight">Name & email</h3>
+              <form onSubmit={saveProfile} className="mt-4 space-y-3">
+                <div>
+                  <label className="text-xs uppercase tracking-widest text-muted-foreground">Name</label>
+                  <input value={name} onChange={(e) => setName(e.target.value)} required data-testid="profile-name"
+                    className="w-full mt-1 bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-xs uppercase tracking-widest text-muted-foreground">Email</label>
+                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required data-testid="profile-email"
+                    className="w-full mt-1 bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none" />
+                  <div className="text-xs text-muted-foreground mt-1">Changing this changes the email you sign in with.</div>
+                </div>
+                <button type="submit" disabled={profileSaving} data-testid="save-profile"
+                  className="bg-primary text-primary-foreground px-4 py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90 disabled:opacity-60">
+                  {profileSaving ? "Saving…" : "Save profile"}
+                </button>
+              </form>
+            </div>
+
+            <div className="bg-[#121214] border border-border p-6" data-testid="sound-card">
+              <div className="flex items-center gap-3 mb-1">
+                <SpeakerHigh size={22} className="text-primary" />
+                <div className="overline">New notifications</div>
+              </div>
+              <h3 className="font-display text-2xl font-bold tracking-tight">Alert sound</h3>
+              <div className="mt-2 text-sm text-muted-foreground">
+                Plays a sound when a new live alert arrives. Same as the mute button in the top alert bar.
+              </div>
+              <button
+                type="button"
+                onClick={toggleSound}
+                data-testid="toggle-sound-settings"
+                className="mt-4 flex items-center gap-3"
+              >
+                <span className={`shrink-0 w-11 h-6 rounded-full border transition-colors relative ${soundEnabled ? "bg-primary border-primary" : "bg-[#0b0b0d] border-border"}`}>
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${soundEnabled ? "translate-x-[22px]" : "translate-x-0"}`} />
+                </span>
+                <span className="text-sm">{soundEnabled ? "On" : "Off"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="overline mb-3">Workspace</div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-[#121214] border border-border p-6" data-testid="currency-card">
+              <div className="flex items-center gap-3 mb-1">
+                <CurrencyCircleDollar size={22} className="text-primary" />
+                <div className="overline">Display</div>
+              </div>
+              <h3 className="font-display text-2xl font-bold tracking-tight">Currency</h3>
+              <div className="mt-2 text-sm text-muted-foreground">
+                Applies workspace-wide — every teammate sees costs in this currency.
+                {!canManage && " Only admins and managers can change it."}
+              </div>
+              <select
+                value={currency}
+                disabled={!canManage}
+                onChange={(e) => { setCurrency(e.target.value); toast.success(`Currency set to ${e.target.value}`); }}
+                data-testid="currency-select"
+                className="mt-4 w-full bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none disabled:opacity-50"
+              >
+                {Object.entries(CURRENCIES).map(([code, c]) => (
+                  <option key={code} value={code}>{code} — {c.label} ({c.symbol})</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="bg-[#121214] border border-border p-6" data-testid="license-warning-card">
+              <div className="flex items-center gap-3 mb-1">
+                <IdentificationCard size={22} className="text-primary" />
+                <div className="overline">Drivers</div>
+              </div>
+              <h3 className="font-display text-2xl font-bold tracking-tight">License expiry warning</h3>
+              <div className="mt-2 text-sm text-muted-foreground">
+                How many days before a driver's license expires it shows up in Live Alerts and dents that vehicle's health score.
+                {!canManage && " Only admins and managers can change it."}
+              </div>
+              <div className="mt-4 flex items-center gap-2">
+                <input
+                  type="number" min="1"
+                  value={licenseWarningDays ?? ""}
+                  disabled={!canManage || licenseWarningDays === null}
+                  data-testid="license-warning-days-input"
+                  onChange={(e) => saveLicenseWarningDays(Number(e.target.value) || 30)}
+                  className="w-20 bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm mono focus:border-primary focus:outline-none disabled:opacity-50"
+                />
+                <span className="text-sm text-muted-foreground">days</span>
+              </div>
+            </div>
+
+            <div className="bg-[#121214] border border-border p-6" data-testid="report-logo-card">
+              <div className="flex items-center gap-3 mb-1">
+                <ImageIcon size={22} className="text-primary" />
+                <div className="overline">Reports</div>
+              </div>
+              <h3 className="font-display text-2xl font-bold tracking-tight">Report logo</h3>
+              <div className="mt-2 text-sm text-muted-foreground">
+                Shown at the top of every PDF report generated from the Report Center.
+                {!canManage && " Only admins and managers can change it."}
+              </div>
+              <div className="mt-4 flex items-center gap-4">
+                <div className="w-20 h-20 shrink-0 border border-border bg-[#0b0b0d] flex items-center justify-center overflow-hidden">
+                  {reportLogo ? (
+                    <img src={reportLogo} alt="Report logo" className="max-w-full max-h-full object-contain" data-testid="report-logo-preview" />
+                  ) : (
+                    <ImageIcon size={24} className="text-muted-foreground" />
+                  )}
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className={`text-xs uppercase tracking-widest px-3 py-2 border text-center cursor-pointer ${canManage ? "border-border hover:border-primary hover:text-primary" : "border-border/50 text-muted-foreground cursor-not-allowed"}`}>
+                    {logoSaving ? "Uploading…" : reportLogo ? "Replace" : "Upload"}
+                    <input type="file" accept="image/*" className="hidden" disabled={!canManage || logoSaving} data-testid="report-logo-input"
+                      onChange={(e) => e.target.files[0] && uploadLogo(e.target.files[0])} />
+                  </label>
+                  {reportLogo && canManage && (
+                    <button onClick={removeLogo} data-testid="remove-report-logo" className="flex items-center justify-center gap-1 text-xs uppercase tracking-widest text-muted-foreground hover:text-[#FF3B30]">
+                      <Trash size={12} /> Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-[#121214] border border-border p-6 lg:col-span-2" data-testid="notifications-card">
+              <div className="flex items-center gap-3 mb-1">
+                <BellSimple size={22} className="text-primary" />
+                <div className="overline">Automated reports</div>
+              </div>
+              <h3 className="font-display text-2xl font-bold tracking-tight">Notification preferences</h3>
+              <div className="mt-2 text-sm text-muted-foreground">
+                Controls whether each automated email sends at all. Recipient is always the workspace owner.
+                {!canManage && " Only admins and managers can change these."}
+              </div>
+              <div className="mt-4 divide-y divide-border/50">
+                {DIGESTS.map((d) => {
+                  const on = prefs ? prefs[d.key] !== false : true;
+                  return (
+                    <div key={d.key} className="flex items-center justify-between py-3" data-testid={`digest-toggle-${d.key}`}>
+                      <div className="pr-4">
+                        <div className="text-sm">{d.label}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{d.description}</div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!canManage || prefs === null}
+                        onClick={() => toggleDigest(d.key)}
+                        className={`shrink-0 w-11 h-6 rounded-full border transition-colors relative disabled:opacity-50 ${on ? "bg-primary border-primary" : "bg-[#0b0b0d] border-border"}`}
+                      >
+                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${on ? "translate-x-[22px]" : "translate-x-0"}`} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-4 border-t border-border pt-4">
+                <button onClick={sendDigest} disabled={digestSending} data-testid="send-digest-now" className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90 disabled:opacity-60">
+                  <EnvelopeSimple size={14} /> {digestSending ? "Sending…" : "Send weekly digest now"}
+                </button>
+                <div className="text-xs text-muted-foreground mt-3">
+                  Use this to preview what the scheduled weekly digest looks like, regardless of the toggle above.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
