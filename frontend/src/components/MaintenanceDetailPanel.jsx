@@ -6,28 +6,34 @@ import { ClockCounterClockwise, DownloadSimple } from "@phosphor-icons/react";
 import { API } from "@/lib/api";
 import QuoteBuilder from "@/components/QuoteBuilder";
 import QuoteApprovalPanel from "@/components/QuoteApprovalPanel";
+import PartsRequisitionBuilder from "@/components/PartsRequisitionBuilder";
+import PartsRequisitionPanel from "@/components/PartsRequisitionPanel";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 
 const OPS_ROLES = ["operations_manager", "admin"];
 const FINANCE_ROLES = ["finance", "admin"];
+const REQUISITION_APPROVER_ROLES = ["workshop_head", "admin"];
 
 export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, onChange }) {
   const { currency } = useCurrency();
   const [tab, setTab] = useState("overview");
   const [job, setJob] = useState(null);
   const [quotes, setQuotes] = useState([]);
+  const [requisitions, setRequisitions] = useState([]);
   const [activity, setActivity] = useState([]);
 
   const load = useCallback(async () => {
     if (!jobId) return;
     try {
-      const [j, q] = await Promise.all([
+      const [j, q, r] = await Promise.all([
         api.get(`/maintenance/${jobId}`),
         api.get(`/maintenance/${jobId}/quotes`),
+        api.get(`/maintenance/${jobId}/parts-requisitions`),
       ]);
       setJob(j.data);
       setQuotes(q.data || []);
+      setRequisitions(r.data || []);
     } catch { toast.error("Unable to load job"); }
   }, [jobId]);
 
@@ -57,6 +63,22 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
 
   const canSubmitQuote = !latestQuote || latestQuote.stage === "rejected";
 
+  const latestRequisition = requisitions[0];
+  const canDecideRequisition = latestRequisition && latestRequisition.status === "pending_approval"
+    && REQUISITION_APPROVER_ROLES.includes(currentUser?.role);
+  const canSubmitRequisition = !latestRequisition || latestRequisition.status !== "pending_approval";
+
+  const decideRequisition = async (decision, reason) => {
+    try {
+      await api.post(`/parts-requisitions/${latestRequisition.id}/decide`, { decision, reason });
+      toast.success(decision === "approved" ? "Parts request approved" : "Parts request rejected");
+      load();
+      onChange();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to record decision");
+    }
+  };
+
   return (
     <Sheet open={!!jobId} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="border-border bg-[#0b0b0d] w-full sm:max-w-2xl flex flex-col overflow-hidden p-0" data-testid="maintenance-detail-panel">
@@ -83,7 +105,7 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
               </button>
             </div>
             <div className="border-b border-border px-6 flex gap-4 shrink-0">
-              {["overview", "quotation", "activity"].map((t) => (
+              {["overview", "parts", "quotation", "activity"].map((t) => (
                 <button key={t} onClick={() => setTab(t)} data-testid={`job-tab-${t}`}
                   className={`py-3 text-xs uppercase tracking-widest border-b-2 -mb-px ${tab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-white"}`}>
                   {t}
@@ -107,6 +129,19 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
                     <div className="col-span-2 border border-border p-3">
                       <div className="overline mb-1">Description</div>
                       <div className="text-sm text-muted-foreground">{job.description}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {tab === "parts" && (
+                <div className="space-y-6">
+                  {latestRequisition && (
+                    <PartsRequisitionPanel requisition={latestRequisition} canDecide={canDecideRequisition} onDecide={decideRequisition} />
+                  )}
+                  {canSubmitRequisition && (
+                    <div className={latestRequisition ? "border-t border-border pt-6" : ""}>
+                      {latestRequisition && <div className="overline mb-3">Request more parts</div>}
+                      <PartsRequisitionBuilder maintenanceId={jobId} onSubmitted={() => { load(); onChange(); }} />
                     </div>
                   )}
                 </div>

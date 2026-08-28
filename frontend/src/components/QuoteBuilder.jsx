@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { toast } from "sonner";
 import { Plus, Trash, Paperclip, X as XIcon } from "@phosphor-icons/react";
 import { api } from "@/lib/api";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { formatMoneyFull } from "@/lib/currency";
 
 const emptyItem = { type: "part", description: "", qty: 1, unit_cost: 0, vat_pct: 0 };
 const MAX_ATTACHMENTS = 5;
@@ -14,6 +16,7 @@ const fileToDataUrl = (file) => new Promise((resolve, reject) => {
 });
 
 export default function QuoteBuilder({ maintenanceId, currentUser, onSubmitted }) {
+  const { currency } = useCurrency();
   const [items, setItems] = useState([{ ...emptyItem }]);
   const [attachments, setAttachments] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -99,7 +102,7 @@ export default function QuoteBuilder({ maintenanceId, currentUser, onSubmitted }
                   <input type="number" min="0" value={it.vat_pct} onChange={(e) => setItem(i, { vat_pct: e.target.value })}
                     className="w-full bg-[#0b0b0d] border border-border px-1.5 py-1 text-xs mono focus:border-primary focus:outline-none" />
                 </td>
-                <td className="p-1 mono text-xs">${lineTotal(it).toFixed(2)}</td>
+                <td className="p-1 mono text-xs">{formatMoneyFull(lineTotal(it), currency, 2)}</td>
                 <td className="p-1">
                   <button onClick={() => removeItem(i)} className="text-muted-foreground hover:text-destructive"><Trash size={12} /></button>
                 </td>
@@ -111,9 +114,9 @@ export default function QuoteBuilder({ maintenanceId, currentUser, onSubmitted }
           <Plus size={12} /> Add line item
         </button>
         <div className="flex justify-end gap-6 p-3 border-t border-border text-sm">
-          <div>Subtotal <span className="mono ml-2">${subtotal.toFixed(2)}</span></div>
-          <div>VAT <span className="mono ml-2">${vatTotal.toFixed(2)}</span></div>
-          <div className="font-bold">Total <span className="mono ml-2 text-primary">${(subtotal + vatTotal).toFixed(2)}</span></div>
+          <div>Subtotal <span className="mono ml-2">{formatMoneyFull(subtotal, currency, 2)}</span></div>
+          <div>VAT <span className="mono ml-2">{formatMoneyFull(vatTotal, currency, 2)}</span></div>
+          <div className="font-bold">Total <span className="mono ml-2 text-primary">{formatMoneyFull(subtotal + vatTotal, currency, 2)}</span></div>
         </div>
       </div>
 

@@ -4,15 +4,44 @@ import { Plus, Minus, Warning, Package, Trash, DownloadSimple } from "@phosphor-
 import { api, API } from "@/lib/api";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { useAuth } from "@/contexts/AuthContext";
+import PartsRequisitionPanel from "@/components/PartsRequisitionPanel";
+
+const REQUISITION_APPROVER_ROLES = ["workshop_head", "admin"];
+const REQUISITION_STATUS_LABEL = { pending_approval: "Pending", approved: "Approved", rejected: "Rejected" };
+const REQUISITION_STATUS_COLOR = {
+  pending_approval: "text-[#FFCC00] border-[#FFCC00]",
+  approved: "text-[#34C759] border-[#34C759]",
+  rejected: "text-primary border-primary",
+};
 
 export default function Parts() {
+  const { user } = useAuth();
   const { currency } = useCurrency();
+  const [tab, setTab] = useState("inventory");
   const [parts, setParts] = useState([]);
+  const [requisitions, setRequisitions] = useState([]);
+  const [openRequisition, setOpenRequisition] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ name: "", sku: "", category: "general", stock: 0, reorder_point: 5, unit_cost: 0, supplier: "", supplier_email: "" });
 
   const load = () => api.get("/parts").then(r => setParts(r.data));
   useEffect(() => { load(); }, []);
+
+  const loadRequisitions = () => api.get("/parts-requisitions").then(r => setRequisitions(r.data || [])).catch(() => {});
+  useEffect(() => { if (tab === "requisitions") loadRequisitions(); }, [tab]);
+
+  const decideRequisition = async (decision, reason) => {
+    try {
+      await api.post(`/parts-requisitions/${openRequisition.id}/decide`, { decision, reason });
+      toast.success(decision === "approved" ? "Parts request approved" : "Parts request rejected");
+      setOpenRequisition(null);
+      loadRequisitions();
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to record decision");
+    }
+  };
 
   const adjust = async (p, delta) => {
     await api.post(`/parts/${p.id}/adjust`, { delta, reason: delta > 0 ? "restock" : "consume" });
@@ -80,7 +109,16 @@ export default function Parts() {
         </div>
       </header>
 
-      {showAdd && (
+      <div className="border-b border-border px-8 flex gap-4">
+        {["inventory", "requisitions"].map((t) => (
+          <button key={t} onClick={() => setTab(t)} data-testid={`parts-tab-${t}`}
+            className={`py-3 text-xs uppercase tracking-widest border-b-2 -mb-px ${tab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-white"}`}>
+            {t === "inventory" ? "Inventory" : "Requisitions"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "inventory" && showAdd && (
         <form onSubmit={save} className="border-b border-border bg-[#0d0d0f] p-6 grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="add-part-form">
           {[
             ["name", "Name", "text"], ["sku", "SKU", "text"], ["category", "Category", "text"], ["supplier", "Supplier", "text"],
@@ -100,7 +138,7 @@ export default function Parts() {
         </form>
       )}
 
-      {lowStock.length > 0 && (
+      {tab === "inventory" && lowStock.length > 0 && (
         <div className="bg-primary/10 border-b border-primary/40 px-8 py-3 flex items-center gap-3">
           <Warning size={18} className="text-primary" />
           <div className="text-sm">
@@ -109,6 +147,7 @@ export default function Parts() {
         </div>
       )}
 
+      {tab === "inventory" && (
       <div className="p-8">
         <div className="bg-[#121214] border border-border" data-testid="parts-table">
           <table className="w-full text-sm">
@@ -155,6 +194,54 @@ export default function Parts() {
           </table>
         </div>
       </div>
+      )}
+
+      {tab === "requisitions" && (
+        <div className="p-8">
+          <div className="bg-[#121214] border border-border" data-testid="requisitions-table">
+            <table className="w-full text-sm">
+              <thead className="border-b border-border">
+                <tr className="text-left overline">
+                  <th className="p-3">Job</th>
+                  <th className="p-3">Requested by</th>
+                  <th className="p-3">Parts</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3">Submitted</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requisitions.map((r) => (
+                  <tr key={r.id} onClick={() => setOpenRequisition(r)} data-testid={`requisition-row-${r.id}`}
+                    className="border-b border-border/50 hover:bg-[#141416] cursor-pointer">
+                    <td className="p-3 mono text-xs text-muted-foreground">{r.maintenance_id?.slice(0, 8)}</td>
+                    <td className="p-3">{r.requested_by_name}</td>
+                    <td className="p-3 text-xs text-muted-foreground">{(r.items || []).length} item{(r.items || []).length !== 1 ? "s" : ""}</td>
+                    <td className="p-3">
+                      <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border ${REQUISITION_STATUS_COLOR[r.status] || ""}`}>
+                        {REQUISITION_STATUS_LABEL[r.status] || r.status}
+                      </span>
+                    </td>
+                    <td className="p-3 text-xs text-muted-foreground">{new Date(r.created_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+                {requisitions.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No parts requests yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {openRequisition && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6" onClick={() => setOpenRequisition(null)}>
+          <div className="bg-[#0b0b0d] border border-border max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()} data-testid="requisition-modal">
+            <PartsRequisitionPanel
+              requisition={openRequisition}
+              canDecide={openRequisition.status === "pending_approval" && REQUISITION_APPROVER_ROLES.includes(user?.role)}
+              onDecide={decideRequisition}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

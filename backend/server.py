@@ -478,6 +478,20 @@ class PurchaseOrderIn(BaseModel):
     notes: Optional[str] = ""
     maintenance_id: Optional[str] = None
 
+class POMarkPaid(BaseModel):
+    proof_of_payment: List[QuoteAttachment]
+
+class PartRequisitionItem(BaseModel):
+    part_id: str
+    qty_requested: float
+
+class PartRequisitionIn(BaseModel):
+    items: List[PartRequisitionItem]
+
+class PartRequisitionDecision(BaseModel):
+    decision: Literal["approved", "rejected"]
+    reason: Optional[str] = ""
+
 class TripLogIn(BaseModel):
     vehicle_id: str
     driver_id: Optional[str] = None
@@ -840,7 +854,7 @@ async def logout(user: dict = Depends(get_current_user)):
 
 MODULE_KEYS = ["dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
                "templates", "maintenance", "parts", "team", "audit", "reports", "security",
-               "purchase_orders", "defects", "executive_dashboard"]
+               "purchase_orders", "defects", "executive_dashboard", "parts_requisitions"]
 
 def _default_permissions(role: str) -> dict:
     """Pre-fills System Rights from a Profile (role). Enforced on routes via require_module()."""
@@ -853,7 +867,7 @@ def _default_permissions(role: str) -> dict:
     elif role == "inspector":
         modules = {**read_all, "vehicle_checklist": "full", "templates": "full", "fleet": "read", "executive_dashboard": "none"}
     elif role == "mechanic":
-        modules = {**read_all, "maintenance": "full", "parts": "full", "defects": "full", "executive_dashboard": "none"}
+        modules = {**read_all, "maintenance": "full", "parts": "full", "defects": "full", "parts_requisitions": "full", "executive_dashboard": "none"}
     elif role == "operations_manager":
         modules = {**read_all, "maintenance": "full", "parts": "full", "fleet": "full", "reports": "full", "defects": "full", "executive_dashboard": "none"}
     elif role == "finance":
@@ -861,7 +875,7 @@ def _default_permissions(role: str) -> dict:
         # part of read_all's blanket grant since most other roles above are deliberately excluded.
         modules = {**read_all, "parts": "full", "reports": "full", "purchase_orders": "full", "executive_dashboard": "read"}
     elif role == "workshop_head":
-        modules = {**read_all, "maintenance": "full", "purchase_orders": "read", "parts": "read", "fleet": "read", "defects": "full", "executive_dashboard": "none"}
+        modules = {**read_all, "maintenance": "full", "purchase_orders": "read", "parts": "read", "fleet": "read", "defects": "full", "parts_requisitions": "full", "executive_dashboard": "none"}
     elif role == "operations_staff":
         modules = {**read_all, "maintenance": "full", "vehicle_checklist": "full", "templates": "full",
                    "parts": "full", "purchase_orders": "read", "defects": "full", "executive_dashboard": "none"}
@@ -2182,6 +2196,7 @@ async def apply_maintenance_template(tid: str, body: ApplyTemplateIn, user: dict
 # --- Quote approvals (Workshop -> Operations Manager -> Finance) ---
 OPS_ROLES = ("operations_manager", "admin")
 FINANCE_ROLES = ("finance", "admin")
+REQUISITION_APPROVER_ROLES = ("workshop_head", "admin")
 
 async def _notify(ws: str, roles: tuple, ntype: str, message: str, maintenance_id: str):
     """Writes one notification row per matching user in the workspace — recipients are resolved to
@@ -2207,28 +2222,36 @@ async def list_quotes(mid: str, user: dict = Depends(get_current_user)):
         ws=user["workspace_id"], mid=mid,
     )
 
+async def _create_quote(ws: str, mid: str, job_title: str, items: List[QuoteItem],
+                         attachments: List[QuoteAttachment], submitted_by_id: str, submitted_by_name: str) -> str:
+    """Shared quote-insert + Ops-notify logic, used by both the manual quote endpoint and the
+    parts-requisition shortfall auto-escalation — a requisition shortfall becomes a quote exactly the
+    same way a manually-submitted one does, so it flows through the existing Ops->Finance chain unchanged."""
+    subtotal = sum(i.qty * i.unit_cost for i in items)
+    vat_total = sum(i.qty * i.unit_cost * (i.vat_pct / 100) for i in items)
+    qid = str(uuid.uuid4())
+    await execute(
+        "insert into quotes (id, workspace_id, maintenance_id, items, attachments, subtotal, vat_total, total, "
+        "stage, submitted_by, submitted_by_name) values (:id, :ws, :mid, :items ::jsonb, :attachments ::jsonb, "
+        ":subtotal, :vat_total, :total, 'pending_ops', :uid, :uname)",
+        id=qid, ws=ws, mid=mid,
+        items=json_dumps([i.model_dump() for i in items]),
+        attachments=json_dumps([a.model_dump() for a in attachments]),
+        subtotal=round(subtotal, 2), vat_total=round(vat_total, 2), total=round(subtotal + vat_total, 2),
+        uid=submitted_by_id, uname=submitted_by_name,
+    )
+    await _notify(ws, OPS_ROLES, "quote_submitted", f"{submitted_by_name} submitted a quote for {job_title}", mid)
+    return qid
+
 @api.post("/maintenance/{mid}/quotes")
 async def create_quote(mid: str, q: QuoteIn, user: dict = Depends(get_current_user)):
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
     if len(q.attachments) > 5:
         raise HTTPException(status_code=400, detail="A quote can have at most 5 attachments")
-    subtotal = sum(i.qty * i.unit_cost for i in q.items)
-    vat_total = sum(i.qty * i.unit_cost * (i.vat_pct / 100) for i in q.items)
-    qid = str(uuid.uuid4())
-    await execute(
-        "insert into quotes (id, workspace_id, maintenance_id, items, attachments, subtotal, vat_total, total, "
-        "stage, submitted_by, submitted_by_name) values (:id, :ws, :mid, :items ::jsonb, :attachments ::jsonb, "
-        ":subtotal, :vat_total, :total, 'pending_ops', :uid, :uname)",
-        id=qid, ws=user["workspace_id"], mid=mid,
-        items=json_dumps([i.model_dump() for i in q.items]),
-        attachments=json_dumps([a.model_dump() for a in q.attachments]),
-        subtotal=round(subtotal, 2), vat_total=round(vat_total, 2), total=round(subtotal + vat_total, 2),
-        uid=user["id"], uname=user["name"],
-    )
-    await _notify(user["workspace_id"], OPS_ROLES, "quote_submitted",
-                  f"{user['name']} submitted a quote for {job['title']}", mid)
-    await log_event(user, "quote.submitted", "quote", mid, {"quote_id": qid, "total": round(subtotal + vat_total, 2)})
+    qid = await _create_quote(user["workspace_id"], mid, job["title"], q.items, q.attachments, user["id"], user["name"])
+    total = round(sum(i.qty * i.unit_cost * (1 + i.vat_pct / 100) for i in q.items), 2)
+    await log_event(user, "quote.submitted", "quote", mid, {"quote_id": qid, "total": total})
     return await fetch_one("select * from quotes where id = :id", id=qid)
 
 @api.post("/quotes/{qid}/decide")
@@ -2296,6 +2319,125 @@ async def decide_quote(qid: str, body: QuoteDecision, user: dict = Depends(get_c
         await log_event(user, f"quote.finance_{body.decision}", "quote", str(quote["maintenance_id"]), {"quote_id": qid, "reason": body.reason})
     return await fetch_one("select * from quotes where id = :id", id=qid)
 
+# --- Parts requisitions (Technician -> Workshop Manager; shortfall escalates into the quote chain above) ---
+@api.get("/maintenance/{mid}/parts-requisitions")
+async def list_requisitions_for_job(mid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") == "mechanic":
+        job = await fetch_one("select assigned_to from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+        if not job or job.get("assigned_to") != user["id"]:
+            raise HTTPException(status_code=404, detail="Maintenance job not found")
+    return await fetch_all(
+        "select * from parts_requisitions where workspace_id = :ws and maintenance_id = :mid order by created_at desc",
+        ws=user["workspace_id"], mid=mid,
+    )
+
+@api.get("/parts-requisitions")
+async def list_requisitions(user: dict = Depends(require_module("parts_requisitions", "read"))):
+    return await fetch_all(
+        "select * from parts_requisitions where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
+    )
+
+@api.post("/maintenance/{mid}/parts-requisitions")
+async def create_requisition(mid: str, body: PartRequisitionIn, user: dict = Depends(require_module("parts_requisitions", "full"))):
+    job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+    if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
+    if not body.items:
+        raise HTTPException(status_code=400, detail="At least one part is required")
+    part_ids = [i.part_id for i in body.items]
+    parts = await fetch_all("select * from parts where workspace_id = :ws and id = any(:ids)", ws=user["workspace_id"], ids=part_ids)
+    pmap = {str(p["id"]): p for p in parts}
+    if len(pmap) != len(set(part_ids)):
+        raise HTTPException(status_code=400, detail="One or more parts were not found")
+    items = [
+        {"part_id": i.part_id, "part_name": pmap[i.part_id]["name"], "qty_requested": i.qty_requested,
+         "unit_cost": float(pmap[i.part_id].get("unit_cost") or 0)}
+        for i in body.items
+    ]
+    rid = str(uuid.uuid4())
+    await execute(
+        "insert into parts_requisitions (id, workspace_id, maintenance_id, items, status, requested_by, requested_by_name) "
+        "values (:id, :ws, :mid, :items ::jsonb, 'pending_approval', :uid, :uname)",
+        id=rid, ws=user["workspace_id"], mid=mid, items=json_dumps(items), uid=user["id"], uname=user["name"],
+    )
+    await _notify(user["workspace_id"], REQUISITION_APPROVER_ROLES, "part_requisition_submitted",
+                  f"{user['name']} requested parts for {job['title']}", mid)
+    await log_event(user, "part_requisition.submitted", "parts_requisition", mid, {"requisition_id": rid, "items": len(items)})
+    return await fetch_one("select * from parts_requisitions where id = :id", id=rid)
+
+@api.post("/parts-requisitions/{rid}/decide")
+async def decide_requisition(rid: str, body: PartRequisitionDecision, user: dict = Depends(get_current_user)):
+    req = await fetch_one("select * from parts_requisitions where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
+    if not req: raise HTTPException(status_code=404, detail="Requisition not found")
+    if req["status"] != "pending_approval":
+        raise HTTPException(status_code=400, detail="This requisition has already been decided")
+    if user.get("role") not in REQUISITION_APPROVER_ROLES:
+        raise HTTPException(status_code=403, detail="You aren't authorized to decide part requisitions")
+    if body.decision == "rejected" and not (body.reason or "").strip():
+        raise HTTPException(status_code=400, detail="A reason is required to reject a requisition")
+    job = await fetch_one("select * from maintenance where id = :id", id=req["maintenance_id"])
+    decision = {"by": user["id"], "by_name": user["name"], "reason": body.reason or "", "at": datetime.now(timezone.utc).isoformat()}
+
+    resulting_quote_id = None
+    if body.decision == "approved":
+        shortfall_items = []
+        parts_cost_delta = 0.0
+        for line in req["items"]:
+            part = await fetch_one("select * from parts where id = :id and workspace_id = :ws", id=line["part_id"], ws=user["workspace_id"])
+            live_stock = float(part.get("stock") or 0) if part else 0.0
+            qty_requested = float(line["qty_requested"])
+            unit_cost = float(line.get("unit_cost") or 0)
+            qty_from_stock = min(qty_requested, live_stock)
+            qty_short = qty_requested - qty_from_stock
+            if qty_from_stock > 0 and part:
+                new_stock = max(0.0, live_stock - qty_from_stock)
+                await execute("update parts set stock = :stock where id = :id and workspace_id = :ws",
+                              stock=new_stock, id=part["id"], ws=user["workspace_id"])
+                await execute(
+                    "insert into parts_history (id, workspace_id, part_id, delta, reason, by) "
+                    "values (:id, :ws, :part_id, :delta, :reason, :by)",
+                    id=str(uuid.uuid4()), ws=user["workspace_id"], part_id=part["id"],
+                    delta=-qty_from_stock, reason=f"requisition:{rid}", by=user["id"],
+                )
+                parts_cost_delta += qty_from_stock * unit_cost
+                await _maybe_reorder_email({**part, "stock": new_stock}, user["workspace_id"])
+            if qty_short > 0:
+                shortfall_items.append(QuoteItem(
+                    type="part", description=line["part_name"], qty=qty_short, unit_cost=unit_cost, vat_pct=0,
+                ))
+        if parts_cost_delta > 0:
+            await execute(
+                "update maintenance set parts_cost = coalesce(parts_cost, 0) + :delta where id = :id and workspace_id = :ws",
+                delta=parts_cost_delta, id=req["maintenance_id"], ws=user["workspace_id"],
+            )
+        if shortfall_items:
+            resulting_quote_id = await _create_quote(
+                user["workspace_id"], req["maintenance_id"], job["title"], shortfall_items, [],
+                req["requested_by"], req["requested_by_name"],
+            )
+        await execute(
+            "update parts_requisitions set status = 'approved', decision = :d ::jsonb, resulting_quote_id = :qid where id = :id",
+            id=rid, d=json_dumps(decision), qid=resulting_quote_id,
+        )
+    else:
+        await execute(
+            "update parts_requisitions set status = 'rejected', decision = :d ::jsonb where id = :id",
+            id=rid, d=json_dumps(decision),
+        )
+
+    if req.get("requested_by"):
+        msg = f"Your parts request for {job['title']} was {body.decision} by {user['name']}"
+        if body.decision == "rejected": msg += f" — {body.reason}"
+        elif resulting_quote_id: msg += " (a quote was created for the out-of-stock portion)"
+        await execute(
+            "insert into notifications (id, workspace_id, recipient_user_id, type, message, related_maintenance_id) "
+            "values (:id, :ws, :uid, :type, :message, :mid)",
+            id=str(uuid.uuid4()), ws=user["workspace_id"], uid=req["requested_by"],
+            type=f"part_requisition_{body.decision}", message=msg, mid=req["maintenance_id"],
+        )
+    await log_event(user, f"part_requisition.{body.decision}", "parts_requisition", str(req["maintenance_id"]),
+                     {"requisition_id": rid, "reason": body.reason, "resulting_quote_id": resulting_quote_id})
+    return await fetch_one("select * from parts_requisitions where id = :id", id=rid)
+
 # --- Purchase orders ---
 @api.get("/purchase-orders")
 async def list_purchase_orders(user: dict = Depends(get_current_user)):
@@ -2320,6 +2462,23 @@ async def create_purchase_order(po: PurchaseOrderIn, user: dict = Depends(requir
         id=poid, ws=user["workspace_id"], po_number=po_number, uid=user["id"], **po.model_dump(),
     )
     await log_event(user, "purchase_order.created", "purchase_order", poid, {"po_number": po_number, "amount": po.amount})
+    return await fetch_one("select * from purchase_orders where id = :id", id=poid)
+
+@api.post("/purchase-orders/{poid}/mark-paid")
+async def mark_purchase_order_paid(poid: str, body: POMarkPaid, user: dict = Depends(require_role(*FINANCE_ROLES))):
+    po = await fetch_one("select * from purchase_orders where id = :id and workspace_id = :ws", id=poid, ws=user["workspace_id"])
+    if not po: raise HTTPException(status_code=404, detail="Purchase order not found")
+    if po["status"] != "po_issued":
+        raise HTTPException(status_code=400, detail="Only an issued purchase order can be marked paid")
+    if not body.proof_of_payment:
+        raise HTTPException(status_code=400, detail="At least one proof-of-payment attachment is required")
+    await execute(
+        "update purchase_orders set status = 'paid', paid_at = now(), paid_by = :uid, proof_of_payment = :pop ::jsonb "
+        "where id = :id and workspace_id = :ws",
+        id=poid, ws=user["workspace_id"], uid=user["id"],
+        pop=json_dumps([a.model_dump() for a in body.proof_of_payment]),
+    )
+    await log_event(user, "purchase_order.paid", "purchase_order", poid, {"po_number": po["po_number"]})
     return await fetch_one("select * from purchase_orders where id = :id", id=poid)
 
 # --- Notifications ---
