@@ -405,7 +405,10 @@ class TwoFAVerify(BaseModel):
     code: str
 
 class LoginReq2FA(BaseModel):
-    email: EmailStr
+    # str, not EmailStr: EmailStr's reserved-TLD rejection (.local/.test/.example) is correct for
+    # registration but wrong for login — account validity is already established and Supabase's own
+    # check is the real gate.
+    email: str
     password: str
     code: Optional[str] = None
 
@@ -526,6 +529,7 @@ class DefectIn(BaseModel):
     location: Optional[str] = ""
     assigned_to: Optional[str] = None
     estimated_cost: float = 0
+    client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
 
 class DefectUpdate(BaseModel):
     category: Optional[Literal["tyres", "engine", "brakes", "electrical", "bodywork", "general"]] = None
@@ -568,6 +572,7 @@ class MaintenanceUpdate(BaseModel):
     vendor: Optional[str] = None
     external_cost: Optional[float] = None
     completion_documents: Optional[List[dict]] = None
+    client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
 
 # --- App ---
 app = FastAPI(title="FleetCost Intelligence API")
@@ -657,7 +662,7 @@ async def register(req: RegisterReq):
         await log_event(user, "invite.accepted", "user", user_id, {"email": email, "role": role})
 
     session = await auth_supabase.password_sign_in(email, req.password)
-    return {"user": user, "token": session["access_token"]}
+    return {"user": user, "token": session["access_token"], "refresh_token": session["refresh_token"]}
 
 LOCKOUT_COOLDOWN_MINUTES = 15
 
@@ -721,12 +726,27 @@ async def login(req: LoginReq2FA):
         if not totp_ok:
             raise HTTPException(status_code=401, detail="Invalid 2FA code")
         user.pop("totp_secret", None)
-        resp = {"user": user, "token": session["access_token"]}
+        resp = {"user": user, "token": session["access_token"], "refresh_token": session["refresh_token"]}
         if recovery_used: resp["recovery_used"] = True
         return resp
 
     user.pop("totp_secret", None)
-    return {"user": user, "token": session["access_token"]}
+    return {"user": user, "token": session["access_token"], "refresh_token": session["refresh_token"]}
+
+class RefreshReq(BaseModel):
+    refresh_token: str
+
+@api.post("/auth/refresh")
+async def refresh_token(req: RefreshReq):
+    try:
+        session = await auth_supabase.refresh_session(req.refresh_token)
+    except auth_supabase.SupabaseAuthError:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    return {
+        "token": session["access_token"],
+        "refresh_token": session["refresh_token"],
+        "expires_in": session.get("expires_in"),
+    }
 
 @api.post("/auth/2fa/setup")
 async def twofa_setup(user: dict = Depends(get_current_user)):
@@ -1568,7 +1588,7 @@ async def get_inspection(iid: str, user: dict = Depends(get_current_user)):
 MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downtime_hours",
                      "assigned_to", "notes", "completed_at", "started_at", "category",
                      "odometer", "engine_hours", "workshop_name", "technician", "vendor",
-                     "external_cost", "completion_documents"}
+                     "external_cost", "completion_documents", "client_submission_id"}
 
 # --- Maintenance jobs ---
 @api.get("/maintenance")
@@ -1672,6 +1692,11 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
     upd = {k: v for k, v in patch.model_dump().items() if v is not None}
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Not found")
+    if patch.client_submission_id and job.get("client_submission_id") == patch.client_submission_id:
+        # Already applied by an earlier attempt of this same offline-queued update — a retried mobile
+        # sync must not re-stamp completed_at/downtime_hours against a new "now", or re-fire the
+        # defect-auto-resolve cascade a second time.
+        return job
     if upd.get("status") == "completed":
         completed_at = datetime.now(timezone.utc)
         upd["completed_at"] = completed_at
@@ -3929,14 +3954,21 @@ async def list_defects(user: dict = Depends(get_current_user)):
 
 @api.post("/defects")
 async def create_defect(d: DefectIn, user: dict = Depends(require_module("defects", "full"))):
+    if d.client_submission_id:
+        existing = await fetch_one(
+            "select * from defects where workspace_id = :ws and client_submission_id = :cid",
+            ws=user["workspace_id"], cid=d.client_submission_id,
+        )
+        if existing:
+            return (await _enrich_defects(user["workspace_id"], [existing]))[0]
     did = str(uuid.uuid4())
     fields = d.model_dump()
     if user.get("role") not in DEFECT_PRICING_ROLES:
         fields["estimated_cost"] = 0
     await execute(
         "insert into defects (id, workspace_id, vehicle_id, category, severity, description, location, "
-        "reported_by, assigned_to, estimated_cost) values (:id, :ws, :vehicle_id, :category, :severity, "
-        ":description, :location, :reported_by, :assigned_to, :estimated_cost)",
+        "reported_by, assigned_to, estimated_cost, client_submission_id) values (:id, :ws, :vehicle_id, :category, "
+        ":severity, :description, :location, :reported_by, :assigned_to, :estimated_cost, :client_submission_id)",
         id=did, ws=user["workspace_id"], reported_by=user["id"], **fields,
     )
     doc = await fetch_one("select * from defects where id = :id", id=did)
