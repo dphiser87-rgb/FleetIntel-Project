@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, Alert, Image, Modal } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import SignatureScreen from "react-native-signature-canvas";
 import { Screen, Card, Overline, Button, Badge } from "../components/ui";
@@ -258,7 +259,7 @@ export default function InspectionScreen({ route, navigation }) {
       </ScrollView>
 
       <Modal visible={showSignature} animationType="slide">
-        <View style={styles.sigModal}>
+        <SafeAreaView style={styles.sigModal} edges={["top", "bottom"]}>
           <View style={styles.sigHeader}>
             <Text style={styles.sigHeaderText}>Sign, then tap Confirm below</Text>
             <Button title="Cancel" variant="outline" onPress={() => setShowSignature(false)} style={styles.cancelSig} />
@@ -275,7 +276,7 @@ export default function InspectionScreen({ route, navigation }) {
               webStyle="body,html{background:#0b0b0d;}"
             />
           </View>
-        </View>
+        </SafeAreaView>
       </Modal>
     </Screen>
   );
