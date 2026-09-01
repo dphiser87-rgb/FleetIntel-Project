@@ -47,6 +47,9 @@ export default function SignaturePad({ onConfirm, onCancel }) {
 
   const confirm = async () => {
     if (paths.length === 0) { onCancel(); return; }
+    // Give the last stroke's state update a frame to actually paint natively before snapshotting --
+    // capturing in the same tick as the final setPaths() can race ahead of the native render commit.
+    await new Promise((r) => requestAnimationFrame(r));
     const uri = await shotRef.current.capture();
     onConfirm(uri);
   };
@@ -60,8 +63,12 @@ export default function SignaturePad({ onConfirm, onCancel }) {
         <Button title="Clear" variant="outline" onPress={clear} style={styles.headerBtn} />
         <Button title="Confirm" onPress={confirm} style={styles.headerBtn} />
       </View>
-      <ViewShot ref={shotRef} options={{ format: "png", quality: 0.9, result: "data-uri" }} style={styles.padWrap}>
-        <View style={styles.pad} {...panResponder.panHandlers}>
+      <ViewShot
+        ref={shotRef}
+        options={{ format: "png", quality: 0.9, result: "data-uri", useRenderInContext: true }}
+        style={styles.padWrap}
+      >
+        <View style={styles.pad} collapsable={false} {...panResponder.panHandlers}>
           <Svg style={StyleSheet.absoluteFill}>
             {paths.map((d, i) => (
               <Path key={i} d={d} stroke="#0b0b0d" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" fill="none" />
