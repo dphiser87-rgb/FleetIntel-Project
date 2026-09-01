@@ -169,7 +169,7 @@ async def user_from_token(token: str) -> dict:
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
     user = await fetch_one(
-        "select id, email, name, role, workspace_id, prefs, totp_enabled, created_at "
+        "select id, email, name, role, workspace_id, prefs, totp_enabled, created_at, permissions "
         "from user_profiles where id = :id",
         id=payload["sub"],
     )
@@ -326,6 +326,7 @@ class WorkspaceRename(BaseModel):
     lockout_enabled: Optional[bool] = None
     lockout_threshold: Optional[int] = None
     report_logo: Optional[str] = None
+    costing_approver_role: Optional[str] = None
 
 class ReportDefinitionIn(BaseModel):
     name: str
@@ -635,8 +636,15 @@ async def register(req: RegisterReq):
         workspace_id = invite["workspace_id"]
         role = invite.get("role") or role
         invite_permissions = invite.get("permissions") or PROFILE_PRESETS.get(role, {})
-        target_ws = await fetch_one("select min_password_length from workspaces where id = :id", id=workspace_id)
+        target_ws = await fetch_one(
+            "select min_password_length, costing_approver_role from workspaces where id = :id", id=workspace_id
+        )
         min_password_length = (target_ws or {}).get("min_password_length") or 8
+        # Workspaces with no dedicated Workshop Manager can designate another role as costing
+        # approver (Settings -> costing_approver_role) -- apply it here so it takes effect on every
+        # new hire automatically, not just the people already on the team when the setting was set.
+        if target_ws and target_ws.get("costing_approver_role") == role:
+            invite_permissions = {**invite_permissions, "modules": {**invite_permissions.get("modules", {}), "quotes": "full"}}
     else:
         invite_permissions = PROFILE_PRESETS.get(role, {})
         workspace_id = str(uuid.uuid4())
@@ -855,7 +863,7 @@ async def logout(user: dict = Depends(get_current_user)):
 
 MODULE_KEYS = ["dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
                "templates", "maintenance", "parts", "team", "audit", "reports", "security",
-               "purchase_orders", "defects", "executive_dashboard", "parts_requisitions"]
+               "purchase_orders", "defects", "executive_dashboard", "parts_requisitions", "quotes"]
 
 def _default_permissions(role: str) -> dict:
     """Pre-fills System Rights from a Profile (role). Enforced on routes via require_module()."""
@@ -876,7 +884,7 @@ def _default_permissions(role: str) -> dict:
         # part of read_all's blanket grant since most other roles above are deliberately excluded.
         modules = {**read_all, "parts": "full", "reports": "full", "purchase_orders": "full", "executive_dashboard": "read"}
     elif role == "workshop_head":
-        modules = {**read_all, "maintenance": "full", "purchase_orders": "read", "parts": "read", "fleet": "read", "defects": "full", "parts_requisitions": "full", "executive_dashboard": "none"}
+        modules = {**read_all, "maintenance": "full", "purchase_orders": "read", "parts": "read", "fleet": "read", "defects": "full", "parts_requisitions": "full", "quotes": "full", "executive_dashboard": "none"}
     elif role == "operations_staff":
         modules = {**read_all, "maintenance": "full", "vehicle_checklist": "full", "templates": "full",
                    "parts": "full", "purchase_orders": "read", "defects": "full", "executive_dashboard": "none"}
@@ -2272,7 +2280,12 @@ async def _create_quote(ws: str, mid: str, job_title: str, items: List[QuoteItem
     return qid
 
 @api.post("/maintenance/{mid}/quotes")
-async def create_quote(mid: str, q: QuoteIn, user: dict = Depends(get_current_user)):
+async def create_quote(mid: str, q: QuoteIn, user: dict = Depends(require_module("quotes", "full"))):
+    # Gated by the "quotes" System Right (not a hardcoded role tuple) so a workspace without a
+    # Workshop Manager can grant this to Operations or Finance instead via Team permissions.
+    # workshop_head/admin/manager get "full" by default (_default_permissions); every other role
+    # defaults to "read" (can view costing, same as the requisition-shortfall auto-escalation path
+    # in _create_quote already gives them) until an admin explicitly upgrades them.
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
     if len(q.attachments) > 5:
@@ -5222,7 +5235,7 @@ async def get_workspace(user: dict = Depends(get_current_user)):
 
 @api.patch("/workspace")
 async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_current_user)):
-    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo)
+    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role)
     if any(v is not None for v in guarded) and user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Only admins/managers can change workspace-wide settings")
     if req.name is not None:
@@ -5246,6 +5259,23 @@ async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_curren
         if len(req.report_logo) > REPORT_LOGO_MAX_B64_CHARS:
             raise HTTPException(status_code=400, detail="Logo image is too large (max ~1.5MB)")
         await execute("update workspaces set report_logo = :l where id = :id", l=req.report_logo or None, id=user["workspace_id"])
+    if req.costing_approver_role is not None:
+        if req.costing_approver_role and req.costing_approver_role not in ("operations_manager", "finance", "workshop_head"):
+            raise HTTPException(status_code=400, detail="Invalid costing approver role")
+        await execute("update workspaces set costing_approver_role = :r where id = :id", r=req.costing_approver_role or None, id=user["workspace_id"])
+        if req.costing_approver_role:
+            # Materialize the grant into everyone already in that role now -- new hires get it at
+            # registration instead (see register()'s target_ws.costing_approver_role check), so this
+            # workspace setting stays effective without a repeated per-user Team panel chore.
+            # NB: jsonb_set can't create a missing intermediate object for a 2-level path ('{modules,
+            # quotes}') -- it silently no-ops when permissions/modules is empty. Merge the whole
+            # 'modules' object instead so this works whether or not the user has any permissions yet.
+            await execute(
+                "update user_profiles set permissions = jsonb_set(coalesce(permissions, '{}'::jsonb), "
+                "'{modules}', coalesce(permissions->'modules', '{}'::jsonb) || '{\"quotes\":\"full\"}'::jsonb) "
+                "where workspace_id = :ws and role = :role",
+                ws=user["workspace_id"], role=req.costing_approver_role,
+            )
     return await fetch_one("select * from workspaces where id = :id", id=user["workspace_id"])
 
 

@@ -10,6 +10,7 @@ import PartsRequisitionBuilder from "@/components/PartsRequisitionBuilder";
 import PartsRequisitionPanel from "@/components/PartsRequisitionPanel";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { hasAccess } from "@/lib/access";
 
 const OPS_ROLES = ["operations_manager", "admin"];
 const FINANCE_ROLES = ["finance", "admin"];
@@ -61,7 +62,11 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
     }
   };
 
-  const canSubmitQuote = !latestQuote || latestQuote.stage === "rejected";
+  // Gated by the "quotes" System Right rather than a hardcoded role, mirroring the backend's
+  // require_module("quotes", "full") on POST /maintenance/{mid}/quotes -- workshop_head/admin/manager
+  // get it by default, but a workspace with no Workshop Manager can grant it to Operations or Finance
+  // instead via Team permissions.
+  const canSubmitQuote = (!latestQuote || latestQuote.stage === "rejected") && hasAccess(currentUser, "quotes", "full");
 
   const latestRequisition = requisitions[0];
   const canDecideRequisition = latestRequisition && latestRequisition.status === "pending_approval"
@@ -149,8 +154,12 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
               {tab === "quotation" && (
                 canSubmitQuote ? (
                   <QuoteBuilder maintenanceId={jobId} currentUser={currentUser} onSubmitted={() => { load(); onChange(); }} />
-                ) : (
+                ) : latestQuote ? (
                   <QuoteApprovalPanel quote={latestQuote} canDecide={canDecide} onDecide={decide} />
+                ) : (
+                  <div className="text-sm text-muted-foreground text-center py-8">
+                    No costing has been submitted for this job yet — the Workshop Manager submits costing here.
+                  </div>
                 )
               )}
               {tab === "activity" && (
