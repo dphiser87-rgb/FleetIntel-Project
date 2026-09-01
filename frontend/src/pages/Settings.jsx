@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api, formatApiErrorDetail } from "@/lib/api";
 import { toast } from "sonner";
-import { UserCircle, CurrencyCircleDollar, BellSimple, EnvelopeSimple, SpeakerHigh, IdentificationCard, Image as ImageIcon, Trash } from "@phosphor-icons/react";
+import { UserCircle, CurrencyCircleDollar, BellSimple, EnvelopeSimple, SpeakerHigh, IdentificationCard, Image as ImageIcon, Trash, Wrench } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { CURRENCIES } from "@/lib/currency";
@@ -25,6 +25,7 @@ export default function Settings() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [reportLogo, setReportLogo] = useState(null);
   const [logoSaving, setLogoSaving] = useState(false);
+  const [costingApproverRole, setCostingApproverRole] = useState("");
 
   useEffect(() => {
     if (user) { setName(user.name || ""); setEmail(user.email || ""); setSoundEnabled(user.prefs?.alert_sound_enabled !== false); }
@@ -35,6 +36,7 @@ export default function Settings() {
       setPrefs(r.data.workspace.notification_prefs || {});
       setLicenseWarningDays(r.data.workspace.license_warning_days ?? 30);
       setReportLogo(r.data.workspace.report_logo || null);
+      setCostingApproverRole(r.data.workspace.costing_approver_role || "");
     }).catch(() => {});
   }, []);
 
@@ -47,6 +49,18 @@ export default function Settings() {
     try {
       await api.patch("/workspace", { license_warning_days: days });
     } catch (e) { toast.error("Failed to save"); }
+  };
+
+  const saveCostingApproverRole = async (role) => {
+    const prev = costingApproverRole;
+    setCostingApproverRole(role);
+    try {
+      await api.patch("/workspace", { costing_approver_role: role });
+      toast.success(role ? "Costing approver updated" : "Costing approver override cleared");
+    } catch (e) {
+      toast.error("Failed to save — reverting");
+      setCostingApproverRole(prev);
+    }
   };
 
   const uploadLogo = (file) => {
@@ -221,6 +235,32 @@ export default function Settings() {
                 />
                 <span className="text-sm text-muted-foreground">days</span>
               </div>
+            </div>
+
+            <div className="bg-[#121214] border border-border p-6" data-testid="costing-approver-card">
+              <div className="flex items-center gap-3 mb-1">
+                <Wrench size={22} className="text-primary" />
+                <div className="overline">Job costing</div>
+              </div>
+              <h3 className="font-display text-2xl font-bold tracking-tight">Costing approver</h3>
+              <div className="mt-2 text-sm text-muted-foreground">
+                If this workspace has no dedicated Workshop Manager, let this role submit and manage job
+                costing (quotes) instead — applies to everyone in that role now, and automatically to
+                anyone invited into it later.
+                {!canManage && " Only admins and managers can change it."}
+              </div>
+              <select
+                value={costingApproverRole}
+                disabled={!canManage}
+                onChange={(e) => saveCostingApproverRole(e.target.value)}
+                data-testid="costing-approver-role-select"
+                className="mt-4 w-full bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none disabled:opacity-50"
+              >
+                <option value="">No override — Workshop Manager only</option>
+                <option value="operations_manager">Operations Manager</option>
+                <option value="finance">Finance</option>
+                <option value="workshop_head">Workshop Head</option>
+              </select>
             </div>
 
             <div className="bg-[#121214] border border-border p-6" data-testid="report-logo-card">

@@ -6,28 +6,35 @@ import { ClockCounterClockwise, DownloadSimple } from "@phosphor-icons/react";
 import { API } from "@/lib/api";
 import QuoteBuilder from "@/components/QuoteBuilder";
 import QuoteApprovalPanel from "@/components/QuoteApprovalPanel";
+import PartsRequisitionBuilder from "@/components/PartsRequisitionBuilder";
+import PartsRequisitionPanel from "@/components/PartsRequisitionPanel";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { hasAccess } from "@/lib/access";
 
 const OPS_ROLES = ["operations_manager", "admin"];
 const FINANCE_ROLES = ["finance", "admin"];
+const REQUISITION_APPROVER_ROLES = ["workshop_head", "admin"];
 
 export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, onChange }) {
   const { currency } = useCurrency();
   const [tab, setTab] = useState("overview");
   const [job, setJob] = useState(null);
   const [quotes, setQuotes] = useState([]);
+  const [requisitions, setRequisitions] = useState([]);
   const [activity, setActivity] = useState([]);
 
   const load = useCallback(async () => {
     if (!jobId) return;
     try {
-      const [j, q] = await Promise.all([
+      const [j, q, r] = await Promise.all([
         api.get(`/maintenance/${jobId}`),
         api.get(`/maintenance/${jobId}/quotes`),
+        api.get(`/maintenance/${jobId}/parts-requisitions`),
       ]);
       setJob(j.data);
       setQuotes(q.data || []);
+      setRequisitions(r.data || []);
     } catch { toast.error("Unable to load job"); }
   }, [jobId]);
 
@@ -55,7 +62,27 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
     }
   };
 
-  const canSubmitQuote = !latestQuote || latestQuote.stage === "rejected";
+  // Gated by the "quotes" System Right rather than a hardcoded role, mirroring the backend's
+  // require_module("quotes", "full") on POST /maintenance/{mid}/quotes -- workshop_head/admin/manager
+  // get it by default, but a workspace with no Workshop Manager can grant it to Operations or Finance
+  // instead via Team permissions.
+  const canSubmitQuote = (!latestQuote || latestQuote.stage === "rejected") && hasAccess(currentUser, "quotes", "full");
+
+  const latestRequisition = requisitions[0];
+  const canDecideRequisition = latestRequisition && latestRequisition.status === "pending_approval"
+    && REQUISITION_APPROVER_ROLES.includes(currentUser?.role);
+  const canSubmitRequisition = !latestRequisition || latestRequisition.status !== "pending_approval";
+
+  const decideRequisition = async (decision, reason) => {
+    try {
+      await api.post(`/parts-requisitions/${latestRequisition.id}/decide`, { decision, reason });
+      toast.success(decision === "approved" ? "Parts request approved" : "Parts request rejected");
+      load();
+      onChange();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to record decision");
+    }
+  };
 
   return (
     <Sheet open={!!jobId} onOpenChange={(o) => !o && onClose()}>
@@ -66,7 +93,7 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
           <div className="p-8 text-sm text-muted-foreground">Loading…</div>
         ) : (
           <>
-            <div className="border-b border-border p-6 shrink-0 flex items-start justify-between gap-4">
+            <div className="border-b border-border p-6 pr-14 shrink-0 flex items-start justify-between gap-4">
               <div>
                 <div className="overline">{job.vehicle_name} · {job.vehicle_plate}</div>
                 <h2 className="font-display text-2xl font-bold mt-1">{job.title}</h2>
@@ -83,7 +110,7 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
               </button>
             </div>
             <div className="border-b border-border px-6 flex gap-4 shrink-0">
-              {["overview", "quotation", "activity"].map((t) => (
+              {["overview", "parts", "quotation", "activity"].map((t) => (
                 <button key={t} onClick={() => setTab(t)} data-testid={`job-tab-${t}`}
                   className={`py-3 text-xs uppercase tracking-widest border-b-2 -mb-px ${tab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-white"}`}>
                   {t}
@@ -111,11 +138,28 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
                   )}
                 </div>
               )}
+              {tab === "parts" && (
+                <div className="space-y-6">
+                  {latestRequisition && (
+                    <PartsRequisitionPanel requisition={latestRequisition} canDecide={canDecideRequisition} onDecide={decideRequisition} />
+                  )}
+                  {canSubmitRequisition && (
+                    <div className={latestRequisition ? "border-t border-border pt-6" : ""}>
+                      {latestRequisition && <div className="overline mb-3">Request more parts</div>}
+                      <PartsRequisitionBuilder maintenanceId={jobId} onSubmitted={() => { load(); onChange(); }} />
+                    </div>
+                  )}
+                </div>
+              )}
               {tab === "quotation" && (
                 canSubmitQuote ? (
                   <QuoteBuilder maintenanceId={jobId} currentUser={currentUser} onSubmitted={() => { load(); onChange(); }} />
-                ) : (
+                ) : latestQuote ? (
                   <QuoteApprovalPanel quote={latestQuote} canDecide={canDecide} onDecide={decide} />
+                ) : (
+                  <div className="text-sm text-muted-foreground text-center py-8">
+                    No costing has been submitted for this job yet — the Workshop Manager submits costing here.
+                  </div>
                 )
               )}
               {tab === "activity" && (

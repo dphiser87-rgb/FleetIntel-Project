@@ -4,6 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { DownloadSimple } from "@phosphor-icons/react";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { usePolling } from "@/hooks/use-polling";
 
 export default function Reports() {
   const { currency } = useCurrency();
@@ -14,14 +15,16 @@ export default function Reports() {
   const [vehicles, setVehicles] = useState([]);
   const [forecast, setForecast] = useState({ history: [], forecast: [] });
 
-  useEffect(() => {
+  const load = () => {
     api.get("/analytics/cost-trend").then(r => setTrend(r.data));
     api.get("/analytics/vehicle-cost").then(r => setByVehicle(r.data));
     api.get("/analytics/cost-by-category").then(r => setByCat(r.data));
     api.get("/maintenance").then(r => setMaint(r.data));
     api.get("/vehicles").then(r => setVehicles(r.data));
     api.get("/analytics/forecast").then(r => setForecast(r.data));
-  }, []);
+  };
+  useEffect(load, []);
+  usePolling(load);
 
   const combined = [
     ...forecast.history.map(h => ({ month: h.month, actual: h.total })),

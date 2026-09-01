@@ -8,6 +8,7 @@ import { hasAccess } from "@/lib/access";
 import MaintenanceDetailPanel from "@/components/MaintenanceDetailPanel";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { usePolling } from "@/hooks/use-polling";
 
 const OPS_ROLES = ["operations_manager", "admin"];
 const FINANCE_ROLES = ["finance", "admin"];
@@ -15,6 +16,7 @@ const FINANCE_ROLES = ["finance", "admin"];
 const COLUMNS = [
   { key: "pending", label: "Pending", accent: "border-t-[#8E8E93]" },
   { key: "in_progress", label: "In progress", accent: "border-t-[#FFCC00]" },
+  { key: "on_hold", label: "On hold", accent: "border-t-[#A855F7]" },
   { key: "completed", label: "Completed", accent: "border-t-[#34C759]" },
 ];
 
@@ -37,6 +39,8 @@ export default function Maintenance() {
   const [assets, setAssets] = useState([]);
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [pendingRequisition, setPendingRequisition] = useState(false);
+  const [partsStatusByJob, setPartsStatusByJob] = useState({}); // job_id -> latest requisition status
   const [detailJobId, setDetailJobId] = useState(searchParams.get("job") || null);
   const [awaitingApproval, setAwaitingApproval] = useState(searchParams.get("approvals") === "1");
   const [complete, setComplete] = useState({
@@ -64,6 +68,10 @@ export default function Maintenance() {
     api.get("/users").then(r => setUsers(r.data));
     api.get("/maintenance-schedules").then(r => setSchedules(r.data || [])).catch(() => {});
   }, []);
+  // This board otherwise only ever fetched once on mount, so a job completed/approved/moved by
+  // someone else stayed stale until a manual reload. quotesByJob and partsStatusByJob both already
+  // depend on `jobs`, so they refresh for free whenever this does.
+  usePolling(load);
 
   // Schedules assigned to whichever vehicle/asset is currently selected in the New Job form — a job
   // can only reset a schedule it's actually linked to, so don't offer schedules for other assets.
@@ -87,6 +95,30 @@ export default function Maintenance() {
     Promise.all(jobs.map(j => api.get(`/maintenance/${j.id}/quotes`).then(r => [j.id, r.data?.[0]]).catch(() => [j.id, null])))
       .then(pairs => setQuotesByJob(Object.fromEntries(pairs)));
   }, [actionableStage, jobs]);
+
+  // Job completion is blocked (server-side, this is just the matching UI reflection) while a parts
+  // requisition on this job is still awaiting the Workshop Manager's decision.
+  useEffect(() => {
+    if (!selected) { setPendingRequisition(false); return; }
+    api.get(`/maintenance/${selected.id}/parts-requisitions`)
+      .then(r => setPendingRequisition((r.data || []).some(req => req.status === "pending_approval")))
+      .catch(() => setPendingRequisition(false));
+  }, [selected]);
+
+  // One workspace-wide fetch (not N+1 per job) for the Kanban card's parts-status badge -- keyed by
+  // each job's MOST RECENT requisition (the API returns newest-first) so a job with an old rejected
+  // request and a fresh pending one shows the current state, not a stale one.
+  useEffect(() => {
+    api.get("/parts-requisitions")
+      .then(r => {
+        const byJob = {};
+        for (const req of (r.data || [])) {
+          if (!(req.maintenance_id in byJob)) byJob[req.maintenance_id] = req.status;
+        }
+        setPartsStatusByJob(byJob);
+      })
+      .catch(() => {});
+  }, [jobs]);
 
   const visibleJobs = awaitingApproval && actionableStage
     ? jobs.filter(j => quotesByJob[j.id]?.stage === actionableStage)
@@ -113,9 +145,23 @@ export default function Maintenance() {
   const tName = (id) => users.find(u => u.id === id)?.name || "Unassigned";
 
   const move = async (job, status) => {
-    await api.patch(`/maintenance/${job.id}`, { status });
-    toast.success(`Moved to ${status.replace("_", " ")}`);
-    load();
+    try {
+      await api.patch(`/maintenance/${job.id}`, { status });
+      toast.success(`Moved to ${status.replace("_", " ")}`);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update job");
+    }
+  };
+
+  const resumeJob = async (job) => {
+    try {
+      await api.post(`/maintenance/${job.id}/resume`);
+      toast.success("Job resumed");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to resume job");
+    }
   };
 
   const stats = {
@@ -136,8 +182,11 @@ export default function Maintenance() {
   });
 
   const bulkSetStatus = async (status) => {
-    await Promise.all([...selectedIds].map(id => api.patch(`/maintenance/${id}`, { status })));
-    toast.success(`${selectedIds.size} job${selectedIds.size !== 1 ? "s" : ""} moved to ${status.replace("_", " ")}`);
+    const results = await Promise.allSettled([...selectedIds].map(id => api.patch(`/maintenance/${id}`, { status })));
+    const failed = results.filter(r => r.status === "rejected");
+    const succeeded = results.length - failed.length;
+    if (succeeded > 0) toast.success(`${succeeded} job${succeeded !== 1 ? "s" : ""} moved to ${status.replace("_", " ")}`);
+    if (failed.length > 0) toast.error(`${failed.length} job${failed.length !== 1 ? "s" : ""} couldn't be updated — ${failed[0].reason?.response?.data?.detail || "see individual jobs for details"}`);
     setSelectedIds(new Set());
     load();
   };
@@ -165,7 +214,12 @@ export default function Maintenance() {
       engine_hours: complete.engine_hours ? Number(complete.engine_hours) : null,
       completion_documents: complete.documents,
     };
-    await api.patch(`/maintenance/${selected.id}`, patch);
+    try {
+      await api.patch(`/maintenance/${selected.id}`, patch);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to complete job");
+      return;
+    }
     toast.success("Job completed");
     setSelected(null);
     setComplete({ actual_cost: "", parts_cost: "", labor_cost: "", external_cost: "", workshop_name: "", technician: "", vendor: "", odometer: "", engine_hours: "", documents: [] });
@@ -238,7 +292,7 @@ export default function Maintenance() {
 
       {view === "board" && (
       <div className="p-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6" data-testid="kanban">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6" data-testid="kanban">
           {COLUMNS.map(col => {
             const items = visibleJobs.filter(j => j.status === col.key);
             return (
@@ -257,6 +311,15 @@ export default function Maintenance() {
                       {quotesByJob[job.id]?.stage === actionableStage && (
                         <div className="text-[10px] mono uppercase tracking-widest text-primary mb-2">Awaiting your approval</div>
                       )}
+                      {job.status !== "completed" && partsStatusByJob[job.id] === "pending_approval" && (
+                        <div className="text-[10px] mono uppercase tracking-widest text-[#A855F7] mb-2">Awaiting parts</div>
+                      )}
+                      {job.status !== "completed" && partsStatusByJob[job.id] === "approved" && (
+                        <div className="text-[10px] mono uppercase tracking-widest text-[#34C759] mb-2">Parts approved</div>
+                      )}
+                      {job.status !== "completed" && partsStatusByJob[job.id] === "rejected" && (
+                        <div className="text-[10px] mono uppercase tracking-widest text-primary mb-2">Parts rejected</div>
+                      )}
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="font-display font-bold text-sm leading-tight">{job.title}</div>
                         <span className={`text-[10px] mono uppercase tracking-widest px-1.5 py-0.5 border ${PRIORITY_COLOR[job.priority] || ""}`}>{job.priority}</span>
@@ -274,8 +337,18 @@ export default function Maintenance() {
                           </button>
                         )}
                         {col.key === "in_progress" && canManageJobs && (
-                          <button onClick={(e) => { e.stopPropagation(); setSelected(job); }} data-testid={`complete-${job.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary text-xs uppercase tracking-widest px-2 py-1.5 hover:bg-primary hover:text-primary-foreground">
-                            <CheckCircle size={10} /> Complete
+                          <>
+                            <button onClick={(e) => { e.stopPropagation(); setSelected(job); }} data-testid={`complete-${job.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary text-xs uppercase tracking-widest px-2 py-1.5 hover:bg-primary hover:text-primary-foreground">
+                              <CheckCircle size={10} /> Complete
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); move(job, "on_hold"); }} data-testid={`hold-${job.id}`} className="flex items-center justify-center gap-1 border border-border text-xs uppercase tracking-widest px-2 py-1.5 hover:border-[#A855F7] hover:text-[#A855F7]">
+                              Hold
+                            </button>
+                          </>
+                        )}
+                        {col.key === "on_hold" && canManageJobs && (
+                          <button onClick={(e) => { e.stopPropagation(); resumeJob(job); }} data-testid={`resume-${job.id}`} className="flex-1 flex items-center justify-center gap-1 border border-border text-xs uppercase tracking-widest px-2 py-1.5 hover:border-primary hover:text-primary">
+                            <Play size={10} /> Resume
                           </button>
                         )}
                         {col.key === "completed" && (
@@ -415,7 +488,13 @@ export default function Maintenance() {
                 )}
               </div>
               <div className="text-xs text-muted-foreground">Downtime is calculated automatically from when the job started to now — no manual entry needed.</div>
-              <button onClick={finishJob} data-testid="finish-job-btn" className="w-full bg-primary text-primary-foreground py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">
+              {pendingRequisition && (
+                <div className="text-xs text-primary border border-primary/40 bg-primary/10 px-3 py-2">
+                  A parts request on this job is awaiting approval — it must be decided before this job can be completed.
+                </div>
+              )}
+              <button onClick={finishJob} disabled={pendingRequisition} data-testid="finish-job-btn"
+                className="w-full bg-primary text-primary-foreground py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed">
                 Mark as completed
               </button>
             </div>

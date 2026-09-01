@@ -3,6 +3,7 @@ import { api, API, formatApiErrorDetail } from "@/lib/api";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Plus, DownloadSimple, Trash, PencilSimple, ArrowUp, ArrowDown, Eye, X } from "@phosphor-icons/react";
+import { usePolling } from "@/hooks/use-polling";
 
 const FILE_TYPES = [
   { value: "pdf", label: "PDF" },
@@ -109,6 +110,7 @@ export default function ReportCenter() {
     api.get("/vehicles").then((r) => setVehicles(r.data || [])).catch(() => {});
     load();
   }, []);
+  usePolling(load);
 
   const typeByKey = useMemo(() => Object.fromEntries(types.map((t) => [t.key, t])), [types]);
 

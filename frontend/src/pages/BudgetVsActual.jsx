@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { hasAccess } from "@/lib/access";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { usePolling } from "@/hooks/use-polling";
 
 const STATUS_LABEL = { on_track: "On Track", near_limit: "Near Limit", over_budget: "Over Budget" };
 const STATUS_COLOR = {
@@ -26,6 +27,10 @@ export default function BudgetVsActual() {
   const load = () => api.get("/budgets/summary", { params: { year } }).then(r => setData(r.data));
   // eslint-disable-next-line react-hooks/exhaustive-deps -- year is fixed per page load, load() is re-created but stable in intent
   useEffect(() => { load(); }, []);
+  // Doesn't touch `edits` (the in-progress inline budget edit inputs) -- only the read-only actual/
+  // remaining figures next to them refresh, same as this page's own numbers changing whenever a
+  // maintenance job elsewhere gets completed.
+  usePolling(load);
 
   const save = async () => {
     const rows = Object.entries(edits).map(([category, amount]) => ({ category, year, amount: Number(amount) || 0 }));

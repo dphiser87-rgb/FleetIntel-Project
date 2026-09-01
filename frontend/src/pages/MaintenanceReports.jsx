@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { usePolling } from "@/hooks/use-polling";
 
 function Table({ title, rows, cols, testId }) {
   return (
@@ -35,14 +36,16 @@ export default function MaintenanceReports() {
   const [vehicles, setVehicles] = useState([]);
   const [assets, setAssets] = useState([]);
 
-  useEffect(() => {
+  const load = () => {
     api.get("/maintenance").then((r) => setJobs(r.data || []));
     api.get("/maintenance-schedules").then((r) => setSchedules(r.data || []));
     api.get("/defects").then((r) => setDefects(r.data || [])).catch(() => {});
     api.get("/incidents").then((r) => setIncidents(r.data || [])).catch(() => {});
     api.get("/vehicles").then((r) => setVehicles(r.data || []));
     api.get("/assets").then((r) => setAssets(r.data || [])).catch(() => {});
-  }, []);
+  };
+  useEffect(load, []);
+  usePolling(load);
 
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
 

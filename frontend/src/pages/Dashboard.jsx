@@ -18,6 +18,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { RadialBarChart, RadialBar, PolarAngleAxis } from "recharts";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoney, formatMoneyFull } from "@/lib/currency";
+import { usePolling } from "@/hooks/use-polling";
 
 
 const COLORS = ["#34C759", "#FF3B30", "#FFCC00", "#3B82F6", "#A855F7"];
@@ -211,7 +212,7 @@ export default function Dashboard() {
 
   const loadGroups = () => api.get("/vehicle-groups").then(r => setGroups(r.data || [])).catch(() => {});
 
-  useEffect(() => {
+  const loadKpis = () => {
     Promise.all([
       api.get("/analytics/kpi").then(r => setKpi(r.data)),
       api.get("/analytics/cost-trend").then(r => setTrend(r.data)),
@@ -227,7 +228,12 @@ export default function Dashboard() {
       api.get("/vehicles").then(r => setVehicles(r.data || [])),
       loadGroups(),
     ]).catch(() => {});
-  }, []);
+  };
+  useEffect(loadKpis, []);
+  // Deliberately does NOT include /users/me/prefs (the tile layout below) -- that only ever changes
+  // from this user's own actions, never from elsewhere, and re-fetching it mid-edit while
+  // tileModal/showGroups is open would risk clobbering an in-progress tile customization.
+  usePolling(loadKpis);
 
   const nextForecast = forecast.forecast[0];
   const [investigate, setInvestigate] = useState(null); // { key, groupBy }
@@ -246,7 +252,9 @@ export default function Dashboard() {
   const activeTiles = ALL_TILES.filter(t => cfgMap[t.key]);
   const atCap = tileConfigs.length >= MAX_TILES;
 
-  useEffect(() => { api.get("/alerts").then(r => setLiveAlerts(r.data)).catch(() => {}); }, []);
+  const loadLiveAlerts = () => api.get("/alerts").then(r => setLiveAlerts(r.data)).catch(() => {});
+  useEffect(() => { loadLiveAlerts(); }, []);
+  usePolling(loadLiveAlerts);
   useEffect(() => {
     api.get("/users/me/prefs").then(r => {
       const saved = r.data?.dashboard_tiles;

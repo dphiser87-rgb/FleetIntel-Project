@@ -169,7 +169,7 @@ async def user_from_token(token: str) -> dict:
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
     user = await fetch_one(
-        "select id, email, name, role, workspace_id, prefs, totp_enabled, created_at "
+        "select id, email, name, role, workspace_id, prefs, totp_enabled, created_at, permissions "
         "from user_profiles where id = :id",
         id=payload["sub"],
     )
@@ -326,6 +326,7 @@ class WorkspaceRename(BaseModel):
     lockout_enabled: Optional[bool] = None
     lockout_threshold: Optional[int] = None
     report_logo: Optional[str] = None
+    costing_approver_role: Optional[str] = None
 
 class ReportDefinitionIn(BaseModel):
     name: str
@@ -405,7 +406,10 @@ class TwoFAVerify(BaseModel):
     code: str
 
 class LoginReq2FA(BaseModel):
-    email: EmailStr
+    # str, not EmailStr: EmailStr's reserved-TLD rejection (.local/.test/.example) is correct for
+    # registration but wrong for login — account validity is already established and Supabase's own
+    # check is the real gate.
+    email: str
     password: str
     code: Optional[str] = None
 
@@ -475,6 +479,21 @@ class PurchaseOrderIn(BaseModel):
     notes: Optional[str] = ""
     maintenance_id: Optional[str] = None
 
+class POMarkPaid(BaseModel):
+    proof_of_payment: List[QuoteAttachment]
+
+class PartRequisitionItem(BaseModel):
+    part_id: str
+    qty_requested: float
+
+class PartRequisitionIn(BaseModel):
+    items: List[PartRequisitionItem]
+    client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
+
+class PartRequisitionDecision(BaseModel):
+    decision: Literal["approved", "rejected"]
+    reason: Optional[str] = ""
+
 class TripLogIn(BaseModel):
     vehicle_id: str
     driver_id: Optional[str] = None
@@ -526,6 +545,7 @@ class DefectIn(BaseModel):
     location: Optional[str] = ""
     assigned_to: Optional[str] = None
     estimated_cost: float = 0
+    client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
 
 class DefectUpdate(BaseModel):
     category: Optional[Literal["tyres", "engine", "brakes", "electrical", "bodywork", "general"]] = None
@@ -551,7 +571,7 @@ class UserPrefs(BaseModel):
     alert_sound_enabled: Optional[bool] = None
 
 class MaintenanceUpdate(BaseModel):
-    status: Optional[Literal["pending", "in_progress", "completed", "cancelled"]] = None
+    status: Optional[Literal["pending", "in_progress", "completed", "cancelled", "on_hold"]] = None
     actual_cost: Optional[float] = None
     parts_cost: Optional[float] = None
     labor_cost: Optional[float] = None
@@ -568,6 +588,12 @@ class MaintenanceUpdate(BaseModel):
     vendor: Optional[str] = None
     external_cost: Optional[float] = None
     completion_documents: Optional[List[dict]] = None
+    client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
+
+class MaintenancePhotoIn(BaseModel):
+    name: str
+    data: str  # base64 data URL, same inline convention as every other photo field in this app
+    client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
 
 # --- App ---
 app = FastAPI(title="FleetCost Intelligence API")
@@ -610,8 +636,15 @@ async def register(req: RegisterReq):
         workspace_id = invite["workspace_id"]
         role = invite.get("role") or role
         invite_permissions = invite.get("permissions") or PROFILE_PRESETS.get(role, {})
-        target_ws = await fetch_one("select min_password_length from workspaces where id = :id", id=workspace_id)
+        target_ws = await fetch_one(
+            "select min_password_length, costing_approver_role from workspaces where id = :id", id=workspace_id
+        )
         min_password_length = (target_ws or {}).get("min_password_length") or 8
+        # Workspaces with no dedicated Workshop Manager can designate another role as costing
+        # approver (Settings -> costing_approver_role) -- apply it here so it takes effect on every
+        # new hire automatically, not just the people already on the team when the setting was set.
+        if target_ws and target_ws.get("costing_approver_role") == role:
+            invite_permissions = {**invite_permissions, "modules": {**invite_permissions.get("modules", {}), "quotes": "full"}}
     else:
         invite_permissions = PROFILE_PRESETS.get(role, {})
         workspace_id = str(uuid.uuid4())
@@ -657,7 +690,7 @@ async def register(req: RegisterReq):
         await log_event(user, "invite.accepted", "user", user_id, {"email": email, "role": role})
 
     session = await auth_supabase.password_sign_in(email, req.password)
-    return {"user": user, "token": session["access_token"]}
+    return {"user": user, "token": session["access_token"], "refresh_token": session["refresh_token"]}
 
 LOCKOUT_COOLDOWN_MINUTES = 15
 
@@ -721,12 +754,27 @@ async def login(req: LoginReq2FA):
         if not totp_ok:
             raise HTTPException(status_code=401, detail="Invalid 2FA code")
         user.pop("totp_secret", None)
-        resp = {"user": user, "token": session["access_token"]}
+        resp = {"user": user, "token": session["access_token"], "refresh_token": session["refresh_token"]}
         if recovery_used: resp["recovery_used"] = True
         return resp
 
     user.pop("totp_secret", None)
-    return {"user": user, "token": session["access_token"]}
+    return {"user": user, "token": session["access_token"], "refresh_token": session["refresh_token"]}
+
+class RefreshReq(BaseModel):
+    refresh_token: str
+
+@api.post("/auth/refresh")
+async def refresh_token(req: RefreshReq):
+    try:
+        session = await auth_supabase.refresh_session(req.refresh_token)
+    except auth_supabase.SupabaseAuthError:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    return {
+        "token": session["access_token"],
+        "refresh_token": session["refresh_token"],
+        "expires_in": session.get("expires_in"),
+    }
 
 @api.post("/auth/2fa/setup")
 async def twofa_setup(user: dict = Depends(get_current_user)):
@@ -815,7 +863,7 @@ async def logout(user: dict = Depends(get_current_user)):
 
 MODULE_KEYS = ["dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
                "templates", "maintenance", "parts", "team", "audit", "reports", "security",
-               "purchase_orders", "defects", "executive_dashboard"]
+               "purchase_orders", "defects", "executive_dashboard", "parts_requisitions", "quotes"]
 
 def _default_permissions(role: str) -> dict:
     """Pre-fills System Rights from a Profile (role). Enforced on routes via require_module()."""
@@ -828,7 +876,7 @@ def _default_permissions(role: str) -> dict:
     elif role == "inspector":
         modules = {**read_all, "vehicle_checklist": "full", "templates": "full", "fleet": "read", "executive_dashboard": "none"}
     elif role == "mechanic":
-        modules = {**read_all, "maintenance": "full", "parts": "full", "defects": "full", "executive_dashboard": "none"}
+        modules = {**read_all, "maintenance": "full", "parts": "full", "defects": "full", "parts_requisitions": "full", "executive_dashboard": "none"}
     elif role == "operations_manager":
         modules = {**read_all, "maintenance": "full", "parts": "full", "fleet": "full", "reports": "full", "defects": "full", "executive_dashboard": "none"}
     elif role == "finance":
@@ -836,7 +884,7 @@ def _default_permissions(role: str) -> dict:
         # part of read_all's blanket grant since most other roles above are deliberately excluded.
         modules = {**read_all, "parts": "full", "reports": "full", "purchase_orders": "full", "executive_dashboard": "read"}
     elif role == "workshop_head":
-        modules = {**read_all, "maintenance": "full", "purchase_orders": "read", "parts": "read", "fleet": "read", "defects": "full", "executive_dashboard": "none"}
+        modules = {**read_all, "maintenance": "full", "purchase_orders": "read", "parts": "read", "fleet": "read", "defects": "full", "parts_requisitions": "full", "quotes": "full", "executive_dashboard": "none"}
     elif role == "operations_staff":
         modules = {**read_all, "maintenance": "full", "vehicle_checklist": "full", "templates": "full",
                    "parts": "full", "purchase_orders": "read", "defects": "full", "executive_dashboard": "none"}
@@ -1568,16 +1616,19 @@ async def get_inspection(iid: str, user: dict = Depends(get_current_user)):
 MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downtime_hours",
                      "assigned_to", "notes", "completed_at", "started_at", "category",
                      "odometer", "engine_hours", "workshop_name", "technician", "vendor",
-                     "external_cost", "completion_documents"}
+                     "external_cost", "completion_documents", "client_submission_id", "previous_status"}
 
 # --- Maintenance jobs ---
 @api.get("/maintenance")
 async def list_maintenance(user: dict = Depends(get_current_user)):
     ws = user["workspace_id"]
     if user.get("role") == "mechanic":
+        # assigned_to is a text column, but user["id"] decodes from Postgres as a uuid.UUID object
+        # (asyncpg's built-in codec for the user_profiles.id uuid column) -- str() it explicitly,
+        # or asyncpg rejects the param with "expected str, got UUID".
         rows = await fetch_all(
             "select * from maintenance where workspace_id = :ws and assigned_to = :uid order by created_at desc",
-            ws=ws, uid=user["id"],
+            ws=ws, uid=str(user["id"]),
         )
     else:
         rows = await fetch_all("select * from maintenance where workspace_id = :ws order by created_at desc", ws=ws)
@@ -1652,7 +1703,10 @@ async def create_maintenance(m: MaintenanceIn, user: dict = Depends(require_modu
 async def get_maintenance(mid: str, user: dict = Depends(get_current_user)):
     m = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not m: raise HTTPException(status_code=404, detail="Not found")
-    if user.get("role") == "mechanic" and m.get("assigned_to") != user["id"]:
+    # str() on the right-hand side: assigned_to comes back as text, user["id"] as a uuid.UUID object
+    # -- those never compare equal in Python even for the "same" id, which made this check reject
+    # every mechanic viewing their own assigned job.
+    if user.get("role") == "mechanic" and m.get("assigned_to") != str(user["id"]):
         raise HTTPException(status_code=404, detail="Not found")
     allowed_vehicles, allowed_assets = await _resolve_full_scope(user)
     if not _scope_filter([m], allowed_vehicles, allowed_assets):
@@ -1672,12 +1726,30 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
     upd = {k: v for k, v in patch.model_dump().items() if v is not None}
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Not found")
+    if patch.client_submission_id and job.get("client_submission_id") == patch.client_submission_id:
+        # Already applied by an earlier attempt of this same offline-queued update — a retried mobile
+        # sync must not re-stamp completed_at/downtime_hours against a new "now", or re-fire the
+        # defect-auto-resolve cascade a second time.
+        return job
+    if upd.get("status") == "on_hold":
+        # Store what it was doing before the hold so /resume can put it back without the client
+        # having to remember (and risk overwriting with a stale value) itself.
+        upd["previous_status"] = job.get("status")
     if upd.get("status") == "completed":
+        pending_req = await fetch_one(
+            "select id from parts_requisitions where maintenance_id = :mid and workspace_id = :ws and status = 'pending_approval'",
+            mid=mid, ws=user["workspace_id"],
+        )
+        if pending_req:
+            raise HTTPException(status_code=400, detail="Cannot complete this job while a parts request is awaiting approval")
         completed_at = datetime.now(timezone.utc)
         upd["completed_at"] = completed_at
-        pc = upd.get("parts_cost", job.get("parts_cost", 0))
-        lc = upd.get("labor_cost", job.get("labor_cost", 0))
-        ec = upd.get("external_cost", job.get("external_cost", 0)) or 0
+        # float() each term -- a numeric column decodes from Postgres as decimal.Decimal, but a
+        # client-supplied JSON number in `upd` is a float; mixing the two in arithmetic raises
+        # TypeError whenever only some of the three cost fields are provided in this PATCH.
+        pc = float(upd.get("parts_cost", job.get("parts_cost", 0)) or 0)
+        lc = float(upd.get("labor_cost", job.get("labor_cost", 0)) or 0)
+        ec = float(upd.get("external_cost", job.get("external_cost", 0)) or 0)
         upd["actual_cost"] = upd.get("actual_cost") or (pc + lc + ec)
         # Downtime is real elapsed time, not a trust-the-user number: the vehicle was down from
         # whenever work actually started (started_at) — or, if a job skipped "in_progress" and went
@@ -1716,6 +1788,38 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
     await update_row("maintenance", mid, user["workspace_id"], upd, MAINTENANCE_COLS)
     if upd.get("status"):
         await log_event(user, f"maintenance.{upd['status']}", "maintenance", mid, {"title": job.get("title", ""), "actual_cost": upd.get("actual_cost")})
+    return await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+
+@api.post("/maintenance/{mid}/photos")
+async def add_maintenance_photo(mid: str, p: MaintenancePhotoIn, user: dict = Depends(require_module("maintenance", "full"))):
+    """Attaches a photo/document to a job at any point in its lifecycle -- not just at completion,
+    unlike completion_documents which is only ever set wholesale by the Complete step. Appends to
+    the same column so both the mid-job and completion-time photos show up in one place."""
+    job = await fetch_one("select completion_documents from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+    if not job: raise HTTPException(status_code=404, detail="Not found")
+    docs = job.get("completion_documents") or []
+    if p.client_submission_id and any(d.get("client_submission_id") == p.client_submission_id for d in docs):
+        return {"completion_documents": docs}
+    docs.append({
+        "name": p.name, "data": p.data, "added_by": user["id"], "added_at": now_iso(),
+        "client_submission_id": p.client_submission_id,
+    })
+    await update_row("maintenance", mid, user["workspace_id"], {"completion_documents": docs}, MAINTENANCE_COLS)
+    await log_event(user, "maintenance.photo_added", "maintenance", mid, {"name": p.name})
+    return {"completion_documents": docs}
+
+@api.post("/maintenance/{mid}/resume")
+async def resume_maintenance(mid: str, user: dict = Depends(require_module("maintenance", "full"))):
+    """Restores a job from on_hold to whatever it was doing before -- a dedicated endpoint rather than
+    letting the generic PATCH accept an arbitrary client-supplied status here, so a stale/racing client
+    can't overwrite previous_status with the wrong value."""
+    job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+    if not job: raise HTTPException(status_code=404, detail="Not found")
+    if job.get("status") != "on_hold":
+        raise HTTPException(status_code=400, detail="This job isn't on hold")
+    restored = job.get("previous_status") or "in_progress"
+    await update_row("maintenance", mid, user["workspace_id"], {"status": restored, "previous_status": None}, MAINTENANCE_COLS)
+    await log_event(user, "maintenance.resumed", "maintenance", mid, {"restored_status": restored})
     return await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
 
 @api.delete("/maintenance/{mid}")
@@ -2128,6 +2232,7 @@ async def apply_maintenance_template(tid: str, body: ApplyTemplateIn, user: dict
 # --- Quote approvals (Workshop -> Operations Manager -> Finance) ---
 OPS_ROLES = ("operations_manager", "admin")
 FINANCE_ROLES = ("finance", "admin")
+REQUISITION_APPROVER_ROLES = ("workshop_head", "admin")
 
 async def _notify(ws: str, roles: tuple, ntype: str, message: str, maintenance_id: str):
     """Writes one notification row per matching user in the workspace — recipients are resolved to
@@ -2146,35 +2251,48 @@ async def _notify(ws: str, roles: tuple, ntype: str, message: str, maintenance_i
 async def list_quotes(mid: str, user: dict = Depends(get_current_user)):
     if user.get("role") == "mechanic":
         job = await fetch_one("select assigned_to from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
-        if not job or job.get("assigned_to") != user["id"]:
+        if not job or job.get("assigned_to") != str(user["id"]):
             raise HTTPException(status_code=404, detail="Maintenance job not found")
     return await fetch_all(
         "select * from quotes where workspace_id = :ws and maintenance_id = :mid order by created_at desc",
         ws=user["workspace_id"], mid=mid,
     )
 
-@api.post("/maintenance/{mid}/quotes")
-async def create_quote(mid: str, q: QuoteIn, user: dict = Depends(get_current_user)):
-    job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
-    if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
-    if len(q.attachments) > 5:
-        raise HTTPException(status_code=400, detail="A quote can have at most 5 attachments")
-    subtotal = sum(i.qty * i.unit_cost for i in q.items)
-    vat_total = sum(i.qty * i.unit_cost * (i.vat_pct / 100) for i in q.items)
+async def _create_quote(ws: str, mid: str, job_title: str, items: List[QuoteItem],
+                         attachments: List[QuoteAttachment], submitted_by_id: str, submitted_by_name: str) -> str:
+    """Shared quote-insert + Ops-notify logic, used by both the manual quote endpoint and the
+    parts-requisition shortfall auto-escalation — a requisition shortfall becomes a quote exactly the
+    same way a manually-submitted one does, so it flows through the existing Ops->Finance chain unchanged."""
+    subtotal = sum(i.qty * i.unit_cost for i in items)
+    vat_total = sum(i.qty * i.unit_cost * (i.vat_pct / 100) for i in items)
     qid = str(uuid.uuid4())
     await execute(
         "insert into quotes (id, workspace_id, maintenance_id, items, attachments, subtotal, vat_total, total, "
         "stage, submitted_by, submitted_by_name) values (:id, :ws, :mid, :items ::jsonb, :attachments ::jsonb, "
         ":subtotal, :vat_total, :total, 'pending_ops', :uid, :uname)",
-        id=qid, ws=user["workspace_id"], mid=mid,
-        items=json_dumps([i.model_dump() for i in q.items]),
-        attachments=json_dumps([a.model_dump() for a in q.attachments]),
+        id=qid, ws=ws, mid=mid,
+        items=json_dumps([i.model_dump() for i in items]),
+        attachments=json_dumps([a.model_dump() for a in attachments]),
         subtotal=round(subtotal, 2), vat_total=round(vat_total, 2), total=round(subtotal + vat_total, 2),
-        uid=user["id"], uname=user["name"],
+        uid=submitted_by_id, uname=submitted_by_name,
     )
-    await _notify(user["workspace_id"], OPS_ROLES, "quote_submitted",
-                  f"{user['name']} submitted a quote for {job['title']}", mid)
-    await log_event(user, "quote.submitted", "quote", mid, {"quote_id": qid, "total": round(subtotal + vat_total, 2)})
+    await _notify(ws, OPS_ROLES, "quote_submitted", f"{submitted_by_name} submitted a quote for {job_title}", mid)
+    return qid
+
+@api.post("/maintenance/{mid}/quotes")
+async def create_quote(mid: str, q: QuoteIn, user: dict = Depends(require_module("quotes", "full"))):
+    # Gated by the "quotes" System Right (not a hardcoded role tuple) so a workspace without a
+    # Workshop Manager can grant this to Operations or Finance instead via Team permissions.
+    # workshop_head/admin/manager get "full" by default (_default_permissions); every other role
+    # defaults to "read" (can view costing, same as the requisition-shortfall auto-escalation path
+    # in _create_quote already gives them) until an admin explicitly upgrades them.
+    job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+    if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
+    if len(q.attachments) > 5:
+        raise HTTPException(status_code=400, detail="A quote can have at most 5 attachments")
+    qid = await _create_quote(user["workspace_id"], mid, job["title"], q.items, q.attachments, user["id"], user["name"])
+    total = round(sum(i.qty * i.unit_cost * (1 + i.vat_pct / 100) for i in q.items), 2)
+    await log_event(user, "quote.submitted", "quote", mid, {"quote_id": qid, "total": total})
     return await fetch_one("select * from quotes where id = :id", id=qid)
 
 @api.post("/quotes/{qid}/decide")
@@ -2242,6 +2360,135 @@ async def decide_quote(qid: str, body: QuoteDecision, user: dict = Depends(get_c
         await log_event(user, f"quote.finance_{body.decision}", "quote", str(quote["maintenance_id"]), {"quote_id": qid, "reason": body.reason})
     return await fetch_one("select * from quotes where id = :id", id=qid)
 
+# --- Parts requisitions (Technician -> Workshop Manager; shortfall escalates into the quote chain above) ---
+@api.get("/maintenance/{mid}/parts-requisitions")
+async def list_requisitions_for_job(mid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") == "mechanic":
+        job = await fetch_one("select assigned_to from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+        # str() -- assigned_to is text, user["id"] decodes as uuid.UUID; see the identical fix on the
+        # other three mechanic-ownership checks in this file (get_maintenance, list_quotes).
+        if not job or job.get("assigned_to") != str(user["id"]):
+            raise HTTPException(status_code=404, detail="Maintenance job not found")
+    return await fetch_all(
+        "select * from parts_requisitions where workspace_id = :ws and maintenance_id = :mid order by created_at desc",
+        ws=user["workspace_id"], mid=mid,
+    )
+
+@api.get("/parts-requisitions")
+async def list_requisitions(user: dict = Depends(require_module("parts_requisitions", "read"))):
+    return await fetch_all(
+        "select * from parts_requisitions where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
+    )
+
+@api.post("/maintenance/{mid}/parts-requisitions")
+async def create_requisition(mid: str, body: PartRequisitionIn, user: dict = Depends(require_module("parts_requisitions", "full"))):
+    job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+    if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
+    if body.client_submission_id:
+        existing = await fetch_one(
+            "select * from parts_requisitions where workspace_id = :ws and client_submission_id = :cid",
+            ws=user["workspace_id"], cid=body.client_submission_id,
+        )
+        if existing:
+            return existing
+    if not body.items:
+        raise HTTPException(status_code=400, detail="At least one part is required")
+    part_ids = [i.part_id for i in body.items]
+    parts = await fetch_all("select * from parts where workspace_id = :ws and id = any(:ids)", ws=user["workspace_id"], ids=part_ids)
+    pmap = {str(p["id"]): p for p in parts}
+    if len(pmap) != len(set(part_ids)):
+        raise HTTPException(status_code=400, detail="One or more parts were not found")
+    items = [
+        {"part_id": i.part_id, "part_name": pmap[i.part_id]["name"], "qty_requested": i.qty_requested,
+         "unit_cost": float(pmap[i.part_id].get("unit_cost") or 0)}
+        for i in body.items
+    ]
+    rid = str(uuid.uuid4())
+    await execute(
+        "insert into parts_requisitions (id, workspace_id, maintenance_id, items, status, requested_by, requested_by_name, client_submission_id) "
+        "values (:id, :ws, :mid, :items ::jsonb, 'pending_approval', :uid, :uname, :cid)",
+        id=rid, ws=user["workspace_id"], mid=mid, items=json_dumps(items), uid=user["id"], uname=user["name"],
+        cid=body.client_submission_id,
+    )
+    await _notify(user["workspace_id"], REQUISITION_APPROVER_ROLES, "part_requisition_submitted",
+                  f"{user['name']} requested parts for {job['title']}", mid)
+    await log_event(user, "part_requisition.submitted", "parts_requisition", mid, {"requisition_id": rid, "items": len(items)})
+    return await fetch_one("select * from parts_requisitions where id = :id", id=rid)
+
+@api.post("/parts-requisitions/{rid}/decide")
+async def decide_requisition(rid: str, body: PartRequisitionDecision, user: dict = Depends(get_current_user)):
+    req = await fetch_one("select * from parts_requisitions where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
+    if not req: raise HTTPException(status_code=404, detail="Requisition not found")
+    if req["status"] != "pending_approval":
+        raise HTTPException(status_code=400, detail="This requisition has already been decided")
+    if user.get("role") not in REQUISITION_APPROVER_ROLES:
+        raise HTTPException(status_code=403, detail="You aren't authorized to decide part requisitions")
+    if body.decision == "rejected" and not (body.reason or "").strip():
+        raise HTTPException(status_code=400, detail="A reason is required to reject a requisition")
+    job = await fetch_one("select * from maintenance where id = :id", id=req["maintenance_id"])
+    decision = {"by": user["id"], "by_name": user["name"], "reason": body.reason or "", "at": datetime.now(timezone.utc).isoformat()}
+
+    resulting_quote_id = None
+    if body.decision == "approved":
+        shortfall_items = []
+        parts_cost_delta = 0.0
+        for line in req["items"]:
+            part = await fetch_one("select * from parts where id = :id and workspace_id = :ws", id=line["part_id"], ws=user["workspace_id"])
+            live_stock = float(part.get("stock") or 0) if part else 0.0
+            qty_requested = float(line["qty_requested"])
+            unit_cost = float(line.get("unit_cost") or 0)
+            qty_from_stock = min(qty_requested, live_stock)
+            qty_short = qty_requested - qty_from_stock
+            if qty_from_stock > 0 and part:
+                new_stock = max(0.0, live_stock - qty_from_stock)
+                await execute("update parts set stock = :stock where id = :id and workspace_id = :ws",
+                              stock=new_stock, id=part["id"], ws=user["workspace_id"])
+                await execute(
+                    "insert into parts_history (id, workspace_id, part_id, delta, reason, by) "
+                    "values (:id, :ws, :part_id, :delta, :reason, :by)",
+                    id=str(uuid.uuid4()), ws=user["workspace_id"], part_id=part["id"],
+                    delta=-qty_from_stock, reason=f"requisition:{rid}", by=user["id"],
+                )
+                parts_cost_delta += qty_from_stock * unit_cost
+                await _maybe_reorder_email({**part, "stock": new_stock}, user["workspace_id"])
+            if qty_short > 0:
+                shortfall_items.append(QuoteItem(
+                    type="part", description=line["part_name"], qty=qty_short, unit_cost=unit_cost, vat_pct=0,
+                ))
+        if parts_cost_delta > 0:
+            await execute(
+                "update maintenance set parts_cost = coalesce(parts_cost, 0) + :delta where id = :id and workspace_id = :ws",
+                delta=parts_cost_delta, id=req["maintenance_id"], ws=user["workspace_id"],
+            )
+        if shortfall_items:
+            resulting_quote_id = await _create_quote(
+                user["workspace_id"], req["maintenance_id"], job["title"], shortfall_items, [],
+                req["requested_by"], req["requested_by_name"],
+            )
+        await execute(
+            "update parts_requisitions set status = 'approved', decision = :d ::jsonb, resulting_quote_id = :qid where id = :id",
+            id=rid, d=json_dumps(decision), qid=resulting_quote_id,
+        )
+    else:
+        await execute(
+            "update parts_requisitions set status = 'rejected', decision = :d ::jsonb where id = :id",
+            id=rid, d=json_dumps(decision),
+        )
+
+    if req.get("requested_by"):
+        msg = f"Your parts request for {job['title']} was {body.decision} by {user['name']}"
+        if body.decision == "rejected": msg += f" — {body.reason}"
+        elif resulting_quote_id: msg += " (a quote was created for the out-of-stock portion)"
+        await execute(
+            "insert into notifications (id, workspace_id, recipient_user_id, type, message, related_maintenance_id) "
+            "values (:id, :ws, :uid, :type, :message, :mid)",
+            id=str(uuid.uuid4()), ws=user["workspace_id"], uid=req["requested_by"],
+            type=f"part_requisition_{body.decision}", message=msg, mid=req["maintenance_id"],
+        )
+    await log_event(user, f"part_requisition.{body.decision}", "parts_requisition", str(req["maintenance_id"]),
+                     {"requisition_id": rid, "reason": body.reason, "resulting_quote_id": resulting_quote_id})
+    return await fetch_one("select * from parts_requisitions where id = :id", id=rid)
+
 # --- Purchase orders ---
 @api.get("/purchase-orders")
 async def list_purchase_orders(user: dict = Depends(get_current_user)):
@@ -2249,7 +2496,7 @@ async def list_purchase_orders(user: dict = Depends(get_current_user)):
         return await fetch_all(
             "select * from purchase_orders where workspace_id = :ws and maintenance_id in "
             "(select id from maintenance where assigned_to = :uid) order by created_at desc",
-            ws=user["workspace_id"], uid=user["id"],
+            ws=user["workspace_id"], uid=str(user["id"]),
         )
     return await fetch_all(
         "select * from purchase_orders where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
@@ -2266,6 +2513,23 @@ async def create_purchase_order(po: PurchaseOrderIn, user: dict = Depends(requir
         id=poid, ws=user["workspace_id"], po_number=po_number, uid=user["id"], **po.model_dump(),
     )
     await log_event(user, "purchase_order.created", "purchase_order", poid, {"po_number": po_number, "amount": po.amount})
+    return await fetch_one("select * from purchase_orders where id = :id", id=poid)
+
+@api.post("/purchase-orders/{poid}/mark-paid")
+async def mark_purchase_order_paid(poid: str, body: POMarkPaid, user: dict = Depends(require_role(*FINANCE_ROLES))):
+    po = await fetch_one("select * from purchase_orders where id = :id and workspace_id = :ws", id=poid, ws=user["workspace_id"])
+    if not po: raise HTTPException(status_code=404, detail="Purchase order not found")
+    if po["status"] != "po_issued":
+        raise HTTPException(status_code=400, detail="Only an issued purchase order can be marked paid")
+    if not body.proof_of_payment:
+        raise HTTPException(status_code=400, detail="At least one proof-of-payment attachment is required")
+    await execute(
+        "update purchase_orders set status = 'paid', paid_at = now(), paid_by = :uid, proof_of_payment = :pop ::jsonb "
+        "where id = :id and workspace_id = :ws",
+        id=poid, ws=user["workspace_id"], uid=user["id"],
+        pop=json_dumps([a.model_dump() for a in body.proof_of_payment]),
+    )
+    await log_event(user, "purchase_order.paid", "purchase_order", poid, {"po_number": po["po_number"]})
     return await fetch_one("select * from purchase_orders where id = :id", id=poid)
 
 # --- Notifications ---
@@ -3929,14 +4193,21 @@ async def list_defects(user: dict = Depends(get_current_user)):
 
 @api.post("/defects")
 async def create_defect(d: DefectIn, user: dict = Depends(require_module("defects", "full"))):
+    if d.client_submission_id:
+        existing = await fetch_one(
+            "select * from defects where workspace_id = :ws and client_submission_id = :cid",
+            ws=user["workspace_id"], cid=d.client_submission_id,
+        )
+        if existing:
+            return (await _enrich_defects(user["workspace_id"], [existing]))[0]
     did = str(uuid.uuid4())
     fields = d.model_dump()
     if user.get("role") not in DEFECT_PRICING_ROLES:
         fields["estimated_cost"] = 0
     await execute(
         "insert into defects (id, workspace_id, vehicle_id, category, severity, description, location, "
-        "reported_by, assigned_to, estimated_cost) values (:id, :ws, :vehicle_id, :category, :severity, "
-        ":description, :location, :reported_by, :assigned_to, :estimated_cost)",
+        "reported_by, assigned_to, estimated_cost, client_submission_id) values (:id, :ws, :vehicle_id, :category, "
+        ":severity, :description, :location, :reported_by, :assigned_to, :estimated_cost, :client_submission_id)",
         id=did, ws=user["workspace_id"], reported_by=user["id"], **fields,
     )
     doc = await fetch_one("select * from defects where id = :id", id=did)
@@ -4964,7 +5235,7 @@ async def get_workspace(user: dict = Depends(get_current_user)):
 
 @api.patch("/workspace")
 async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_current_user)):
-    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo)
+    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role)
     if any(v is not None for v in guarded) and user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Only admins/managers can change workspace-wide settings")
     if req.name is not None:
@@ -4988,6 +5259,23 @@ async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_curren
         if len(req.report_logo) > REPORT_LOGO_MAX_B64_CHARS:
             raise HTTPException(status_code=400, detail="Logo image is too large (max ~1.5MB)")
         await execute("update workspaces set report_logo = :l where id = :id", l=req.report_logo or None, id=user["workspace_id"])
+    if req.costing_approver_role is not None:
+        if req.costing_approver_role and req.costing_approver_role not in ("operations_manager", "finance", "workshop_head"):
+            raise HTTPException(status_code=400, detail="Invalid costing approver role")
+        await execute("update workspaces set costing_approver_role = :r where id = :id", r=req.costing_approver_role or None, id=user["workspace_id"])
+        if req.costing_approver_role:
+            # Materialize the grant into everyone already in that role now -- new hires get it at
+            # registration instead (see register()'s target_ws.costing_approver_role check), so this
+            # workspace setting stays effective without a repeated per-user Team panel chore.
+            # NB: jsonb_set can't create a missing intermediate object for a 2-level path ('{modules,
+            # quotes}') -- it silently no-ops when permissions/modules is empty. Merge the whole
+            # 'modules' object instead so this works whether or not the user has any permissions yet.
+            await execute(
+                "update user_profiles set permissions = jsonb_set(coalesce(permissions, '{}'::jsonb), "
+                "'{modules}', coalesce(permissions->'modules', '{}'::jsonb) || '{\"quotes\":\"full\"}'::jsonb) "
+                "where workspace_id = :ws and role = :role",
+                ws=user["workspace_id"], role=req.costing_approver_role,
+            )
     return await fetch_one("select * from workspaces where id = :id", id=user["workspace_id"])
 
 

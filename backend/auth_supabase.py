@@ -94,6 +94,18 @@ async def password_sign_in(email: str, password: str) -> dict:
     return resp.json()
 
 
+async def refresh_session(refresh_token: str) -> dict:
+    """Redeems a Supabase refresh token for a new session. Returns {access_token, refresh_token, expires_in, user: {...}}."""
+    resp = await _client.post(
+        f"{_AUTH_BASE}/token?grant_type=refresh_token",
+        headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Content-Type": "application/json"},
+        json={"refresh_token": refresh_token},
+    )
+    if resp.status_code >= 400:
+        raise SupabaseAuthError(401, "Invalid or expired refresh token")
+    return resp.json()
+
+
 def verify_access_token(token: str) -> dict:
     """Verifies a Supabase-issued access token against the project's JWKS. Raises jwt exceptions on failure."""
     signing_key = _jwks_client.get_signing_key_from_jwt(token)

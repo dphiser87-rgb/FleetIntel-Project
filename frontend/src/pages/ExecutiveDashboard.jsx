@@ -10,6 +10,7 @@ import {
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoney, formatMoneyFull } from "@/lib/currency";
 import InvestigationHub from "@/components/investigation/InvestigationHub";
+import { usePolling } from "@/hooks/use-polling";
 
 const CHART = {
   maintenance: "hsl(var(--chart-1))", // green
@@ -47,10 +48,12 @@ export default function ExecutiveDashboard() {
   const [groups, setGroups] = useState([]);
   const [investigate, setInvestigate] = useState(null);
 
+  const loadKpis = () => api.get("/analytics/executive-dashboard").then((r) => setData(r.data));
   useEffect(() => {
-    api.get("/analytics/executive-dashboard").then((r) => setData(r.data));
+    loadKpis();
     api.get("/vehicle-groups").then((r) => setGroups(r.data || [])).catch(() => {});
   }, []);
+  usePolling(loadKpis);
 
   if (!data) return <div className="noise-bg min-h-screen p-12 text-muted-foreground">Loading…</div>;
 

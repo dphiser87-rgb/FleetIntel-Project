@@ -3,7 +3,7 @@
 const MODULE_KEYS = [
   "dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
   "templates", "maintenance", "parts", "team", "audit", "reports", "security", "purchase_orders", "defects",
-  "executive_dashboard",
+  "executive_dashboard", "parts_requisitions", "quotes",
 ];
 
 function defaultPermissions(role) {
@@ -17,13 +17,13 @@ function defaultPermissions(role) {
     case "inspector":
       return { ...readAll, vehicle_checklist: "full", templates: "full", fleet: "read", executive_dashboard: "none" };
     case "mechanic":
-      return { ...readAll, maintenance: "full", parts: "full", defects: "full", executive_dashboard: "none" };
+      return { ...readAll, maintenance: "full", parts: "full", defects: "full", parts_requisitions: "full", executive_dashboard: "none" };
     case "operations_manager":
       return { ...readAll, maintenance: "full", parts: "full", fleet: "full", reports: "full", defects: "full", executive_dashboard: "none" };
     case "finance":
       return { ...readAll, parts: "full", reports: "full", purchase_orders: "full", executive_dashboard: "read" };
     case "workshop_head":
-      return { ...readAll, maintenance: "full", purchase_orders: "read", parts: "read", fleet: "read", defects: "full", executive_dashboard: "none" };
+      return { ...readAll, maintenance: "full", purchase_orders: "read", parts: "read", fleet: "read", defects: "full", parts_requisitions: "full", quotes: "full", executive_dashboard: "none" };
     case "operations_staff":
       return { ...readAll, maintenance: "full", vehicle_checklist: "full", templates: "full", parts: "full", purchase_orders: "read", defects: "full", executive_dashboard: "none" };
     case "finance_staff":

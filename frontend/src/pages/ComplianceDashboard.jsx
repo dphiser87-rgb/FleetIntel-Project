@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { usePolling } from "@/hooks/use-polling";
 
 const BREAKDOWN_COLOR = { compliant: "#34C759", due_soon: "#FFCC00", overdue: "#FF3B30", missed: "#8E8E93" };
 const BREAKDOWN_LABEL = { compliant: "Compliant", due_soon: "Due Soon", overdue: "Overdue", missed: "Missed" };
@@ -12,7 +13,9 @@ const barColor = (s) => (s >= 80 ? "#34C759" : s >= 50 ? "#FFCC00" : "#FF3B30");
 export default function ComplianceDashboard() {
   const [data, setData] = useState(null);
 
-  useEffect(() => { api.get("/compliance/dashboard").then(r => setData(r.data)); }, []);
+  const load = () => api.get("/compliance/dashboard").then(r => setData(r.data));
+  useEffect(() => { load(); }, []);
+  usePolling(load);
 
   if (!data) return <div className="noise-bg min-h-screen p-8 text-sm text-muted-foreground">Loading…</div>;
 
