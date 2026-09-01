@@ -21,6 +21,9 @@ import ExecutiveDashboardScreen from "../screens/executive/ExecutiveDashboardScr
 import VehicleInvestigationScreen from "../screens/executive/VehicleInvestigationScreen";
 import CostBreakdownScreen from "../screens/executive/CostBreakdownScreen";
 import TransactionDetailScreen from "../screens/executive/TransactionDetailScreen";
+import ApprovalsListScreen from "../screens/approvals/ApprovalsListScreen";
+import RequisitionApprovalScreen from "../screens/approvals/RequisitionApprovalScreen";
+import QuoteApprovalScreen from "../screens/approvals/QuoteApprovalScreen";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -28,6 +31,10 @@ const Tab = createBottomTabNavigator();
 // Mirrors the backend's actual grant exactly (backend/server.py's _default_permissions()) rather than
 // re-deriving it from GET /permissions/presets -- this exact 4-role set is stable/explicit there.
 const EXECUTIVE_ROLES = ["admin", "manager", "executive", "finance"];
+
+// Mirrors the backend's REQUISITION_APPROVER_ROLES / OPS_ROLES / FINANCE_ROLES (server.py:2225-2227)
+// combined -- any role that can decide at least one of parts requisitions or quote costing stages.
+const APPROVER_ROLES = ["workshop_head", "operations_manager", "finance", "admin"];
 
 const screenOptions = {
   headerStyle: { backgroundColor: colors.surface },
@@ -76,6 +83,16 @@ function ExecutiveStack() {
   );
 }
 
+function ApprovalsStack() {
+  return (
+    <Stack.Navigator screenOptions={screenOptions}>
+      <Stack.Screen name="ApprovalsList" component={ApprovalsListScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="RequisitionApproval" component={RequisitionApprovalScreen} options={{ title: "Parts requisition" }} />
+      <Stack.Screen name="QuoteApproval" component={QuoteApprovalScreen} options={{ title: "Quote costing" }} />
+    </Stack.Navigator>
+  );
+}
+
 function useBackgroundSync() {
   useEffect(() => {
     const stop = startSyncTriggers(() => {});
@@ -85,6 +102,7 @@ function useBackgroundSync() {
 
 function Tabs() {
   useBackgroundSync();
+  const { user } = useAuth();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -97,6 +115,7 @@ function Tabs() {
       <Tab.Screen name="Jobs" component={JobsStack} options={{ title: "My Jobs" }} />
       <Tab.Screen name="Vehicles" component={VehiclesStack} />
       <Tab.Screen name="Defects" component={DefectsStack} />
+      {APPROVER_ROLES.includes(user?.role) && <Tab.Screen name="Approvals" component={ApprovalsStack} />}
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );
@@ -108,6 +127,7 @@ function ExecutiveTabs() {
   // matters here too (fuel/trip logs submitted offline from VehicleInvestigationScreen), and there's
   // no separate "executive-only" sync loop worth maintaining just to skip the unused pulls.
   useBackgroundSync();
+  const { user } = useAuth();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -118,6 +138,7 @@ function ExecutiveTabs() {
       }}
     >
       <Tab.Screen name="Dashboard" component={ExecutiveStack} />
+      {APPROVER_ROLES.includes(user?.role) && <Tab.Screen name="Approvals" component={ApprovalsStack} />}
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );
