@@ -258,13 +258,24 @@ export default function InspectionScreen({ route, navigation }) {
       </ScrollView>
 
       <Modal visible={showSignature} animationType="slide">
-        <SignatureScreen
-          onOK={(sig) => { setSignature(sig); setShowSignature(false); }}
-          onEmpty={() => setShowSignature(false)}
-          descriptionText=""
-          webStyle="body,html{background:#0b0b0d;}"
-        />
-        <Button title="Cancel" variant="outline" onPress={() => setShowSignature(false)} style={styles.cancelSig} />
+        <View style={styles.sigModal}>
+          <View style={styles.sigHeader}>
+            <Text style={styles.sigHeaderText}>Sign, then tap Confirm below</Text>
+            <Button title="Cancel" variant="outline" onPress={() => setShowSignature(false)} style={styles.cancelSig} />
+          </View>
+          <View style={styles.sigPadWrap}>
+            <SignatureScreen
+              style={styles.sigCanvas}
+              onOK={(sig) => { setSignature(sig); setShowSignature(false); }}
+              onEmpty={() => setShowSignature(false)}
+              descriptionText=""
+              // Appended to (not replacing) the library's default stylesheet, which already makes
+              // the Clear/Confirm footer buttons visible -- this only pads the page around the
+              // white signature pad so it doesn't sit flush against the modal edges.
+              webStyle="body,html{background:#0b0b0d;} .m-signature-pad{margin:16px;}"
+            />
+          </View>
+        </View>
       </Modal>
     </Screen>
   );
@@ -299,5 +310,13 @@ const styles = StyleSheet.create({
   thumb: { width: 64, height: 64, borderRadius: 4, marginTop: spacing.sm },
   signaturePreview: { width: "100%", height: 120, borderWidth: 1, borderColor: colors.border, borderRadius: 6, backgroundColor: "#fff" },
   warning: { color: colors.primary, fontSize: 12, marginTop: spacing.md },
-  cancelSig: { margin: spacing.lg },
+  sigModal: { flex: 1, backgroundColor: colors.background },
+  sigHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    padding: spacing.lg, paddingTop: spacing.xxl,
+  },
+  sigHeaderText: { color: colors.textMuted, fontSize: 13, flex: 1, marginRight: spacing.md },
+  cancelSig: { paddingHorizontal: spacing.lg },
+  sigPadWrap: { flex: 1 },
+  sigCanvas: { flex: 1 },
 });
