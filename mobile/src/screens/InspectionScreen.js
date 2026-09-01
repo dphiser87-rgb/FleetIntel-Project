@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, Alert, Image, Modal } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
-import SignaturePad from "../components/SignaturePad";
+import SignatureScreen from "react-native-signature-canvas";
 import { Screen, Card, Overline, Button, Badge } from "../components/ui";
 import { colors, spacing } from "../lib/theme";
 import { getCachedTemplates, getCachedVehicle, runSync } from "../lib/sync";
@@ -258,10 +258,24 @@ export default function InspectionScreen({ route, navigation }) {
       </ScrollView>
 
       <Modal visible={showSignature} animationType="slide">
-        <SignaturePad
-          onConfirm={(sig) => { setSignature(sig); setShowSignature(false); }}
-          onCancel={() => setShowSignature(false)}
-        />
+        <View style={styles.sigModal}>
+          <View style={styles.sigHeader}>
+            <Text style={styles.sigHeaderText}>Sign, then tap Confirm below</Text>
+            <Button title="Cancel" variant="outline" onPress={() => setShowSignature(false)} style={styles.cancelSig} />
+          </View>
+          <View style={styles.sigPadWrap}>
+            <SignatureScreen
+              style={styles.sigCanvas}
+              onOK={(sig) => { setSignature(sig); setShowSignature(false); }}
+              onEmpty={() => setShowSignature(false)}
+              descriptionText=""
+              // Only recolors body/html -- deliberately does NOT touch .m-signature-pad's box model
+              // (a previous attempt added margin to an already width:100%/height:100% element inside
+              // an overflow:hidden body, which pushed the Clear/Confirm footer off-screen entirely).
+              webStyle="body,html{background:#0b0b0d;}"
+            />
+          </View>
+        </View>
       </Modal>
     </Screen>
   );
@@ -296,4 +310,13 @@ const styles = StyleSheet.create({
   thumb: { width: 64, height: 64, borderRadius: 4, marginTop: spacing.sm },
   signaturePreview: { width: "100%", height: 120, borderWidth: 1, borderColor: colors.border, borderRadius: 6, backgroundColor: "#fff" },
   warning: { color: colors.primary, fontSize: 12, marginTop: spacing.md },
+  sigModal: { flex: 1, backgroundColor: colors.background },
+  sigHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    padding: spacing.lg, paddingTop: spacing.xxl,
+  },
+  sigHeaderText: { color: colors.textMuted, fontSize: 13, flex: 1, marginRight: spacing.md },
+  cancelSig: { paddingHorizontal: spacing.lg },
+  sigPadWrap: { flex: 1 },
+  sigCanvas: { flex: 1 },
 });
