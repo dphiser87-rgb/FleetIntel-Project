@@ -39,7 +39,7 @@ export default function Maintenance() {
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null);
   const [pendingRequisition, setPendingRequisition] = useState(false);
-  const [awaitingPartsJobIds, setAwaitingPartsJobIds] = useState(new Set());
+  const [partsStatusByJob, setPartsStatusByJob] = useState({}); // job_id -> latest requisition status
   const [detailJobId, setDetailJobId] = useState(searchParams.get("job") || null);
   const [awaitingApproval, setAwaitingApproval] = useState(searchParams.get("approvals") === "1");
   const [complete, setComplete] = useState({
@@ -100,10 +100,18 @@ export default function Maintenance() {
       .catch(() => setPendingRequisition(false));
   }, [selected]);
 
-  // One workspace-wide fetch (not N+1 per job) for the Kanban card's "Awaiting parts" badge.
+  // One workspace-wide fetch (not N+1 per job) for the Kanban card's parts-status badge -- keyed by
+  // each job's MOST RECENT requisition (the API returns newest-first) so a job with an old rejected
+  // request and a fresh pending one shows the current state, not a stale one.
   useEffect(() => {
     api.get("/parts-requisitions")
-      .then(r => setAwaitingPartsJobIds(new Set((r.data || []).filter(req => req.status === "pending_approval").map(req => req.maintenance_id))))
+      .then(r => {
+        const byJob = {};
+        for (const req of (r.data || [])) {
+          if (!(req.maintenance_id in byJob)) byJob[req.maintenance_id] = req.status;
+        }
+        setPartsStatusByJob(byJob);
+      })
       .catch(() => {});
   }, [jobs]);
 
@@ -298,8 +306,14 @@ export default function Maintenance() {
                       {quotesByJob[job.id]?.stage === actionableStage && (
                         <div className="text-[10px] mono uppercase tracking-widest text-primary mb-2">Awaiting your approval</div>
                       )}
-                      {job.status !== "completed" && awaitingPartsJobIds.has(job.id) && (
+                      {job.status !== "completed" && partsStatusByJob[job.id] === "pending_approval" && (
                         <div className="text-[10px] mono uppercase tracking-widest text-[#A855F7] mb-2">Awaiting parts</div>
+                      )}
+                      {job.status !== "completed" && partsStatusByJob[job.id] === "approved" && (
+                        <div className="text-[10px] mono uppercase tracking-widest text-[#34C759] mb-2">Parts approved</div>
+                      )}
+                      {job.status !== "completed" && partsStatusByJob[job.id] === "rejected" && (
+                        <div className="text-[10px] mono uppercase tracking-widest text-primary mb-2">Parts rejected</div>
                       )}
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="font-display font-bold text-sm leading-tight">{job.title}</div>
