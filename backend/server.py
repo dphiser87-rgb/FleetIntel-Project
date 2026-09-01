@@ -570,7 +570,7 @@ class UserPrefs(BaseModel):
     alert_sound_enabled: Optional[bool] = None
 
 class MaintenanceUpdate(BaseModel):
-    status: Optional[Literal["pending", "in_progress", "completed", "cancelled"]] = None
+    status: Optional[Literal["pending", "in_progress", "completed", "cancelled", "on_hold"]] = None
     actual_cost: Optional[float] = None
     parts_cost: Optional[float] = None
     labor_cost: Optional[float] = None
@@ -1608,7 +1608,7 @@ async def get_inspection(iid: str, user: dict = Depends(get_current_user)):
 MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downtime_hours",
                      "assigned_to", "notes", "completed_at", "started_at", "category",
                      "odometer", "engine_hours", "workshop_name", "technician", "vendor",
-                     "external_cost", "completion_documents", "client_submission_id"}
+                     "external_cost", "completion_documents", "client_submission_id", "previous_status"}
 
 # --- Maintenance jobs ---
 @api.get("/maintenance")
@@ -1723,6 +1723,10 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
         # sync must not re-stamp completed_at/downtime_hours against a new "now", or re-fire the
         # defect-auto-resolve cascade a second time.
         return job
+    if upd.get("status") == "on_hold":
+        # Store what it was doing before the hold so /resume can put it back without the client
+        # having to remember (and risk overwriting with a stale value) itself.
+        upd["previous_status"] = job.get("status")
     if upd.get("status") == "completed":
         pending_req = await fetch_one(
             "select id from parts_requisitions where maintenance_id = :mid and workspace_id = :ws and status = 'pending_approval'",
@@ -1795,6 +1799,20 @@ async def add_maintenance_photo(mid: str, p: MaintenancePhotoIn, user: dict = De
     await update_row("maintenance", mid, user["workspace_id"], {"completion_documents": docs}, MAINTENANCE_COLS)
     await log_event(user, "maintenance.photo_added", "maintenance", mid, {"name": p.name})
     return {"completion_documents": docs}
+
+@api.post("/maintenance/{mid}/resume")
+async def resume_maintenance(mid: str, user: dict = Depends(require_module("maintenance", "full"))):
+    """Restores a job from on_hold to whatever it was doing before -- a dedicated endpoint rather than
+    letting the generic PATCH accept an arbitrary client-supplied status here, so a stale/racing client
+    can't overwrite previous_status with the wrong value."""
+    job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+    if not job: raise HTTPException(status_code=404, detail="Not found")
+    if job.get("status") != "on_hold":
+        raise HTTPException(status_code=400, detail="This job isn't on hold")
+    restored = job.get("previous_status") or "in_progress"
+    await update_row("maintenance", mid, user["workspace_id"], {"status": restored, "previous_status": None}, MAINTENANCE_COLS)
+    await log_event(user, "maintenance.resumed", "maintenance", mid, {"restored_status": restored})
+    return await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
 
 @api.delete("/maintenance/{mid}")
 async def delete_maintenance(mid: str, user: dict = Depends(require_module("maintenance", "full"))):
