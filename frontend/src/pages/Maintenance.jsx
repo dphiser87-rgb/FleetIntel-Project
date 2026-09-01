@@ -37,6 +37,7 @@ export default function Maintenance() {
   const [assets, setAssets] = useState([]);
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [pendingRequisition, setPendingRequisition] = useState(false);
   const [detailJobId, setDetailJobId] = useState(searchParams.get("job") || null);
   const [awaitingApproval, setAwaitingApproval] = useState(searchParams.get("approvals") === "1");
   const [complete, setComplete] = useState({
@@ -88,6 +89,15 @@ export default function Maintenance() {
       .then(pairs => setQuotesByJob(Object.fromEntries(pairs)));
   }, [actionableStage, jobs]);
 
+  // Job completion is blocked (server-side, this is just the matching UI reflection) while a parts
+  // requisition on this job is still awaiting the Workshop Manager's decision.
+  useEffect(() => {
+    if (!selected) { setPendingRequisition(false); return; }
+    api.get(`/maintenance/${selected.id}/parts-requisitions`)
+      .then(r => setPendingRequisition((r.data || []).some(req => req.status === "pending_approval")))
+      .catch(() => setPendingRequisition(false));
+  }, [selected]);
+
   const visibleJobs = awaitingApproval && actionableStage
     ? jobs.filter(j => quotesByJob[j.id]?.stage === actionableStage)
     : jobs;
@@ -136,8 +146,11 @@ export default function Maintenance() {
   });
 
   const bulkSetStatus = async (status) => {
-    await Promise.all([...selectedIds].map(id => api.patch(`/maintenance/${id}`, { status })));
-    toast.success(`${selectedIds.size} job${selectedIds.size !== 1 ? "s" : ""} moved to ${status.replace("_", " ")}`);
+    const results = await Promise.allSettled([...selectedIds].map(id => api.patch(`/maintenance/${id}`, { status })));
+    const failed = results.filter(r => r.status === "rejected");
+    const succeeded = results.length - failed.length;
+    if (succeeded > 0) toast.success(`${succeeded} job${succeeded !== 1 ? "s" : ""} moved to ${status.replace("_", " ")}`);
+    if (failed.length > 0) toast.error(`${failed.length} job${failed.length !== 1 ? "s" : ""} couldn't be updated — ${failed[0].reason?.response?.data?.detail || "see individual jobs for details"}`);
     setSelectedIds(new Set());
     load();
   };
@@ -165,7 +178,12 @@ export default function Maintenance() {
       engine_hours: complete.engine_hours ? Number(complete.engine_hours) : null,
       completion_documents: complete.documents,
     };
-    await api.patch(`/maintenance/${selected.id}`, patch);
+    try {
+      await api.patch(`/maintenance/${selected.id}`, patch);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to complete job");
+      return;
+    }
     toast.success("Job completed");
     setSelected(null);
     setComplete({ actual_cost: "", parts_cost: "", labor_cost: "", external_cost: "", workshop_name: "", technician: "", vendor: "", odometer: "", engine_hours: "", documents: [] });
@@ -415,7 +433,13 @@ export default function Maintenance() {
                 )}
               </div>
               <div className="text-xs text-muted-foreground">Downtime is calculated automatically from when the job started to now — no manual entry needed.</div>
-              <button onClick={finishJob} data-testid="finish-job-btn" className="w-full bg-primary text-primary-foreground py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">
+              {pendingRequisition && (
+                <div className="text-xs text-primary border border-primary/40 bg-primary/10 px-3 py-2">
+                  A parts request on this job is awaiting approval — it must be decided before this job can be completed.
+                </div>
+              )}
+              <button onClick={finishJob} disabled={pendingRequisition} data-testid="finish-job-btn"
+                className="w-full bg-primary text-primary-foreground py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed">
                 Mark as completed
               </button>
             </div>
