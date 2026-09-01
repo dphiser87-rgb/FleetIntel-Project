@@ -1,11 +1,73 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash } from "@phosphor-icons/react";
+import { Plus, Trash, MagnifyingGlass } from "@phosphor-icons/react";
 import { api } from "@/lib/api";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 
 const emptyLine = { part_id: "", qty_requested: 1 };
+
+// No existing searchable-combobox pattern in this codebase to reuse (components/ui/command.jsx is
+// scaffolded but unused anywhere) -- a small self-contained search+list replaces the plain <select>,
+// which becomes unusable to scroll through once a workspace has a real-sized parts catalog.
+function PartSearchSelect({ parts, value, onChange, testId }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef(null);
+  const selected = parts.find((p) => p.id === value);
+
+  useEffect(() => {
+    const onClickOutside = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const filtered = parts.filter((p) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (p.name || "").toLowerCase().includes(q) || (p.sku || "").toLowerCase().includes(q);
+  });
+
+  return (
+    <div className="relative" ref={wrapRef} data-testid={testId}>
+      <button
+        type="button"
+        onClick={() => { setOpen((o) => !o); setQuery(""); }}
+        className="w-full flex items-center justify-between gap-1 bg-[#0b0b0d] border border-border px-1.5 py-1 text-xs text-left focus:border-primary focus:outline-none"
+      >
+        <span className={selected ? "" : "text-muted-foreground"}>
+          {selected ? `${selected.name}${selected.sku ? ` (${selected.sku})` : ""}` : "Select a part…"}
+        </span>
+        <MagnifyingGlass size={12} className="text-muted-foreground shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-64 max-h-64 overflow-y-auto bg-[#121214] border border-border shadow-lg">
+          <div className="p-1.5 border-b border-border sticky top-0 bg-[#121214]">
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search parts…"
+              className="w-full bg-[#0b0b0d] border border-border px-2 py-1 text-xs focus:border-primary focus:outline-none"
+            />
+          </div>
+          {filtered.length === 0 && <div className="p-2 text-xs text-muted-foreground">No parts match.</div>}
+          {filtered.map((p) => (
+            <button
+              type="button"
+              key={p.id}
+              onClick={() => { onChange(p.id); setOpen(false); }}
+              className="w-full text-left px-2 py-1.5 text-xs hover:bg-primary/10 hover:text-primary flex items-center justify-between gap-2"
+            >
+              <span>{p.name} {p.sku ? <span className="text-muted-foreground">({p.sku})</span> : ""}</span>
+              <span className="mono text-muted-foreground shrink-0">{p.stock ?? 0} in stock</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Mirrors QuoteBuilder.jsx's shape (line-item table + submit button), but sources lines from the
 // Parts catalog instead of free text — this is a "cart of parts" against one job, not an open quote.
@@ -65,14 +127,12 @@ export default function PartsRequisitionBuilder({ maintenanceId, onSubmitted }) 
               return (
                 <tr key={i} className="border-b border-border/50" data-testid={`requisition-line-${i}`}>
                   <td className="p-1">
-                    <select value={l.part_id} onChange={(e) => setLine(i, { part_id: e.target.value })}
-                      data-testid={`requisition-part-select-${i}`}
-                      className="w-full bg-[#0b0b0d] border border-border px-1.5 py-1 text-xs focus:border-primary focus:outline-none">
-                      <option value="">Select a part…</option>
-                      {parts.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name} {p.sku ? `(${p.sku})` : ""}</option>
-                      ))}
-                    </select>
+                    <PartSearchSelect
+                      parts={parts}
+                      value={l.part_id}
+                      onChange={(id) => setLine(i, { part_id: id })}
+                      testId={`requisition-part-select-${i}`}
+                    />
                   </td>
                   <td className={`p-1 mono text-xs ${short ? "text-primary" : "text-muted-foreground"}`}>
                     {part ? (part.stock ?? 0) : "—"}
