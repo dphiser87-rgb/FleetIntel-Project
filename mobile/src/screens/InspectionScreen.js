@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, Alert, Image, Modal } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -29,6 +29,7 @@ export default function InspectionScreen({ route, navigation }) {
   const [odometer, setOdometer] = useState("");
   const [signature, setSignature] = useState(null);
   const [showSignature, setShowSignature] = useState(false);
+  const signatureRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
 
   useFocusEffect(useCallback(() => {
@@ -261,20 +262,26 @@ export default function InspectionScreen({ route, navigation }) {
       <Modal visible={showSignature} animationType="slide">
         <SafeAreaView style={styles.sigModal} edges={["top", "bottom"]}>
           <View style={styles.sigHeader}>
-            <Text style={styles.sigHeaderText}>Sign, then tap Confirm below</Text>
-            <Button title="Cancel" variant="outline" onPress={() => setShowSignature(false)} style={styles.cancelSig} />
+            <Text style={styles.sigHeaderText}>Sign below</Text>
           </View>
           <View style={styles.sigPadWrap}>
             <SignatureScreen
+              ref={signatureRef}
               style={styles.sigCanvas}
               onOK={(sig) => { setSignature(sig); setShowSignature(false); }}
-              onEmpty={() => setShowSignature(false)}
+              onEmpty={() => Alert.alert("Nothing to save", "Draw a signature first.")}
               descriptionText=""
-              // Only recolors body/html -- deliberately does NOT touch .m-signature-pad's box model
-              // (a previous attempt added margin to an already width:100%/height:100% element inside
-              // an overflow:hidden body, which pushed the Clear/Confirm footer off-screen entirely).
-              webStyle="body,html{background:#0b0b0d;}"
+              // The library's own internal Clear/Confirm buttons never rendered visibly on a real
+              // device across several layout attempts -- hidden here, and driven instead via the
+              // imperative ref (readSignature/clearSignature) from ordinary RN buttons below, which
+              // have rendered reliably in every attempt so far.
+              webStyle="body,html{background:#0b0b0d;} .m-signature-pad--footer{display:none;}"
             />
+          </View>
+          <View style={styles.sigFooter}>
+            <Button title="Cancel" variant="outline" onPress={() => setShowSignature(false)} style={styles.sigFooterBtn} />
+            <Button title="Clear" variant="outline" onPress={() => signatureRef.current?.clearSignature()} style={styles.sigFooterBtn} />
+            <Button title="Confirm" onPress={() => signatureRef.current?.readSignature()} style={styles.sigFooterBtn} />
           </View>
         </SafeAreaView>
       </Modal>
@@ -312,12 +319,10 @@ const styles = StyleSheet.create({
   signaturePreview: { width: "100%", height: 120, borderWidth: 1, borderColor: colors.border, borderRadius: 6, backgroundColor: "#fff" },
   warning: { color: colors.primary, fontSize: 12, marginTop: spacing.md },
   sigModal: { flex: 1, backgroundColor: colors.background },
-  sigHeader: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    padding: spacing.lg, paddingTop: spacing.xxl,
-  },
-  sigHeaderText: { color: colors.textMuted, fontSize: 13, flex: 1, marginRight: spacing.md },
-  cancelSig: { paddingHorizontal: spacing.lg },
-  sigPadWrap: { flex: 1 },
+  sigHeader: { padding: spacing.lg },
+  sigHeaderText: { color: colors.textMuted, fontSize: 13 },
+  sigPadWrap: { flex: 1, marginHorizontal: spacing.lg },
   sigCanvas: { flex: 1 },
+  sigFooter: { flexDirection: "row", gap: spacing.sm, padding: spacing.lg },
+  sigFooterBtn: { flex: 1 },
 });
