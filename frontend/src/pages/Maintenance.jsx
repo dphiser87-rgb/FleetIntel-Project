@@ -15,6 +15,7 @@ const FINANCE_ROLES = ["finance", "admin"];
 const COLUMNS = [
   { key: "pending", label: "Pending", accent: "border-t-[#8E8E93]" },
   { key: "in_progress", label: "In progress", accent: "border-t-[#FFCC00]" },
+  { key: "on_hold", label: "On hold", accent: "border-t-[#A855F7]" },
   { key: "completed", label: "Completed", accent: "border-t-[#34C759]" },
 ];
 
@@ -38,6 +39,7 @@ export default function Maintenance() {
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null);
   const [pendingRequisition, setPendingRequisition] = useState(false);
+  const [awaitingPartsJobIds, setAwaitingPartsJobIds] = useState(new Set());
   const [detailJobId, setDetailJobId] = useState(searchParams.get("job") || null);
   const [awaitingApproval, setAwaitingApproval] = useState(searchParams.get("approvals") === "1");
   const [complete, setComplete] = useState({
@@ -98,6 +100,13 @@ export default function Maintenance() {
       .catch(() => setPendingRequisition(false));
   }, [selected]);
 
+  // One workspace-wide fetch (not N+1 per job) for the Kanban card's "Awaiting parts" badge.
+  useEffect(() => {
+    api.get("/parts-requisitions")
+      .then(r => setAwaitingPartsJobIds(new Set((r.data || []).filter(req => req.status === "pending_approval").map(req => req.maintenance_id))))
+      .catch(() => {});
+  }, [jobs]);
+
   const visibleJobs = awaitingApproval && actionableStage
     ? jobs.filter(j => quotesByJob[j.id]?.stage === actionableStage)
     : jobs;
@@ -123,9 +132,23 @@ export default function Maintenance() {
   const tName = (id) => users.find(u => u.id === id)?.name || "Unassigned";
 
   const move = async (job, status) => {
-    await api.patch(`/maintenance/${job.id}`, { status });
-    toast.success(`Moved to ${status.replace("_", " ")}`);
-    load();
+    try {
+      await api.patch(`/maintenance/${job.id}`, { status });
+      toast.success(`Moved to ${status.replace("_", " ")}`);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to update job");
+    }
+  };
+
+  const resumeJob = async (job) => {
+    try {
+      await api.post(`/maintenance/${job.id}/resume`);
+      toast.success("Job resumed");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to resume job");
+    }
   };
 
   const stats = {
@@ -256,7 +279,7 @@ export default function Maintenance() {
 
       {view === "board" && (
       <div className="p-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6" data-testid="kanban">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6" data-testid="kanban">
           {COLUMNS.map(col => {
             const items = visibleJobs.filter(j => j.status === col.key);
             return (
@@ -275,6 +298,9 @@ export default function Maintenance() {
                       {quotesByJob[job.id]?.stage === actionableStage && (
                         <div className="text-[10px] mono uppercase tracking-widest text-primary mb-2">Awaiting your approval</div>
                       )}
+                      {job.status !== "completed" && awaitingPartsJobIds.has(job.id) && (
+                        <div className="text-[10px] mono uppercase tracking-widest text-[#A855F7] mb-2">Awaiting parts</div>
+                      )}
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="font-display font-bold text-sm leading-tight">{job.title}</div>
                         <span className={`text-[10px] mono uppercase tracking-widest px-1.5 py-0.5 border ${PRIORITY_COLOR[job.priority] || ""}`}>{job.priority}</span>
@@ -292,8 +318,18 @@ export default function Maintenance() {
                           </button>
                         )}
                         {col.key === "in_progress" && canManageJobs && (
-                          <button onClick={(e) => { e.stopPropagation(); setSelected(job); }} data-testid={`complete-${job.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary text-xs uppercase tracking-widest px-2 py-1.5 hover:bg-primary hover:text-primary-foreground">
-                            <CheckCircle size={10} /> Complete
+                          <>
+                            <button onClick={(e) => { e.stopPropagation(); setSelected(job); }} data-testid={`complete-${job.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary text-xs uppercase tracking-widest px-2 py-1.5 hover:bg-primary hover:text-primary-foreground">
+                              <CheckCircle size={10} /> Complete
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); move(job, "on_hold"); }} data-testid={`hold-${job.id}`} className="flex items-center justify-center gap-1 border border-border text-xs uppercase tracking-widest px-2 py-1.5 hover:border-[#A855F7] hover:text-[#A855F7]">
+                              Hold
+                            </button>
+                          </>
+                        )}
+                        {col.key === "on_hold" && canManageJobs && (
+                          <button onClick={(e) => { e.stopPropagation(); resumeJob(job); }} data-testid={`resume-${job.id}`} className="flex-1 flex items-center justify-center gap-1 border border-border text-xs uppercase tracking-widest px-2 py-1.5 hover:border-primary hover:text-primary">
+                            <Play size={10} /> Resume
                           </button>
                         )}
                         {col.key === "completed" && (
