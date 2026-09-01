@@ -487,6 +487,7 @@ class PartRequisitionItem(BaseModel):
 
 class PartRequisitionIn(BaseModel):
     items: List[PartRequisitionItem]
+    client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
 
 class PartRequisitionDecision(BaseModel):
     decision: Literal["approved", "rejected"]
@@ -1723,11 +1724,20 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
         # defect-auto-resolve cascade a second time.
         return job
     if upd.get("status") == "completed":
+        pending_req = await fetch_one(
+            "select id from parts_requisitions where maintenance_id = :mid and workspace_id = :ws and status = 'pending_approval'",
+            mid=mid, ws=user["workspace_id"],
+        )
+        if pending_req:
+            raise HTTPException(status_code=400, detail="Cannot complete this job while a parts request is awaiting approval")
         completed_at = datetime.now(timezone.utc)
         upd["completed_at"] = completed_at
-        pc = upd.get("parts_cost", job.get("parts_cost", 0))
-        lc = upd.get("labor_cost", job.get("labor_cost", 0))
-        ec = upd.get("external_cost", job.get("external_cost", 0)) or 0
+        # float() each term -- a numeric column decodes from Postgres as decimal.Decimal, but a
+        # client-supplied JSON number in `upd` is a float; mixing the two in arithmetic raises
+        # TypeError whenever only some of the three cost fields are provided in this PATCH.
+        pc = float(upd.get("parts_cost", job.get("parts_cost", 0)) or 0)
+        lc = float(upd.get("labor_cost", job.get("labor_cost", 0)) or 0)
+        ec = float(upd.get("external_cost", job.get("external_cost", 0)) or 0)
         upd["actual_cost"] = upd.get("actual_cost") or (pc + lc + ec)
         # Downtime is real elapsed time, not a trust-the-user number: the vehicle was down from
         # whenever work actually started (started_at) — or, if a job skipped "in_progress" and went
@@ -2324,7 +2334,9 @@ async def decide_quote(qid: str, body: QuoteDecision, user: dict = Depends(get_c
 async def list_requisitions_for_job(mid: str, user: dict = Depends(get_current_user)):
     if user.get("role") == "mechanic":
         job = await fetch_one("select assigned_to from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
-        if not job or job.get("assigned_to") != user["id"]:
+        # str() -- assigned_to is text, user["id"] decodes as uuid.UUID; see the identical fix on the
+        # other three mechanic-ownership checks in this file (get_maintenance, list_quotes).
+        if not job or job.get("assigned_to") != str(user["id"]):
             raise HTTPException(status_code=404, detail="Maintenance job not found")
     return await fetch_all(
         "select * from parts_requisitions where workspace_id = :ws and maintenance_id = :mid order by created_at desc",
@@ -2341,6 +2353,13 @@ async def list_requisitions(user: dict = Depends(require_module("parts_requisiti
 async def create_requisition(mid: str, body: PartRequisitionIn, user: dict = Depends(require_module("parts_requisitions", "full"))):
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
+    if body.client_submission_id:
+        existing = await fetch_one(
+            "select * from parts_requisitions where workspace_id = :ws and client_submission_id = :cid",
+            ws=user["workspace_id"], cid=body.client_submission_id,
+        )
+        if existing:
+            return existing
     if not body.items:
         raise HTTPException(status_code=400, detail="At least one part is required")
     part_ids = [i.part_id for i in body.items]
@@ -2355,9 +2374,10 @@ async def create_requisition(mid: str, body: PartRequisitionIn, user: dict = Dep
     ]
     rid = str(uuid.uuid4())
     await execute(
-        "insert into parts_requisitions (id, workspace_id, maintenance_id, items, status, requested_by, requested_by_name) "
-        "values (:id, :ws, :mid, :items ::jsonb, 'pending_approval', :uid, :uname)",
+        "insert into parts_requisitions (id, workspace_id, maintenance_id, items, status, requested_by, requested_by_name, client_submission_id) "
+        "values (:id, :ws, :mid, :items ::jsonb, 'pending_approval', :uid, :uname, :cid)",
         id=rid, ws=user["workspace_id"], mid=mid, items=json_dumps(items), uid=user["id"], uname=user["name"],
+        cid=body.client_submission_id,
     )
     await _notify(user["workspace_id"], REQUISITION_APPROVER_ROLES, "part_requisition_submitted",
                   f"{user['name']} requested parts for {job['title']}", mid)
