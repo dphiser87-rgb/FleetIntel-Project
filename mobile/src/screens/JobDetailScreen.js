@@ -29,12 +29,15 @@ export default function JobDetailScreen({ route, navigation }) {
   const [savingNote, setSavingNote] = useState(false);
   const [addingPhoto, setAddingPhoto] = useState(false);
   const [requisitions, setRequisitions] = useState([]);
+  const [activity, setActivity] = useState([]);
+  const [holding, setHolding] = useState(false);
 
   const load = useCallback(async () => {
     const [j, vehicles] = await Promise.all([getCachedJob(jobId), getCachedVehicles()]);
     setJob(j);
     if (j?.vehicle_id) setVehicleName(vehicles.find((v) => v.id === j.vehicle_id)?.name || "");
     pullJobRequisitions(jobId).then(setRequisitions);
+    api.get("/audit", { params: { entity_id: jobId } }).then((r) => setActivity(r.data || [])).catch(() => {});
   }, [jobId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -79,6 +82,20 @@ export default function JobDetailScreen({ route, navigation }) {
   };
 
   const start = () => applyPatch({ status: "in_progress" });
+  const putOnHold = () => applyPatch({ status: "on_hold" });
+
+  const resume = async () => {
+    setHolding(true);
+    try {
+      await api.post(`/maintenance/${jobId}/resume`);
+      await runSync();
+      await load();
+    } catch (err) {
+      Alert.alert("Failed", err?.response?.data?.detail || "Could not resume this job. Try again once you're back online.");
+    } finally {
+      setHolding(false);
+    }
+  };
 
   const saveNote = async () => {
     setSavingNote(true);
@@ -136,6 +153,7 @@ export default function JobDetailScreen({ route, navigation }) {
 
   const hasPendingRequisition = requisitions.some((r) => r.status === "pending_approval");
   const REQ_TONE = { pending_approval: "primary", approved: "success", rejected: "danger" };
+  const JOB_TONE = { completed: "success", in_progress: "primary", on_hold: "warning" };
 
   return (
     <Screen>
@@ -143,9 +161,12 @@ export default function JobDetailScreen({ route, navigation }) {
         <Overline>{vehicleName || job.asset_name || "Unassigned"}</Overline>
         <View style={styles.titleRow}>
           <Text style={styles.title}>{job.title}</Text>
-          <Badge label={job.status.replace("_", " ")} tone={job.status === "completed" ? "success" : job.status === "in_progress" ? "primary" : "muted"} />
+          <Badge label={job.status.replace("_", " ")} tone={JOB_TONE[job.status] || "muted"} />
         </View>
         {!!job.description && <Text style={styles.description}>{job.description}</Text>}
+        {hasPendingRequisition && job.status !== "completed" && (
+          <Badge label="Awaiting parts" tone="warning" />
+        )}
 
         <Card style={styles.card}>
           <Overline>Priority</Overline>
@@ -153,6 +174,14 @@ export default function JobDetailScreen({ route, navigation }) {
         </Card>
 
         {job.status === "pending" && <Button title="Start job" onPress={start} style={styles.action} />}
+
+        {job.status === "in_progress" && (
+          <Button title="Put on hold" variant="outline" onPress={putOnHold} style={styles.action} />
+        )}
+
+        {job.status === "on_hold" && (
+          <Button title="Resume" onPress={resume} loading={holding} style={styles.action} />
+        )}
 
         {job.status !== "completed" && (
           <Card style={styles.action}>
@@ -188,14 +217,27 @@ export default function JobDetailScreen({ route, navigation }) {
             <Overline>Parts</Overline>
             {requisitions.length === 0 && <Text style={styles.value}>No parts requested yet.</Text>}
             {requisitions.map((r) => (
-              <View key={r.id} style={styles.reqRow}>
-                <Text style={styles.reqItems} numberOfLines={1}>
-                  {(r.items || []).map((it) => `${it.qty_requested}× ${it.part_name}`).join(", ")}
-                </Text>
-                <Badge
-                  label={r.status === "pending_approval" ? "Pending approval" : r.status === "rejected" ? `Rejected — ${r.decision?.reason || ""}` : "Approved"}
-                  tone={REQ_TONE[r.status] || "muted"}
-                />
+              <View key={r.id} style={styles.reqBlock}>
+                <View style={styles.reqRow}>
+                  <Text style={styles.reqItems} numberOfLines={1}>
+                    {(r.items || []).map((it) => `${it.qty_requested}× ${it.part_name}`).join(", ")}
+                  </Text>
+                  <Badge
+                    label={r.status === "pending_approval" ? "Pending approval" : r.status === "rejected" ? "Rejected" : "Approved"}
+                    tone={REQ_TONE[r.status] || "muted"}
+                  />
+                </View>
+                {r.status === "rejected" && (
+                  <>
+                    {!!r.decision?.reason && <Text style={styles.rejectReason}>{r.decision.reason}</Text>}
+                    <Button
+                      title="Resubmit"
+                      variant="outline"
+                      onPress={() => navigation.navigate("RequestParts", { jobId, prefillItems: r.items })}
+                      style={{ marginTop: spacing.xs }}
+                    />
+                  </>
+                )}
               </View>
             ))}
             <Button title="Request parts" variant="outline" onPress={() => navigation.navigate("RequestParts", { jobId })} style={{ marginTop: spacing.sm }} />
@@ -240,6 +282,17 @@ export default function JobDetailScreen({ route, navigation }) {
             <Text style={styles.value}>Downtime: {job.downtime_hours}h</Text>
           </Card>
         )}
+
+        <Card style={styles.action}>
+          <Overline>Activity</Overline>
+          {activity.length === 0 && <Text style={styles.value}>No activity yet.</Text>}
+          {activity.map((e) => (
+            <View key={e.id} style={styles.activityRow}>
+              <Text style={styles.activityText}>{e.user_name} <Text style={styles.activityAction}>· {e.action}</Text></Text>
+              <Text style={styles.activityTime}>{new Date(e.at).toLocaleString()}</Text>
+            </View>
+          ))}
+        </Card>
       </ScrollView>
     </Screen>
   );
@@ -265,7 +318,13 @@ const styles = StyleSheet.create({
   },
   photoRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.sm },
   thumb: { width: 64, height: 64, borderRadius: 4 },
-  reqRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.sm, gap: spacing.sm },
+  reqBlock: { marginTop: spacing.sm },
+  reqRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm },
   reqItems: { color: colors.text, fontSize: 13, flex: 1 },
+  rejectReason: { color: colors.textMuted, fontSize: 12, marginTop: 4 },
   warning: { color: colors.primary, fontSize: 12, marginTop: spacing.md },
+  activityRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.sm, gap: spacing.sm },
+  activityText: { color: colors.text, fontSize: 13, flex: 1 },
+  activityAction: { color: colors.textMuted },
+  activityTime: { color: colors.textMuted, fontSize: 11 },
 });

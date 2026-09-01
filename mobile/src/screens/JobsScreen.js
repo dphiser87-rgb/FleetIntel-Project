@@ -4,22 +4,24 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Screen, Card, Badge, Overline, EmptyState } from "../components/ui";
 import PendingSyncBadge from "../components/PendingSyncBadge";
 import { colors, spacing } from "../lib/theme";
-import { getCachedJobs, getCachedVehicles, runSync } from "../lib/sync";
+import { getCachedJobs, getCachedVehicles, getCachedRequisitions, runSync } from "../lib/sync";
 
-const STATUS_TONE = { pending: "muted", in_progress: "primary", completed: "success", cancelled: "danger" };
+const STATUS_TONE = { pending: "muted", in_progress: "primary", completed: "success", cancelled: "danger", on_hold: "warning" };
 
 export default function JobsScreen({ navigation }) {
   const [jobs, setJobs] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    const [cached, vehicles] = await Promise.all([getCachedJobs(), getCachedVehicles()]);
+    const [cached, vehicles, requisitions] = await Promise.all([getCachedJobs(), getCachedVehicles(), getCachedRequisitions()]);
     // GET /maintenance's list response only enriches asset-linked jobs with a name -- vehicle-linked
     // jobs carry just vehicle_id, so resolve the display name against the cached vehicle list here.
     const vmap = Object.fromEntries(vehicles.map((v) => [v.id, v]));
+    const awaitingParts = new Set(requisitions.filter((r) => r.status === "pending_approval").map((r) => r.maintenance_id));
     const withNames = cached.map((j) => ({
       ...j,
       display_name: j.asset_name || (j.vehicle_id && vmap[j.vehicle_id]?.name) || "—",
+      awaiting_parts: awaitingParts.has(j.id),
     }));
     // Open jobs first, newest first within each group -- a mechanic cares about what's still due.
     withNames.sort((a, b) => {
@@ -57,7 +59,10 @@ export default function JobsScreen({ navigation }) {
           <Card style={styles.jobCard} onPress={() => navigation.navigate("JobDetail", { jobId: item.id })}>
             <View style={styles.jobHeader}>
               <Text style={styles.jobTitle} numberOfLines={1}>{item.title}</Text>
-              <Badge label={item.status.replace("_", " ")} tone={STATUS_TONE[item.status] || "muted"} />
+              <View style={styles.badgeGroup}>
+                {item.awaiting_parts && item.status !== "completed" && <Badge label="Awaiting parts" tone="warning" />}
+                <Badge label={item.status.replace("_", " ")} tone={STATUS_TONE[item.status] || "muted"} />
+              </View>
             </View>
             <Text style={styles.jobMeta}>{item.display_name} · {item.priority}</Text>
           </Card>
@@ -76,6 +81,7 @@ const styles = StyleSheet.create({
   list: { padding: spacing.lg, paddingTop: 0, gap: spacing.sm },
   jobCard: { marginBottom: spacing.sm },
   jobHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.xs },
+  badgeGroup: { flexDirection: "row", gap: spacing.xs },
   jobTitle: { color: colors.text, fontSize: 15, fontWeight: "600", flex: 1, marginRight: spacing.sm },
   jobMeta: { color: colors.textMuted, fontSize: 12 },
 });

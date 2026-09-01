@@ -13,10 +13,14 @@ const uuid = () => "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) =
 });
 
 export default function RequestPartsScreen({ route, navigation }) {
-  const { jobId } = route.params;
+  const { jobId, prefillItems } = route.params;
   const [parts, setParts] = useState([]);
   const [query, setQuery] = useState("");
-  const [cart, setCart] = useState({}); // part_id -> qty string
+  // Resubmitting a rejected requisition seeds the cart from its original items so the mechanic
+  // doesn't have to re-pick everything -- they can just adjust and resubmit.
+  const [cart, setCart] = useState(() =>
+    Object.fromEntries((prefillItems || []).map((it) => [it.part_id, String(it.qty_requested)]))
+  );
   const [submitting, setSubmitting] = useState(false);
 
   useFocusEffect(useCallback(() => {

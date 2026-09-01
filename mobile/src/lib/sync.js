@@ -9,17 +9,21 @@ import { flushQueue, subscribeQueueChanged } from "./offlineQueue";
 // Inspection.jsx-equivalent screen needs the full template body to render, not just the list row),
 // and the parts catalog (for the Request Parts picker).
 export async function pullReadCache() {
-  const [jobs, vehicles, templateList, defects, parts] = await Promise.all([
+  const [jobs, vehicles, templateList, defects, parts, requisitions] = await Promise.all([
     api.get("/maintenance").then((r) => r.data).catch(() => null),
     api.get("/vehicles").then((r) => r.data).catch(() => null),
     api.get("/templates").then((r) => r.data).catch(() => null),
     api.get("/defects").then((r) => r.data).catch(() => null),
     api.get("/parts").then((r) => r.data).catch(() => null),
+    api.get("/parts-requisitions").then((r) => r.data).catch(() => null),
   ]);
   if (jobs) await cacheReplaceAll("jobs", jobs);
   if (vehicles) await cacheReplaceAll("vehicles", vehicles);
   if (defects) await cacheReplaceAll("defects", defects);
   if (parts) await cacheReplaceAll("parts", parts);
+  // Workspace-wide list (same read scope the mechanic already has on the parts catalog itself) --
+  // covers the Jobs list's "awaiting parts" indicator without a per-job fetch for every visible job.
+  if (requisitions) await cacheReplaceAll("requisitions", requisitions);
   if (templateList) {
     const details = await Promise.all(
       templateList.map((t) => api.get(`/templates/${t.id}`).then((r) => r.data).catch(() => t))
@@ -51,6 +55,12 @@ export async function pullJobRequisitions(jobId) {
 export async function getCachedJobRequisitions(jobId) {
   const all = await cacheGetAll("requisitions");
   return all.filter((r) => r.maintenance_id === jobId);
+}
+
+// For list-level views (e.g. the Jobs list's "awaiting parts" indicator) that need to check many
+// jobs at once without a separate cache read per job.
+export async function getCachedRequisitions() {
+  return cacheGetAll("requisitions");
 }
 
 let _lastSyncResult = { authExpired: false };
