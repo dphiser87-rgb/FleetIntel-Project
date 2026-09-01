@@ -1,5 +1,5 @@
-import React, { useCallback, useState } from "react";
-import { View, Text, TextInput, ScrollView, StyleSheet, Alert } from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { View, Text, TextInput, ScrollView, StyleSheet, Alert, Image } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
 import { Screen, Card, Badge, Overline, Button } from "../components/ui";
@@ -25,6 +25,9 @@ export default function JobDetailScreen({ route, navigation }) {
   });
   const [documents, setDocuments] = useState([]);
   const [completing, setCompleting] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const [addingPhoto, setAddingPhoto] = useState(false);
 
   const load = useCallback(async () => {
     const [j, vehicles] = await Promise.all([getCachedJob(jobId), getCachedVehicles()]);
@@ -33,6 +36,9 @@ export default function JobDetailScreen({ route, navigation }) {
   }, [jobId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  // Only seed the draft from the server value on first load / after it changes elsewhere -- not on
+  // every load() call, or a half-typed note would get clobbered by a background sync.
+  useEffect(() => { setNoteDraft((prev) => (prev === "" ? job?.notes || "" : prev)); }, [job?.notes]);
 
   const addPhoto = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -72,6 +78,36 @@ export default function JobDetailScreen({ route, navigation }) {
 
   const start = () => applyPatch({ status: "in_progress" });
 
+  const saveNote = async () => {
+    setSavingNote(true);
+    await applyPatch({ notes: noteDraft });
+    setSavingNote(false);
+  };
+
+  const addMidJobPhoto = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) return;
+    const result = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.5 });
+    if (result.canceled || !result.assets?.[0]) return;
+    const clientSubmissionId = uuid();
+    const payload = { name: `photo-${Date.now()}.jpg`, data: `data:image/jpeg;base64,${result.assets[0].base64}`, client_submission_id: clientSubmissionId };
+    setAddingPhoto(true);
+    try {
+      await api.post(`/maintenance/${jobId}/photos`, payload);
+      await runSync();
+      await load();
+    } catch (err) {
+      if (!err?.response) {
+        await queueSubmission({ id: clientSubmissionId, kind: "job_photo", method: "POST", endpoint: `/maintenance/${jobId}/photos`, payload });
+        Alert.alert("Saved offline", "This photo will attach automatically once you're back online.");
+      } else {
+        Alert.alert("Failed", err?.response?.data?.detail || "Could not attach this photo.");
+      }
+    } finally {
+      setAddingPhoto(false);
+    }
+  };
+
   const submitCompletion = async () => {
     setSaving(true);
     const patch = {
@@ -84,7 +120,10 @@ export default function JobDetailScreen({ route, navigation }) {
       external_cost: form.external_cost ? Number(form.external_cost) : undefined,
       odometer: form.odometer ? Number(form.odometer) : undefined,
       engine_hours: form.engine_hours ? Number(form.engine_hours) : undefined,
-      completion_documents: documents.length ? documents : undefined,
+      // Merge with anything already attached mid-job (via the separate /photos endpoint) --
+      // completion_documents is a whole-column PATCH, so sending only the new batch would silently
+      // drop earlier photos instead of adding to them.
+      completion_documents: documents.length ? [...(job.completion_documents || []), ...documents] : undefined,
     };
     await applyPatch(patch, { withClientId: true });
     setSaving(false);
@@ -109,6 +148,35 @@ export default function JobDetailScreen({ route, navigation }) {
         </Card>
 
         {job.status === "pending" && <Button title="Start job" onPress={start} style={styles.action} />}
+
+        {job.status !== "completed" && (
+          <Card style={styles.action}>
+            <Overline>Notes</Overline>
+            <TextInput
+              style={styles.noteInput}
+              placeholder="Add a note about progress, parts needed, etc."
+              placeholderTextColor={colors.textMuted}
+              value={noteDraft}
+              onChangeText={setNoteDraft}
+              multiline
+            />
+            <Button title="Save note" variant="outline" onPress={saveNote} loading={savingNote} disabled={noteDraft === (job.notes || "")} style={{ marginTop: spacing.sm }} />
+          </Card>
+        )}
+
+        {job.status !== "completed" && (
+          <Card style={styles.action}>
+            <Overline>Photos ({(job.completion_documents || []).length})</Overline>
+            {(job.completion_documents || []).length > 0 && (
+              <View style={styles.photoRow}>
+                {job.completion_documents.map((d, i) => (
+                  <Image key={d.client_submission_id || i} source={{ uri: d.data }} style={styles.thumb} />
+                ))}
+              </View>
+            )}
+            <Button title="Add photo" variant="outline" onPress={addMidJobPhoto} loading={addingPhoto} style={{ marginTop: spacing.sm }} />
+          </Card>
+        )}
 
         {job.status === "in_progress" && !completing && (
           <Button title="Complete job" onPress={() => setCompleting(true)} style={styles.action} />
@@ -163,4 +231,10 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, borderRadius: 6, padding: spacing.sm,
     color: colors.text, marginBottom: spacing.sm, fontSize: 14,
   },
+  noteInput: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: 6, padding: spacing.sm,
+    color: colors.text, fontSize: 14, minHeight: 70, textAlignVertical: "top",
+  },
+  photoRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.sm },
+  thumb: { width: 64, height: 64, borderRadius: 4 },
 });

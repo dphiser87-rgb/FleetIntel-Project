@@ -574,6 +574,11 @@ class MaintenanceUpdate(BaseModel):
     completion_documents: Optional[List[dict]] = None
     client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
 
+class MaintenancePhotoIn(BaseModel):
+    name: str
+    data: str  # base64 data URL, same inline convention as every other photo field in this app
+    client_submission_id: Optional[str] = None  # idempotency key for retried mobile syncs
+
 # --- App ---
 app = FastAPI(title="FleetCost Intelligence API")
 api = APIRouter(prefix="/api")
@@ -1748,6 +1753,24 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
     if upd.get("status"):
         await log_event(user, f"maintenance.{upd['status']}", "maintenance", mid, {"title": job.get("title", ""), "actual_cost": upd.get("actual_cost")})
     return await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+
+@api.post("/maintenance/{mid}/photos")
+async def add_maintenance_photo(mid: str, p: MaintenancePhotoIn, user: dict = Depends(require_module("maintenance", "full"))):
+    """Attaches a photo/document to a job at any point in its lifecycle -- not just at completion,
+    unlike completion_documents which is only ever set wholesale by the Complete step. Appends to
+    the same column so both the mid-job and completion-time photos show up in one place."""
+    job = await fetch_one("select completion_documents from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+    if not job: raise HTTPException(status_code=404, detail="Not found")
+    docs = job.get("completion_documents") or []
+    if p.client_submission_id and any(d.get("client_submission_id") == p.client_submission_id for d in docs):
+        return {"completion_documents": docs}
+    docs.append({
+        "name": p.name, "data": p.data, "added_by": user["id"], "added_at": now_iso(),
+        "client_submission_id": p.client_submission_id,
+    })
+    await update_row("maintenance", mid, user["workspace_id"], {"completion_documents": docs}, MAINTENANCE_COLS)
+    await log_event(user, "maintenance.photo_added", "maintenance", mid, {"name": p.name})
+    return {"completion_documents": docs}
 
 @api.delete("/maintenance/{mid}")
 async def delete_maintenance(mid: str, user: dict = Depends(require_module("maintenance", "full"))):
