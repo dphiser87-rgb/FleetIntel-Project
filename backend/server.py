@@ -1595,9 +1595,12 @@ MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downti
 async def list_maintenance(user: dict = Depends(get_current_user)):
     ws = user["workspace_id"]
     if user.get("role") == "mechanic":
+        # assigned_to is a text column, but user["id"] decodes from Postgres as a uuid.UUID object
+        # (asyncpg's built-in codec for the user_profiles.id uuid column) -- str() it explicitly,
+        # or asyncpg rejects the param with "expected str, got UUID".
         rows = await fetch_all(
             "select * from maintenance where workspace_id = :ws and assigned_to = :uid order by created_at desc",
-            ws=ws, uid=user["id"],
+            ws=ws, uid=str(user["id"]),
         )
     else:
         rows = await fetch_all("select * from maintenance where workspace_id = :ws order by created_at desc", ws=ws)
@@ -1672,7 +1675,10 @@ async def create_maintenance(m: MaintenanceIn, user: dict = Depends(require_modu
 async def get_maintenance(mid: str, user: dict = Depends(get_current_user)):
     m = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not m: raise HTTPException(status_code=404, detail="Not found")
-    if user.get("role") == "mechanic" and m.get("assigned_to") != user["id"]:
+    # str() on the right-hand side: assigned_to comes back as text, user["id"] as a uuid.UUID object
+    # -- those never compare equal in Python even for the "same" id, which made this check reject
+    # every mechanic viewing their own assigned job.
+    if user.get("role") == "mechanic" and m.get("assigned_to") != str(user["id"]):
         raise HTTPException(status_code=404, detail="Not found")
     allowed_vehicles, allowed_assets = await _resolve_full_scope(user)
     if not _scope_filter([m], allowed_vehicles, allowed_assets):
@@ -2171,7 +2177,7 @@ async def _notify(ws: str, roles: tuple, ntype: str, message: str, maintenance_i
 async def list_quotes(mid: str, user: dict = Depends(get_current_user)):
     if user.get("role") == "mechanic":
         job = await fetch_one("select assigned_to from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
-        if not job or job.get("assigned_to") != user["id"]:
+        if not job or job.get("assigned_to") != str(user["id"]):
             raise HTTPException(status_code=404, detail="Maintenance job not found")
     return await fetch_all(
         "select * from quotes where workspace_id = :ws and maintenance_id = :mid order by created_at desc",
@@ -2274,7 +2280,7 @@ async def list_purchase_orders(user: dict = Depends(get_current_user)):
         return await fetch_all(
             "select * from purchase_orders where workspace_id = :ws and maintenance_id in "
             "(select id from maintenance where assigned_to = :uid) order by created_at desc",
-            ws=user["workspace_id"], uid=user["id"],
+            ws=user["workspace_id"], uid=str(user["id"]),
         )
     return await fetch_all(
         "select * from purchase_orders where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
