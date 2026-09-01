@@ -4,7 +4,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
 import { Screen, Card, Badge, Overline, Button } from "../components/ui";
 import { colors, spacing } from "../lib/theme";
-import { getCachedJob, getCachedVehicles, runSync } from "../lib/sync";
+import { getCachedJob, getCachedVehicles, runSync, pullJobRequisitions, getCachedJobRequisitions } from "../lib/sync";
 import { api } from "../lib/api";
 import { queueSubmission } from "../lib/offlineQueue";
 
@@ -28,11 +28,13 @@ export default function JobDetailScreen({ route, navigation }) {
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [addingPhoto, setAddingPhoto] = useState(false);
+  const [requisitions, setRequisitions] = useState([]);
 
   const load = useCallback(async () => {
     const [j, vehicles] = await Promise.all([getCachedJob(jobId), getCachedVehicles()]);
     setJob(j);
     if (j?.vehicle_id) setVehicleName(vehicles.find((v) => v.id === j.vehicle_id)?.name || "");
+    pullJobRequisitions(jobId).then(setRequisitions);
   }, [jobId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -132,6 +134,9 @@ export default function JobDetailScreen({ route, navigation }) {
 
   if (!job) return <Screen style={styles.centered}><Text style={styles.muted}>Loading…</Text></Screen>;
 
+  const hasPendingRequisition = requisitions.some((r) => r.status === "pending_approval");
+  const REQ_TONE = { pending_approval: "primary", approved: "success", rejected: "danger" };
+
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
@@ -178,8 +183,31 @@ export default function JobDetailScreen({ route, navigation }) {
           </Card>
         )}
 
+        {job.status !== "completed" && (
+          <Card style={styles.action}>
+            <Overline>Parts</Overline>
+            {requisitions.length === 0 && <Text style={styles.value}>No parts requested yet.</Text>}
+            {requisitions.map((r) => (
+              <View key={r.id} style={styles.reqRow}>
+                <Text style={styles.reqItems} numberOfLines={1}>
+                  {(r.items || []).map((it) => `${it.qty_requested}× ${it.part_name}`).join(", ")}
+                </Text>
+                <Badge
+                  label={r.status === "pending_approval" ? "Pending approval" : r.status === "rejected" ? `Rejected — ${r.decision?.reason || ""}` : "Approved"}
+                  tone={REQ_TONE[r.status] || "muted"}
+                />
+              </View>
+            ))}
+            <Button title="Request parts" variant="outline" onPress={() => navigation.navigate("RequestParts", { jobId })} style={{ marginTop: spacing.sm }} />
+          </Card>
+        )}
+
+        {hasPendingRequisition && job.status !== "completed" && (
+          <Text style={styles.warning}>A parts request is awaiting approval — this job can't be completed until it's decided.</Text>
+        )}
+
         {job.status === "in_progress" && !completing && (
-          <Button title="Complete job" onPress={() => setCompleting(true)} style={styles.action} />
+          <Button title="Complete job" onPress={() => setCompleting(true)} disabled={hasPendingRequisition} style={styles.action} />
         )}
 
         {completing && (
@@ -237,4 +265,7 @@ const styles = StyleSheet.create({
   },
   photoRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.sm },
   thumb: { width: 64, height: 64, borderRadius: 4 },
+  reqRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.sm, gap: spacing.sm },
+  reqItems: { color: colors.text, fontSize: 13, flex: 1 },
+  warning: { color: colors.primary, fontSize: 12, marginTop: spacing.md },
 });

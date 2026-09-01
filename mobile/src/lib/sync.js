@@ -1,22 +1,25 @@
 import NetInfo from "@react-native-community/netinfo";
 import { AppState } from "react-native";
 import { api } from "./api";
-import { cacheReplaceAll, cacheGetAll, cacheGet } from "./db";
+import { cacheReplaceAll, cacheGetAll, cacheGet, cachePut } from "./db";
 import { flushQueue, subscribeQueueChanged } from "./offlineQueue";
 
 // Pulls the read-side snapshot a mechanic needs to work with zero connectivity: their assigned
-// jobs, the vehicle list, and full checklist templates (list + each one's sections/items, since
-// Inspection.jsx-equivalent screen needs the full template body to render, not just the list row).
+// jobs, the vehicle list, full checklist templates (list + each one's sections/items, since
+// Inspection.jsx-equivalent screen needs the full template body to render, not just the list row),
+// and the parts catalog (for the Request Parts picker).
 export async function pullReadCache() {
-  const [jobs, vehicles, templateList, defects] = await Promise.all([
+  const [jobs, vehicles, templateList, defects, parts] = await Promise.all([
     api.get("/maintenance").then((r) => r.data).catch(() => null),
     api.get("/vehicles").then((r) => r.data).catch(() => null),
     api.get("/templates").then((r) => r.data).catch(() => null),
     api.get("/defects").then((r) => r.data).catch(() => null),
+    api.get("/parts").then((r) => r.data).catch(() => null),
   ]);
   if (jobs) await cacheReplaceAll("jobs", jobs);
   if (vehicles) await cacheReplaceAll("vehicles", vehicles);
   if (defects) await cacheReplaceAll("defects", defects);
+  if (parts) await cacheReplaceAll("parts", parts);
   if (templateList) {
     const details = await Promise.all(
       templateList.map((t) => api.get(`/templates/${t.id}`).then((r) => r.data).catch(() => t))
@@ -29,8 +32,26 @@ export async function getCachedJobs() { return cacheGetAll("jobs"); }
 export async function getCachedVehicles() { return cacheGetAll("vehicles"); }
 export async function getCachedTemplates() { return cacheGetAll("templates"); }
 export async function getCachedDefects() { return cacheGetAll("defects"); }
+export async function getCachedParts() { return cacheGetAll("parts"); }
 export async function getCachedJob(id) { return cacheGet("jobs", id); }
 export async function getCachedVehicle(id) { return cacheGet("vehicles", id); }
+
+// Requisitions are fetched per-job (not part of the bulk pull above) since they're only needed while
+// viewing that job's detail screen -- cached individually so the last-seen status still shows offline.
+export async function pullJobRequisitions(jobId) {
+  try {
+    const { data } = await api.get(`/maintenance/${jobId}/parts-requisitions`);
+    await cachePut("requisitions", data);
+    return data;
+  } catch {
+    return getCachedJobRequisitions(jobId);
+  }
+}
+
+export async function getCachedJobRequisitions(jobId) {
+  const all = await cacheGetAll("requisitions");
+  return all.filter((r) => r.maintenance_id === jobId);
+}
 
 let _lastSyncResult = { authExpired: false };
 

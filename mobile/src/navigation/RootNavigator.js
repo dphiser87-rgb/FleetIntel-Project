@@ -10,6 +10,7 @@ import { startSyncTriggers } from "../lib/sync";
 import LoginScreen from "../screens/LoginScreen";
 import JobsScreen from "../screens/JobsScreen";
 import JobDetailScreen from "../screens/JobDetailScreen";
+import RequestPartsScreen from "../screens/RequestPartsScreen";
 import VehiclesScreen from "../screens/VehiclesScreen";
 import VehicleDetailScreen from "../screens/VehicleDetailScreen";
 import InspectionScreen from "../screens/InspectionScreen";
@@ -32,6 +33,7 @@ function JobsStack() {
     <Stack.Navigator screenOptions={screenOptions}>
       <Stack.Screen name="JobsList" component={JobsScreen} options={{ headerShown: false }} />
       <Stack.Screen name="JobDetail" component={JobDetailScreen} options={{ title: "Job" }} />
+      <Stack.Screen name="RequestParts" component={RequestPartsScreen} options={{ title: "Request parts" }} />
     </Stack.Navigator>
   );
 }
