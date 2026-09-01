@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { CheckCircle, Play, ArrowRight, Plus, Kanban, Table as TableIcon, ClockCounterClockwise } from "@phosphor-icons/react";
+import { CheckCircle, Play, Plus, Kanban, Table as TableIcon, ClockCounterClockwise } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { hasAccess } from "@/lib/access";
 import MaintenanceDetailPanel from "@/components/MaintenanceDetailPanel";
