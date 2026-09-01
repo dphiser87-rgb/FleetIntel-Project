@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { hasAccess } from "@/lib/access";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { usePolling } from "@/hooks/use-polling";
 
 const STATUS_COLOR = {
   po_issued: "text-[#34C759] border-[#34C759]",
@@ -36,6 +37,10 @@ export default function PurchaseOrders() {
 
   const load = () => api.get("/purchase-orders").then((r) => setOrders(r.data || []));
   useEffect(() => { load(); }, []);
+  // Skipped while the mark-paid modal is open (`payingPO` references one specific PO snapshot) --
+  // a background refresh mid-payment-submission risks that PO's status shifting under an in-flight
+  // upload rather than just a stale list elsewhere on the page.
+  usePolling(() => { if (!payingPO) load(); });
 
   const create = async (e) => {
     e.preventDefault();

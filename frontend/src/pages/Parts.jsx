@@ -6,6 +6,7 @@ import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 import { useAuth } from "@/contexts/AuthContext";
 import PartsRequisitionPanel from "@/components/PartsRequisitionPanel";
+import { usePolling } from "@/hooks/use-polling";
 
 const REQUISITION_APPROVER_ROLES = ["workshop_head", "admin"];
 const REQUISITION_STATUS_LABEL = { pending_approval: "Pending", approved: "Approved", rejected: "Rejected" };
@@ -30,6 +31,8 @@ export default function Parts() {
 
   const loadRequisitions = () => api.get("/parts-requisitions").then(r => setRequisitions(r.data || [])).catch(() => {});
   useEffect(() => { if (tab === "requisitions") loadRequisitions(); }, [tab]);
+  // Stock/cost refresh always; requisitions only while that tab is actually visible.
+  usePolling(() => { load(); if (tab === "requisitions") loadRequisitions(); });
 
   const decideRequisition = async (decision, reason) => {
     try {
