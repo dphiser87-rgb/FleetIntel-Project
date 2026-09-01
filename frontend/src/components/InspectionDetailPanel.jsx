@@ -16,7 +16,7 @@ export default function InspectionDetailPanel({ inspection, onClose, onActioned 
       <SheetContent side="right" className="border-border bg-[#0b0b0d] w-full sm:max-w-2xl flex flex-col overflow-hidden p-0" data-testid="inspection-detail-panel">
         <SheetTitle className="sr-only">Checklist submission detail</SheetTitle>
         <SheetDescription className="sr-only">Full detail of a completed vehicle checklist submission</SheetDescription>
-        <div className="border-b border-border px-6 py-4 shrink-0 flex items-center justify-between">
+        <div className="border-b border-border px-6 py-4 pr-14 shrink-0 flex items-center justify-between">
           <div>
             <div className="overline">{inspection?.target_name} · {inspection?.target_plate}</div>
             <h2 className="font-display text-xl font-bold mt-0.5">{inspection?.template_name}</h2>

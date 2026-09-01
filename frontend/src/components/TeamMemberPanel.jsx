@@ -145,7 +145,7 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
       <SheetContent side="right" className="border-border bg-[#0b0b0d] w-full sm:max-w-xl flex flex-col overflow-hidden p-0" data-testid="team-member-panel">
         <SheetTitle className="sr-only">{member.name}</SheetTitle>
         <SheetDescription className="sr-only">Team member details and rights</SheetDescription>
-        <div className="border-b border-border px-6 py-4 shrink-0 flex items-center justify-between">
+        <div className="border-b border-border px-6 py-4 pr-14 shrink-0 flex items-center justify-between">
           <div>
             <div className="overline">{member.username || member.email}</div>
             <h2 className="font-display text-xl font-bold mt-0.5">{member.name}</h2>
