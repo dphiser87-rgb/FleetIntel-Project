@@ -17,9 +17,17 @@ import InspectionScreen from "../screens/InspectionScreen";
 import DefectsScreen from "../screens/DefectsScreen";
 import NewDefectScreen from "../screens/NewDefectScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+import ExecutiveDashboardScreen from "../screens/executive/ExecutiveDashboardScreen";
+import VehicleInvestigationScreen from "../screens/executive/VehicleInvestigationScreen";
+import CostBreakdownScreen from "../screens/executive/CostBreakdownScreen";
+import TransactionDetailScreen from "../screens/executive/TransactionDetailScreen";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
+
+// Mirrors the backend's actual grant exactly (backend/server.py's _default_permissions()) rather than
+// re-deriving it from GET /permissions/presets -- this exact 4-role set is stable/explicit there.
+const EXECUTIVE_ROLES = ["admin", "manager", "executive", "finance"];
 
 const screenOptions = {
   headerStyle: { backgroundColor: colors.surface },
@@ -57,12 +65,26 @@ function DefectsStack() {
   );
 }
 
-function Tabs() {
+function ExecutiveStack() {
+  return (
+    <Stack.Navigator screenOptions={screenOptions}>
+      <Stack.Screen name="ExecutiveDashboard" component={ExecutiveDashboardScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="VehicleInvestigation" component={VehicleInvestigationScreen} options={{ title: "Vehicle" }} />
+      <Stack.Screen name="CostBreakdown" component={CostBreakdownScreen} options={{ title: "Cost breakdown" }} />
+      <Stack.Screen name="TransactionDetail" component={TransactionDetailScreen} options={{ title: "Detail" }} />
+    </Stack.Navigator>
+  );
+}
+
+function useBackgroundSync() {
   useEffect(() => {
     const stop = startSyncTriggers(() => {});
     return stop;
   }, []);
+}
 
+function Tabs() {
+  useBackgroundSync();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -75,6 +97,27 @@ function Tabs() {
       <Tab.Screen name="Jobs" component={JobsStack} options={{ title: "My Jobs" }} />
       <Tab.Screen name="Vehicles" component={VehiclesStack} />
       <Tab.Screen name="Defects" component={DefectsStack} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
+    </Tab.Navigator>
+  );
+}
+
+function ExecutiveTabs() {
+  // Still runs the same background sync (jobs/vehicles/parts/requisitions pull + offline-queue
+  // flush) even though this role's screens don't read most of that cache -- the queue flush half
+  // matters here too (fuel/trip logs submitted offline from VehicleInvestigationScreen), and there's
+  // no separate "executive-only" sync loop worth maintaining just to skip the unused pulls.
+  useBackgroundSync();
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textMuted,
+      }}
+    >
+      <Tab.Screen name="Dashboard" component={ExecutiveStack} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );
@@ -96,9 +139,11 @@ export default function RootNavigator() {
     );
   }
 
+  const isExecutive = user && EXECUTIVE_ROLES.includes(user.role);
+
   return (
     <NavigationContainer theme={navTheme}>
-      {user ? <Tabs /> : <LoginScreen />}
+      {!user ? <LoginScreen /> : isExecutive ? <ExecutiveTabs /> : <Tabs />}
     </NavigationContainer>
   );
 }
