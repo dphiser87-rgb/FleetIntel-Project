@@ -154,6 +154,14 @@ export default function JobDetailScreen({ route, navigation }) {
   const hasPendingRequisition = requisitions.some((r) => r.status === "pending_approval");
   const REQ_TONE = { pending_approval: "primary", approved: "success", rejected: "danger" };
   const JOB_TONE = { completed: "success", in_progress: "primary", on_hold: "warning" };
+  // Most recent requisition (not just a pending one), so approved/rejected still shows here instead
+  // of the badge just disappearing once decided.
+  const latestRequisition = [...requisitions].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+  const PARTS_BADGE = {
+    pending_approval: { label: "Awaiting parts", tone: "warning" },
+    approved: { label: "Parts approved", tone: "success" },
+    rejected: { label: "Parts rejected", tone: "danger" },
+  }[latestRequisition?.status];
 
   return (
     <Screen>
@@ -164,8 +172,8 @@ export default function JobDetailScreen({ route, navigation }) {
           <Badge label={job.status.replace("_", " ")} tone={JOB_TONE[job.status] || "muted"} />
         </View>
         {!!job.description && <Text style={styles.description}>{job.description}</Text>}
-        {hasPendingRequisition && job.status !== "completed" && (
-          <Badge label="Awaiting parts" tone="warning" />
+        {PARTS_BADGE && job.status !== "completed" && (
+          <Badge label={PARTS_BADGE.label} tone={PARTS_BADGE.tone} />
         )}
 
         <Card style={styles.card}>

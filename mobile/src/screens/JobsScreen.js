@@ -7,6 +7,11 @@ import { colors, spacing } from "../lib/theme";
 import { getCachedJobs, getCachedVehicles, getCachedRequisitions, runSync } from "../lib/sync";
 
 const STATUS_TONE = { pending: "muted", in_progress: "primary", completed: "success", cancelled: "danger", on_hold: "warning" };
+const PARTS_BADGE = {
+  pending_approval: { label: "Awaiting parts", tone: "warning" },
+  approved: { label: "Parts approved", tone: "success" },
+  rejected: { label: "Parts rejected", tone: "danger" },
+};
 
 export default function JobsScreen({ navigation }) {
   const [jobs, setJobs] = useState([]);
@@ -17,11 +22,17 @@ export default function JobsScreen({ navigation }) {
     // GET /maintenance's list response only enriches asset-linked jobs with a name -- vehicle-linked
     // jobs carry just vehicle_id, so resolve the display name against the cached vehicle list here.
     const vmap = Object.fromEntries(vehicles.map((v) => [v.id, v]));
-    const awaitingParts = new Set(requisitions.filter((r) => r.status === "pending_approval").map((r) => r.maintenance_id));
+    // Keyed by each job's MOST RECENT requisition (not just pending ones), so an approved/rejected
+    // request still shows a status on the card instead of silently reverting to a plain one.
+    const sortedReqs = [...requisitions].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const partsStatusByJob = {};
+    for (const r of sortedReqs) {
+      if (!(r.maintenance_id in partsStatusByJob)) partsStatusByJob[r.maintenance_id] = r.status;
+    }
     const withNames = cached.map((j) => ({
       ...j,
       display_name: j.asset_name || (j.vehicle_id && vmap[j.vehicle_id]?.name) || "—",
-      awaiting_parts: awaitingParts.has(j.id),
+      parts_status: partsStatusByJob[j.id],
     }));
     // Open jobs first, newest first within each group -- a mechanic cares about what's still due.
     withNames.sort((a, b) => {
@@ -60,7 +71,9 @@ export default function JobsScreen({ navigation }) {
             <View style={styles.jobHeader}>
               <Text style={styles.jobTitle} numberOfLines={1}>{item.title}</Text>
               <View style={styles.badgeGroup}>
-                {item.awaiting_parts && item.status !== "completed" && <Badge label="Awaiting parts" tone="warning" />}
+                {item.status !== "completed" && PARTS_BADGE[item.parts_status] && (
+                  <Badge label={PARTS_BADGE[item.parts_status].label} tone={PARTS_BADGE[item.parts_status].tone} />
+                )}
                 <Badge label={item.status.replace("_", " ")} tone={STATUS_TONE[item.status] || "muted"} />
               </View>
             </View>
