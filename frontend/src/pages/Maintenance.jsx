@@ -66,6 +66,16 @@ export default function Maintenance() {
     api.get("/assets").then(r => setAssets(r.data)).catch(() => {});
     api.get("/users").then(r => setUsers(r.data));
     api.get("/maintenance-schedules").then(r => setSchedules(r.data || [])).catch(() => {});
+    // Same polling pattern already used for alerts/notifications (GlobalAlertBar.jsx,
+    // NotificationCenter.jsx) -- this board otherwise only ever fetched once on mount, so a job
+    // completed/approved/moved by someone else stayed stale until a manual reload. quotesByJob and
+    // partsStatusByJob both already depend on `jobs`, so they refresh for free whenever this does.
+    const t = setInterval(load, 30000);
+    // Mirrors the mobile app's AppState-foreground refresh trigger -- coming back to this tab
+    // shouldn't mean waiting up to 30s to see what changed while it was in the background.
+    const onVisible = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVisible); };
   }, []);
 
   // Schedules assigned to whichever vehicle/asset is currently selected in the New Job form — a job
