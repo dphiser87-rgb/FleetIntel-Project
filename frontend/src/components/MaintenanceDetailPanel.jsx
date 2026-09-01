@@ -88,7 +88,7 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
           <div className="p-8 text-sm text-muted-foreground">Loading…</div>
         ) : (
           <>
-            <div className="border-b border-border p-6 shrink-0 flex items-start justify-between gap-4">
+            <div className="border-b border-border p-6 pr-14 shrink-0 flex items-start justify-between gap-4">
               <div>
                 <div className="overline">{job.vehicle_name} · {job.vehicle_plate}</div>
                 <h2 className="font-display text-2xl font-bold mt-1">{job.title}</h2>
