@@ -13,9 +13,6 @@ frontend/frontend.*.log
 # Playwright MCP debug output (snapshots, console logs, downloaded artifacts)
 .playwright-mcp/
 
-# Yarn lockfile is intentionally not committed (see CLAUDE.md — pinning relies on "resolutions")
-frontend/yarn.lock
-
 # Personal/local Claude Code settings overrides
 .claude/settings.local.json
 
