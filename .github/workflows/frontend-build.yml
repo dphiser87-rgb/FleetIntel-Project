@@ -1,0 +1,34 @@
+name: Frontend build
+
+# This repo is private on GitHub's Free plan, which doesn't support required-status-check branch
+# protection (classic protection and rulesets both require GitHub Pro for private repos). This check
+# can't hard-block a merge -- it shows as a pass/fail status on the PR (and on pushes to main) so a
+# broken build is visible before merging, catching what previously slipped through unnoticed for
+# hours (two dead icon imports from @phosphor-icons/react broke every build until this was added).
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-build.yml"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: corepack enable
+      # --frozen-lockfile also catches yarn.lock drifting out of sync with package.json, not just
+      # missing/renamed exports -- mirrors what a real `yarn install` on Vercel does.
+      - run: yarn install --frozen-lockfile
+      - run: CI=false yarn build
