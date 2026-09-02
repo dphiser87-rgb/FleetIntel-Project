@@ -31,8 +31,11 @@ cd backend && pytest
   package marker — the real suite lives under `backend/tests/`.
 
 **Frontend** (`frontend/`), via Craco-wrapped CRA scripts — package manager is yarn (pinned via
-`packageManager` in `package.json`; no lockfile is committed, dependency pinning relies on the
-`resolutions` field):
+`packageManager` in `package.json`). `frontend/yarn.lock` is committed as of 2026-09 — a stretch
+without one let a build-breaking dependency issue (two dead icon imports the installed
+`@phosphor-icons/react` didn't export) go undetected through several Preview deploys before it hit
+`main`. Run `yarn install` (not `yarn install --ignore-lockfile` or an ad hoc `npm install`) and commit
+the updated lockfile whenever a frontend dependency changes.
 ```
 cd frontend && yarn start   # dev server
 cd frontend && yarn build
