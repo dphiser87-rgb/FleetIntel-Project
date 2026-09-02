@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { ShieldCheck, ShieldWarning, QrCode, Copy, ArrowsClockwise, LockKey } from "@phosphor-icons/react";
+import { ShieldCheck, ShieldWarning, Copy, ArrowsClockwise, LockKey } from "@phosphor-icons/react";
 import { formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
