@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { UserPlus, Copy, Trash, PencilSimple, ArrowUp, ArrowDown, DownloadSimple, Prohibit, Key } from "@phosphor-icons/react";
 import { formatApiErrorDetail } from "@/lib/api";
 import TeamMemberPanel from "@/components/TeamMemberPanel";
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { ROLE_COLOR } from "@/lib/access";
 
 const FALLBACK_ROLES = ["admin", "manager", "inspector", "mechanic"];
@@ -17,6 +18,7 @@ export default function Team() {
   const [renaming, setRenaming] = useState(false);
   const [wsName, setWsName] = useState("");
   const [invite, setInvite] = useState({ email: "", role: "manager" });
+  const [showInvite, setShowInvite] = useState(false);
   const [moduleKeys, setModuleKeys] = useState([]);
   const [presets, setPresets] = useState({});
   const [vehicleGroups, setVehicleGroups] = useState([]);
@@ -64,6 +66,7 @@ export default function Team() {
       await api.post("/workspace/invites", invite);
       toast.success(`Invite created for ${invite.email}`);
       setInvite({ email: "", role: "manager" });
+      setShowInvite(false);
       load();
     } catch (e) {
       toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Failed");
@@ -157,8 +160,7 @@ export default function Team() {
         </div>
       </header>
 
-      <div className="p-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
+      <div className="p-8 space-y-6">
           <div className="bg-[#121214] border border-border">
             <div className="border-b border-border p-4 flex items-center justify-between flex-wrap gap-3">
               <div>
@@ -231,6 +233,12 @@ export default function Team() {
                 {filtered.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">No members match these filters.</td></tr>}
               </tbody>
             </table>
+            <div className="border-t border-border p-4 flex justify-end">
+              <button onClick={() => setShowInvite(true)} data-testid="open-new-user"
+                className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">
+                <UserPlus size={14} /> New user
+              </button>
+            </div>
           </div>
 
           <div className="bg-[#121214] border border-border">
@@ -274,37 +282,42 @@ export default function Team() {
               </tbody>
             </table>
           </div>
-        </div>
+      </div>
 
-        <div className="bg-[#121214] border border-border p-6 self-start">
-          <div className="flex items-center gap-2 mb-4">
+      <Sheet open={showInvite} onOpenChange={setShowInvite}>
+        <SheetContent side="right" className="border-border bg-[#0b0b0d] w-full sm:max-w-md flex flex-col overflow-hidden p-0" data-testid="new-user-panel">
+          <SheetTitle className="sr-only">New user</SheetTitle>
+          <SheetDescription className="sr-only">Invite a teammate to this workspace</SheetDescription>
+          <div className="border-b border-border px-6 py-4 pr-14 shrink-0 flex items-center gap-2">
             <UserPlus size={22} className="text-primary" />
             <div>
               <div className="overline">Add a teammate</div>
               <div className="font-display text-xl font-bold">New user</div>
             </div>
           </div>
-          <form onSubmit={sendInvite} className="space-y-3" data-testid="invite-form">
-            <div>
-              <label className="overline block mb-2">Email</label>
-              <input required type="email" value={invite.email} onChange={(e) => setInvite({...invite, email: e.target.value})}
-                data-testid="invite-email"
-                className="w-full bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none" />
+          <div className="p-6 overflow-y-auto">
+            <form onSubmit={sendInvite} className="space-y-3" data-testid="invite-form">
+              <div>
+                <label className="overline block mb-2">Email</label>
+                <input required type="email" value={invite.email} onChange={(e) => setInvite({...invite, email: e.target.value})}
+                  data-testid="invite-email"
+                  className="w-full bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none" />
+              </div>
+              <div>
+                <label className="overline block mb-2">Profile</label>
+                <select value={invite.role} onChange={(e) => setInvite({...invite, role: e.target.value})} data-testid="invite-role"
+                  className="w-full bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none">
+                  {ROLES.map(r => <option key={r}>{r}</option>)}
+                </select>
+              </div>
+              <button type="submit" data-testid="create-invite" className="w-full bg-primary text-primary-foreground py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">Create invite</button>
+            </form>
+            <div className="text-xs text-muted-foreground mt-4 border-t border-border pt-4">
+              The invitee registers at <span className="mono">/register?invite=CODE</span> and joins <strong className="text-white">{ws.name}</strong> with the profile you pick — it pre-fills their System Rights.
             </div>
-            <div>
-              <label className="overline block mb-2">Profile</label>
-              <select value={invite.role} onChange={(e) => setInvite({...invite, role: e.target.value})} data-testid="invite-role"
-                className="w-full bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none">
-                {ROLES.map(r => <option key={r}>{r}</option>)}
-              </select>
-            </div>
-            <button type="submit" data-testid="create-invite" className="w-full bg-primary text-primary-foreground py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">Create invite</button>
-          </form>
-          <div className="text-xs text-muted-foreground mt-4 border-t border-border pt-4">
-            The invitee registers at <span className="mono">/register?invite=CODE</span> and joins <strong className="text-white">{ws.name}</strong> with the profile you pick — it pre-fills their System Rights.
           </div>
-        </div>
-      </div>
+        </SheetContent>
+      </Sheet>
 
       <TeamMemberPanel member={selected} moduleKeys={moduleKeys} presets={presets}
         vehicleGroups={vehicleGroups} driverGroups={driverGroups}
