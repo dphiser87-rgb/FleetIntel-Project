@@ -200,7 +200,7 @@ export default function Team() {
                   <th className="p-3">Username</th>
                   <th className="p-3">Email</th>
                   <SortTh label="Profile" k="role" />
-                  <th className="p-3">Active period</th>
+                  <th className="p-3 whitespace-nowrap">Active period</th>
                   <SortTh label="Status" k="status" />
                 </tr>
               </thead>
