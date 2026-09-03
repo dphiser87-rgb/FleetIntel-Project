@@ -1,3 +1,5 @@
+import { trackEvent } from "@/utils/trackEvent";
+
 const APP_URL = "https://app.fleetintel.africa";
 
 export default function Nav() {
@@ -35,6 +37,7 @@ export default function Nav() {
           <a
             href={`${APP_URL}/login`}
             data-testid="nav-login"
+            onClick={() => trackEvent("login_click")}
             className="rounded-full px-4 py-2 text-xs uppercase tracking-widest border transition-colors"
             style={{ borderColor: "var(--color-border)" }}
           >

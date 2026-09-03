@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParallax } from "../hooks/useReveal";
 import ImagePlaceholder from "./ImagePlaceholder";
+import { trackEvent } from "@/utils/trackEvent";
 
 export default function Hero() {
   const [mounted, setMounted] = useState(false);
@@ -34,6 +35,7 @@ export default function Hero() {
             <a
               href="mailto:hello@fleetintel.africa?subject=Book%20a%20call"
               data-testid="hero-book-call"
+              onClick={() => trackEvent("book_call_click")}
               className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest font-semibold transition-transform active:scale-95"
               style={{ background: "var(--color-primary)", color: "oklch(18% 0.02 155)" }}
             >
@@ -42,6 +44,7 @@ export default function Hero() {
             <a
               href="mailto:hello@fleetintel.africa?subject=Request%20a%20demo"
               data-testid="hero-demo"
+              onClick={() => trackEvent("request_demo_click")}
               className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest border transition-transform active:scale-95"
               style={{ borderColor: "var(--color-border)" }}
             >
