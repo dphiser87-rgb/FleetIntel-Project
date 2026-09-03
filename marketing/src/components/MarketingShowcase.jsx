@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { motion, useScroll, useTransform, AnimatePresence } from "framer-motion";
+import { motion, useScroll, useTransform, useMotionValueEvent, AnimatePresence } from "framer-motion";
 import { AccessibilitySkipBar } from "@/components/AccessibilitySkipBar";
+import { trackEvent } from "@/utils/trackEvent";
 
 // Motion-style comparison demo only (mounted at /demo2 by main.jsx) -- a second alternative to
 // /demo's HorizontalNarrative, not wired into the shipped site. Adapted from a user-provided TSX
@@ -51,6 +52,18 @@ export default function MarketingShowcase({ withSkipNav = true } = {}) {
 
   const { scrollYProgress } = useScroll({ target: targetRef });
   const xTranslate = useTransform(scrollYProgress, [0, 1], ["0%", "-66.66%"]);
+
+  const midpointTrackedRef = useRef(false);
+  useMotionValueEvent(scrollYProgress, "change", (progress) => {
+    // scrollYProgress is a MotionValue -- its identity never changes on scroll, so a plain
+    // useEffect([scrollYProgress]) would only ever run once, on mount, when progress is still 0
+    // (it would never actually fire). useMotionValueEvent is framer-motion's subscription hook for
+    // exactly this. Guarded with a ref so this fires once per mount, not on every frame past 0.5.
+    if (progress > 0.5 && !midpointTrackedRef.current) {
+      midpointTrackedRef.current = true;
+      trackEvent("horizontal_scroll_midpoint_reached", { mode: "desktop" });
+    }
+  });
 
   return (
     <div className="demo-theme">
