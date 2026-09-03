@@ -8,8 +8,15 @@ import { CURRENCIES } from "@/lib/currency";
 
 const DIGESTS = [
   { key: "weekly_digest", label: "Weekly KPI digest", description: "Every Monday at 13:00 UTC — KPIs, cost anomalies, pending jobs and low-stock parts." },
-  { key: "health_digest", label: "Fleet health digest", description: "A list of at-risk and watch-status vehicles with their top contributing factors." },
-  { key: "overdue_checklists", label: "Overdue checklists alert", description: "Scheduled checklists that have gone past their configured frequency." },
+  { key: "health_digest", label: "Fleet health digest", description: "A list of at-risk and watch-status vehicles with their top contributing factors. Frequency is configurable." },
+  { key: "overdue_checklists", label: "Overdue checklists alert", description: "Scheduled checklists that have gone past their configured frequency. Checked daily." },
+];
+
+const HEALTH_DIGEST_FREQUENCIES = [
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "quarterly", label: "Quarterly" },
 ];
 
 export default function Settings() {
@@ -115,6 +122,17 @@ export default function Settings() {
     } catch (e) {
       toast.error("Failed to save — reverting");
       setPrefs(prefs);
+    }
+  };
+
+  const saveHealthDigestFrequency = async (frequency) => {
+    const prev = prefs;
+    setPrefs({ ...prefs, health_digest_frequency: frequency });
+    try {
+      await api.patch("/workspace", { notification_prefs: { health_digest_frequency: frequency } });
+    } catch (e) {
+      toast.error("Failed to save — reverting");
+      setPrefs(prev);
     }
   };
 
@@ -310,19 +328,34 @@ export default function Settings() {
                 {DIGESTS.map((d) => {
                   const on = prefs ? prefs[d.key] !== false : true;
                   return (
-                    <div key={d.key} className="flex items-center justify-between py-3" data-testid={`digest-toggle-${d.key}`}>
+                    <div key={d.key} className="flex items-center justify-between py-3 gap-4" data-testid={`digest-toggle-${d.key}`}>
                       <div className="pr-4">
                         <div className="text-sm">{d.label}</div>
                         <div className="text-xs text-muted-foreground mt-0.5">{d.description}</div>
                       </div>
-                      <button
-                        type="button"
-                        disabled={!canManage || prefs === null}
-                        onClick={() => toggleDigest(d.key)}
-                        className={`shrink-0 w-11 h-6 rounded-full border transition-colors relative disabled:opacity-50 ${on ? "bg-primary border-primary" : "bg-[#0b0b0d] border-border"}`}
-                      >
-                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${on ? "translate-x-[22px]" : "translate-x-0"}`} />
-                      </button>
+                      <div className="flex items-center gap-3 shrink-0">
+                        {d.key === "health_digest" && on && (
+                          <select
+                            value={prefs?.health_digest_frequency || "weekly"}
+                            disabled={!canManage || prefs === null}
+                            onChange={(e) => saveHealthDigestFrequency(e.target.value)}
+                            data-testid="health-digest-frequency"
+                            className="bg-[#0b0b0d] border border-border text-xs px-2 py-1.5 disabled:opacity-50"
+                          >
+                            {HEALTH_DIGEST_FREQUENCIES.map((f) => (
+                              <option key={f.value} value={f.value}>{f.label}</option>
+                            ))}
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          disabled={!canManage || prefs === null}
+                          onClick={() => toggleDigest(d.key)}
+                          className={`shrink-0 w-11 h-6 rounded-full border transition-colors relative disabled:opacity-50 ${on ? "bg-primary border-primary" : "bg-[#0b0b0d] border-border"}`}
+                        >
+                          <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${on ? "translate-x-[22px]" : "translate-x-0"}`} />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
