@@ -60,6 +60,20 @@
   --color-alert: #ea580c;
 }
 
+/* Overrides Tailwind's built-in .will-change-transform (which is just `will-change: transform`) with
+   a fuller GPU-layer hint, scoped to the demo pages only -- forces a hardware-accelerated layer for
+   the horizontal scroll panels in HorizontalNarrative and MarketingShowcase. Deliberately dropped the
+   user-supplied `html { overflow-x: hidden }` base rule: that's the exact pattern that broke
+   position: sticky on these same panels earlier this session (root-caused and fixed in the
+   HorizontalNarrative commit) -- applying it at the html level would re-break sticky everywhere,
+   including the shipped Scenarios section on the real site. */
+.demo-theme .will-change-transform {
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+}
+
 html { scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
