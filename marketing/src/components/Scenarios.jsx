@@ -6,19 +6,22 @@ const SCENARIOS = [
     tag: "Field inspections",
     title: "A driver runs the checklist from the field",
     body: "No signal required. Every answer, photo, and signature queues on the phone and syncs the moment connectivity returns. Nothing gets lost. Nothing gets redone.",
-    shot: "screenshot — mobile vehicle checklist / inspection in progress",
+    shot: "/assets/inspection.png",
+    alt: "A digital vehicle inspection checklist, sections for tires, wheels, and brakes, each item marked pass or fail",
   },
   {
     tag: "Incidents",
     title: "An incident happens. The paperwork is already there",
     body: "Photos, description, vehicle and driver details, captured on the spot and structured for the one person who needs them next: your insurer.",
-    shot: "screenshot — incident report with insurance-share action",
+    shot: "/assets/incident-insurance.png",
+    alt: "The share-incident dialog, a link and an email-to-insurance form with a note field",
   },
   {
     tag: "Executive oversight",
     title: "A cost spike gets investigated in minutes, not months",
     body: "A number moves the wrong way. An executive drills straight from the dashboard into the vehicle, the job, and the line item behind it. No report to wait for.",
-    shot: "screenshot — executive dashboard, cost-spike drill-down",
+    shot: "/assets/executive-cost-spike.png",
+    alt: "A vehicle's cost breakdown and monthly cost trend chart, drilled into from the executive dashboard",
     signature: true,
   },
 ];
@@ -56,7 +59,7 @@ export default function Scenarios() {
                 )}
               </div>
               <div style={i % 2 ? { direction: "ltr" } : undefined}>
-                <ImagePlaceholder label={s.shot} />
+                <ImagePlaceholder src={s.shot} alt={s.alt} />
               </div>
             </Reveal>
           ))}

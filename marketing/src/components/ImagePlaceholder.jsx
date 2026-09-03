@@ -1,7 +1,16 @@
-// Labelled placeholder for real assets (design.md's Assets plan: real product screenshots, captured
-// live from the app -- not stock photography). Named for exactly what belongs here so Step 4 (assets)
-// knows what to shoot/crop.
-export default function ImagePlaceholder({ label, className = "", aspect = "aspect-video" }) {
+// Renders a real screenshot when src is provided (Step 4). Falls back to the labelled dashed
+// placeholder when it isn't -- kept around for any future slot that doesn't have a real asset yet.
+export default function ImagePlaceholder({ label, src, alt, className = "", aspect = "aspect-video" }) {
+  if (src) {
+    return (
+      <div
+        className={`${aspect} ${className} rounded-xl border overflow-hidden`}
+        style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
+      >
+        <img src={src} alt={alt || label} className="w-full h-full object-cover object-top" />
+      </div>
+    );
+  }
   return (
     <div
       className={`${aspect} ${className} rounded-xl border border-dashed flex items-center justify-center text-center px-6`}

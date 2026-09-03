@@ -56,7 +56,11 @@ export default function Hero() {
             mounted ? "opacity-100" : "opacity-0"
           }`}
         >
-          <ImagePlaceholder label="hero — KPI dashboard, live product screenshot" aspect="aspect-[4/3]" />
+          <ImagePlaceholder
+            src="/assets/dashboard.png"
+            alt="FleetIntel's KPI dashboard, showing real cost, downtime, and fuel figures"
+            aspect="aspect-[4/3]"
+          />
         </div>
       </div>
     </section>
