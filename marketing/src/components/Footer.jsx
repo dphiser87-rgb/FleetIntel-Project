@@ -13,9 +13,8 @@ export default function Footer() {
             </div>
             <span className="font-display font-bold text-base tracking-tight">FleetIntel</span>
           </div>
-          {/* Motto: to be drafted together per the interview -- placeholder until we write it */}
-          <p className="placeholder-copy text-sm max-w-xs" data-testid="footer-motto">
-            [placeholder — company motto, to be drafted together]
+          <p className="text-sm max-w-xs font-display font-bold tracking-tight" data-testid="footer-motto">
+            Your Fleet. Your Control. Your Savings.
           </p>
         </div>
 

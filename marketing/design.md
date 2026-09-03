@@ -14,6 +14,9 @@ driver assignment) rather than locking a customer into proprietary hardware.
 
 **Thesis line**: "See exactly what every vehicle costs you. Before it becomes a problem."
 
+**Motto** (footer, title case by design as a distinct tagline treatment, not body copy):
+"Your Fleet. Your Control. Your Savings."
+
 Built in Africa, for African fleet operators — a specialization to lead with, not a boundary. Copy
 should read as "purpose-built for African fleet operations," never "Africa-only," so the story extends
 cleanly if/when international customers come later.
