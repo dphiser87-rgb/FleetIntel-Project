@@ -1,5 +1,5 @@
+import { useEffect, useRef, useState } from "react";
 import Reveal from "./Reveal";
-import ImagePlaceholder from "./ImagePlaceholder";
 
 const SCENARIOS = [
   {
@@ -26,7 +26,38 @@ const SCENARIOS = [
   },
 ];
 
+const CostSpikeCard = () => (
+  <div
+    className="mt-6 rounded-xl border-l-4 p-4 inline-block"
+    style={{ borderColor: "var(--color-alert)", background: "var(--color-surface)" }}
+    data-testid="signature-cost-spike-card"
+  >
+    <div className="eyebrow mb-1">Maintenance spend, this vehicle</div>
+    <div className="font-mono text-2xl font-bold" style={{ color: "var(--color-alert)" }}>
+      +18% <span className="text-sm font-normal" style={{ color: "var(--color-muted)" }}>vs last month</span>
+    </div>
+  </div>
+);
+
+// Pinned scrollytelling on desktop: the image panel stays fixed (sticky) while the three scenario
+// captions scroll past on the other side, an IntersectionObserver swapping which screenshot shows.
+// On mobile there's no room for a sticky panel, so each block just carries its own inline image.
 export default function Scenarios() {
+  const [active, setActive] = useState(0);
+  const blockRefs = useRef([]);
+
+  useEffect(() => {
+    const observers = blockRefs.current.map((el, i) => {
+      if (!el) return null;
+      const io = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) setActive(i); }, { threshold: 0.5 });
+      io.observe(el);
+      return io;
+    });
+    return () => observers.forEach((io) => io && io.disconnect());
+  }, []);
+
+  const active_ = SCENARIOS[active];
+
   return (
     <section id="how-it-works" className="border-b" style={{ borderColor: "var(--color-border)" }}>
       <div className="max-w-6xl mx-auto px-6 py-20 md:py-28">
@@ -37,32 +68,52 @@ export default function Scenarios() {
           </h2>
         </Reveal>
 
-        <div className="space-y-20">
-          {SCENARIOS.map((s, i) => (
-            <Reveal key={s.tag} className={`grid md:grid-cols-2 gap-10 items-center ${i % 2 ? "md:[direction:rtl]" : ""}`}>
-              <div style={i % 2 ? { direction: "ltr" } : undefined}>
-                <div className="eyebrow mb-3">{s.tag}</div>
-                <h3 className="font-display font-bold text-2xl mb-3">{s.title}</h3>
-                <p className="text-sm leading-relaxed" style={{ color: "var(--color-muted)" }}>{s.body}</p>
+        <div className="grid md:grid-cols-2 gap-10">
+          <div className="space-y-16 md:space-y-0">
+            {SCENARIOS.map((item, i) => (
+              <div
+                key={item.tag}
+                ref={(el) => (blockRefs.current[i] = el)}
+                className="md:min-h-[70vh] flex flex-col justify-center"
+                data-testid={`scenario-block-${i}`}
+              >
+                <div className="eyebrow mb-3" style={{ color: active === i ? "var(--color-primary)" : undefined }}>
+                  {item.tag}
+                </div>
+                <h3 className="font-display font-bold text-2xl mb-3">{item.title}</h3>
+                <p className="text-sm leading-relaxed" style={{ color: "var(--color-muted)" }}>{item.body}</p>
+                {item.signature && <CostSpikeCard />}
 
-                {s.signature && (
+                {/* Mobile only: inline image right under its own block, no sticky panel needed. */}
+                <div
+                  className="md:hidden mt-6 rounded-xl border overflow-hidden"
+                  style={{ borderColor: "var(--color-border)" }}
+                >
+                  <img src={item.shot} alt={item.alt} className="w-full h-auto" />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="hidden md:block">
+            <div className="sticky top-24">
+              <div
+                className="rounded-xl border overflow-hidden"
+                style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
+              >
+                <img key={active_.shot} src={active_.shot} alt={active_.alt} className="w-full h-full object-cover" />
+              </div>
+              <div className="flex gap-2 mt-4">
+                {SCENARIOS.map((_, i) => (
                   <div
-                    className="mt-6 rounded-xl border-l-4 p-4 inline-block"
-                    style={{ borderColor: "var(--color-alert)", background: "var(--color-surface)" }}
-                    data-testid="signature-cost-spike-card"
-                  >
-                    <div className="eyebrow mb-1">Maintenance spend, this vehicle</div>
-                    <div className="font-mono text-2xl font-bold" style={{ color: "var(--color-alert)" }}>
-                      +18% <span className="text-sm font-normal" style={{ color: "var(--color-muted)" }}>vs last month</span>
-                    </div>
-                  </div>
-                )}
+                    key={i}
+                    className="h-1 flex-1 rounded-full transition-colors duration-300"
+                    style={{ background: active === i ? "var(--color-primary)" : "var(--color-border)" }}
+                  />
+                ))}
               </div>
-              <div style={i % 2 ? { direction: "ltr" } : undefined}>
-                <ImagePlaceholder src={s.shot} alt={s.alt} />
-              </div>
-            </Reveal>
-          ))}
+            </div>
+          </div>
         </div>
       </div>
     </section>

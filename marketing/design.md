@@ -65,6 +65,17 @@ Generous, not cramped — 2–3x the spacing that feels comfortable by default. 
 Sections separated by a full-bleed `border` line, not shadows. Rounded corners this time (`rounded-lg`
 to `rounded-xl`, roughly 8–16px) — a deliberate structural difference from Design A's sharp 2px corners.
 
+**Section order** (revised): Hero → Industries strip → Why FleetIntel (moved up from its original
+position, so the differentiation argument lands before feature detail) → Showcase (the Executive
+Dashboard screenshot, full-visible, its own section — not the hero background) → How it works
+(pinned scrollytelling) → Features → Conversion band → Footer.
+
+**"How it works" is a pinned scrollytelling section on desktop**: the screenshot panel is
+`sticky top-24` on one side while the three scenario captions scroll past on the other, each caption
+block `min-h-[70vh]` for scroll room. An `IntersectionObserver` per block swaps which screenshot the
+sticky panel shows, plus a 3-segment progress bar underneath it. No sticky panel on mobile (no room)
+— each scenario block just carries its own inline image instead.
+
 ## Signature element
 
 A "cost-spike" callout card: a small mono-numeral stat (e.g. a % or currency figure) inside a rounded
@@ -73,7 +84,12 @@ decoration) — echoes the executive-investigates-a-spike story from the intervi
 
 ## Motion
 
-- **Structural**: sticky nav on scroll; sections fade/slide up ~8px on first view (once, not repeating).
+- **Structural**: sticky nav on scroll; sections fade/rise ~10px on first view (once, not repeating,
+  turned up from the original ~6px per later feedback). Features and Why-FleetIntel items reveal
+  individually with a staggered delay (100-120ms apart) instead of the whole block at once.
+- **Scroll-driven**: "How it works" pins its image panel (`position: sticky`) while captions scroll
+  past, swapping the shown screenshot via `IntersectionObserver` — the one deliberately larger/more
+  kinetic scroll effect on the page (matches the "Smooth & premium" pick, pushed further per request).
 - **Polish**: buttons scale slightly on press (`active:scale-95`); links underline-on-hover, not by default.
 - **Restraint rule**: never animate more than one property per element, no infinite/looping animations,
   respect `prefers-reduced-motion` (disable all transform/opacity entrance animation for it).

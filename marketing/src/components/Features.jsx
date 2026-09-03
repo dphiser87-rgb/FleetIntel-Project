@@ -30,25 +30,28 @@ const FEATURES = [
 export default function Features() {
   return (
     <section id="features" className="border-b" style={{ borderColor: "var(--color-border)" }}>
-      <Reveal className="max-w-6xl mx-auto px-6 py-20 md:py-28">
-        <div className="eyebrow mb-3">What's inside</div>
-        <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-14">
-          Everything you need to know where the money goes.
-        </h2>
+      <div className="max-w-6xl mx-auto px-6 py-20 md:py-28">
+        <Reveal>
+          <div className="eyebrow mb-3">What's inside</div>
+          <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-14">
+            Everything you need to know where the money goes.
+          </h2>
+        </Reveal>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {FEATURES.map((f) => (
-            <div
-              key={f.name}
-              data-testid={`feature-${f.name}`}
-              className="rounded-xl border p-6"
-              style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
-            >
-              <h3 className="font-display font-bold text-base mb-2">{f.name}</h3>
-              <p className="text-sm leading-relaxed" style={{ color: "var(--color-muted)" }}>{f.body}</p>
-            </div>
+          {FEATURES.map((f, i) => (
+            <Reveal key={f.name} delayMs={(i % 3) * 100}>
+              <div
+                className="h-full rounded-xl border p-6"
+                style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
+                data-testid={`feature-${f.name}`}
+              >
+                <h3 className="font-display font-bold text-base mb-2">{f.name}</h3>
+                <p className="text-sm leading-relaxed" style={{ color: "var(--color-muted)" }}>{f.body}</p>
+              </div>
+            </Reveal>
           ))}
         </div>
-      </Reveal>
+      </div>
     </section>
   );
 }

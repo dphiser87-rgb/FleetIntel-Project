@@ -1,9 +1,10 @@
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
 import Industries from "./components/Industries";
+import WhyFleetIntel from "./components/WhyFleetIntel";
+import Showcase from "./components/Showcase";
 import Scenarios from "./components/Scenarios";
 import Features from "./components/Features";
-import WhyFleetIntel from "./components/WhyFleetIntel";
 import ConversionBand from "./components/ConversionBand";
 import Footer from "./components/Footer";
 
@@ -13,9 +14,10 @@ export default function App() {
       <Nav />
       <Hero />
       <Industries />
+      <WhyFleetIntel />
+      <Showcase />
       <Scenarios />
       <Features />
-      <WhyFleetIntel />
       <ConversionBand />
       <Footer />
     </div>
