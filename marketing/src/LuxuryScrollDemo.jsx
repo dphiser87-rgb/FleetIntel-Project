@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { CostSpikeCanvas } from "@/components/CostSpikeCanvas";
 import { HorizontalNarrative } from "@/components/HorizontalNarrative";
+import { ScrollVisibilityGate } from "@/components/ScrollVisibilityGate";
 
 // Custom luxury easing curve (very slow, smooth deceleration)
 const luxuryEase = [0.16, 1, 0.3, 1];
@@ -106,11 +107,19 @@ export default function LuxuryScrollDemo() {
         </motion.div>
       </section>
 
-      {/* SECTION 4: Scroll-Linked Cost-Spike Canvas (useScroll + useTransform) */}
-      <CostSpikeCanvas />
+      {/* SECTION 4: Scroll-Linked Cost-Spike Canvas (useScroll + useTransform) -- gated to defer
+          mounting until it's approaching the viewport, since it's well below the fold on load.
+          Mounts once and stays mounted (see ScrollVisibilityGate) so its own scroll listener never
+          has to recover from a remount. */}
+      <ScrollVisibilityGate estimatedHeight="100vh">
+        <CostSpikeCanvas />
+      </ScrollVisibilityGate>
 
-      {/* SECTION 5: Horizontal Scroll Narrative (vertical scroll -> horizontal translation) */}
-      <HorizontalNarrative />
+      {/* SECTION 5: Horizontal Scroll Narrative (vertical scroll -> horizontal translation) --
+          same deferred-mount treatment; 300vh matches its own h-[300vh] container. */}
+      <ScrollVisibilityGate estimatedHeight="300vh">
+        <HorizontalNarrative />
+      </ScrollVisibilityGate>
     </div>
   );
 }
