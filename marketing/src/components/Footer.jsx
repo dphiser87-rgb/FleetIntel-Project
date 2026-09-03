@@ -28,7 +28,7 @@ export default function Footer() {
         </div>
       </div>
       <div className="border-t" style={{ borderColor: "var(--color-border)" }}>
-        <div className="max-w-6xl mx-auto px-6 py-6 overline">
+        <div className="max-w-6xl mx-auto px-6 py-6 eyebrow">
           © {new Date().getFullYear()} FleetIntel. All rights reserved.
         </div>
       </div>

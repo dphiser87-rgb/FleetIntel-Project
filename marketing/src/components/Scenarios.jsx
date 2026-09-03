@@ -28,7 +28,7 @@ export default function Scenarios() {
     <section id="how-it-works" className="border-b" style={{ borderColor: "var(--color-border)" }}>
       <div className="max-w-6xl mx-auto px-6 py-20 md:py-28">
         <Reveal>
-          <div className="overline mb-3">How it works</div>
+          <div className="eyebrow mb-3">How it works</div>
           <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-16">
             <span className="placeholder-copy">[placeholder section heading — real fleet moments, not stock photos]</span>
           </h2>
@@ -38,7 +38,7 @@ export default function Scenarios() {
           {SCENARIOS.map((s, i) => (
             <Reveal key={s.tag} className={`grid md:grid-cols-2 gap-10 items-center ${i % 2 ? "md:[direction:rtl]" : ""}`}>
               <div style={i % 2 ? { direction: "ltr" } : undefined}>
-                <div className="overline mb-3">{s.tag}</div>
+                <div className="eyebrow mb-3">{s.tag}</div>
                 <h3 className="font-display font-bold text-2xl mb-3">{s.title}</h3>
                 <p className="placeholder-copy text-sm leading-relaxed">{s.body}</p>
 
@@ -48,7 +48,7 @@ export default function Scenarios() {
                     style={{ borderColor: "var(--color-alert)", background: "var(--color-surface)" }}
                     data-testid="signature-cost-spike-card"
                   >
-                    <div className="overline mb-1">Cost spike detected</div>
+                    <div className="eyebrow mb-1">Cost spike detected</div>
                     <div className="font-mono text-2xl font-bold" style={{ color: "var(--color-alert)" }}>
                       [placeholder]%
                     </div>

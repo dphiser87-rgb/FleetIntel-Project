@@ -20,7 +20,7 @@ export default function Hero() {
             mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           }`}
         >
-          <div className="overline mb-4">Fleet cost intelligence · Africa</div>
+          <div className="eyebrow mb-4">Fleet cost intelligence · Africa</div>
           <h1 className="font-display font-black text-4xl md:text-6xl leading-[1.02] tracking-tighter">
             See exactly what every vehicle costs you —{" "}
             <span style={{ color: "var(--color-primary)" }}>before it becomes a problem.</span>

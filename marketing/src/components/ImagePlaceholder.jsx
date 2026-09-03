@@ -7,7 +7,7 @@ export default function ImagePlaceholder({ label, className = "", aspect = "aspe
       className={`${aspect} ${className} rounded-xl border border-dashed flex items-center justify-center text-center px-6`}
       style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
     >
-      <span className="overline" style={{ color: "var(--color-muted)" }}>{label}</span>
+      <span className="eyebrow" style={{ color: "var(--color-muted)" }}>{label}</span>
     </div>
   );
 }

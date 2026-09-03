@@ -13,7 +13,7 @@ export default function Industries() {
   return (
     <section className="border-b" style={{ borderColor: "var(--color-border)" }}>
       <Reveal className="max-w-6xl mx-auto px-6 py-10">
-        <div className="overline mb-4">Built for</div>
+        <div className="eyebrow mb-4">Built for</div>
         <div className="flex flex-wrap gap-3">
           {INDUSTRIES.map((i) => (
             <span

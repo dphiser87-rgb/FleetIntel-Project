@@ -10,7 +10,7 @@ export default function WhyFleetIntel() {
   return (
     <section id="why" className="border-b" style={{ borderColor: "var(--color-border)" }}>
       <Reveal className="max-w-6xl mx-auto px-6 py-20 md:py-28">
-        <div className="overline mb-3">Why FleetIntel</div>
+        <div className="eyebrow mb-3">Why FleetIntel</div>
         <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-14">
           <span className="placeholder-copy">[placeholder section heading]</span>
         </h2>
