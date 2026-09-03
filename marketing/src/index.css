@@ -56,3 +56,12 @@ html { scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Scroll-hint dot (ScrollPrompt) -- the one deliberate exception to the "no infinite/looping
+   animation" motion rule: this is a wayfinding cue (scroll indicator), not decorative motion, and
+   it's already neutralized for prefers-reduced-motion by the rule above. */
+@keyframes scroll-dot {
+  0%, 100% { transform: translateY(0); opacity: 1; }
+  50% { transform: translateY(10px); opacity: 0.4; }
+}
+.animate-scroll-dot { animation: scroll-dot 1.6s ease-in-out infinite; }

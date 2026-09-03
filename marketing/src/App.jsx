@@ -7,12 +7,14 @@ import Scenarios from "./components/Scenarios";
 import Features from "./components/Features";
 import ConversionBand from "./components/ConversionBand";
 import Footer from "./components/Footer";
+import ScrollPrompt from "./components/ScrollPrompt";
 
 export default function App() {
   return (
     <div className="min-h-screen" style={{ background: "var(--color-bg)", color: "var(--color-ink)" }}>
       <Nav />
       <Hero />
+      <ScrollPrompt />
       <Industries />
       <WhyFleetIntel />
       <Showcase />

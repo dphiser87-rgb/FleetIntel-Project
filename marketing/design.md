@@ -93,6 +93,9 @@ decoration) — echoes the executive-investigates-a-spike story from the intervi
 - **Polish**: buttons scale slightly on press (`active:scale-95`); links underline-on-hover, not by default.
 - **Restraint rule**: never animate more than one property per element, no infinite/looping animations,
   respect `prefers-reduced-motion` (disable all transform/opacity entrance animation for it).
+- **One deliberate exception**: the hero `ScrollPrompt` (bouncing scroll-hint dot, fades out past
+  80px scroll) loops for as long as it's visible. It's a wayfinding cue, not decorative motion, and
+  it's still fully neutralized under `prefers-reduced-motion` via the global rule above.
 
 ## Components
 
