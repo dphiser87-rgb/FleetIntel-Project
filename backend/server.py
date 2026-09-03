@@ -29,7 +29,14 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 from PIL import Image as PILImage
-import anthropic
+try:
+    # Defensive, not just tidy: a missing/broken optional dependency must never take the whole app
+    # down on import. Learned the hard way -- api/requirements.txt (what Vercel's function actually
+    # installs from) is a separate, trimmed-down file from backend/requirements.txt, and missing
+    # this package there once already caused a full outage (every endpoint 500ing, not just OCR).
+    import anthropic
+except ImportError:
+    anthropic = None
 import pyotp
 import qrcode
 from io import BytesIO
@@ -5373,6 +5380,8 @@ OCR_MEDIA_TYPES = {"jpeg", "jpg", "png", "gif", "webp"}
 
 @api.post("/ocr")
 async def ocr_image(req: OCRIn, user: dict = Depends(get_current_user)):
+    if anthropic is None:
+        raise HTTPException(status_code=503, detail="OCR dependency not installed")
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise HTTPException(status_code=503, detail="LLM key not configured")
