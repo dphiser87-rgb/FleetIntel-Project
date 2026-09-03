@@ -1,5 +1,6 @@
-import { motion, useScroll, useTransform } from "framer-motion";
+import { motion, useScroll, useTransform, useMotionValueEvent } from "framer-motion";
 import { useRef } from "react";
+import { trackEvent } from "@/utils/trackEvent";
 
 // Motion-style comparison demo only (mounted from LuxuryScrollDemo.jsx, /demo route). Adapted from
 // a user-provided TSX snippet: stripped the TypeScript annotation, rgb(var(--x)) tokens fixed to
@@ -29,6 +30,17 @@ export function HorizontalNarrative() {
 
   const { scrollYProgress } = useScroll({ target: targetRef });
   const xTranslate = useTransform(scrollYProgress, [0, 1], ["0%", "-66.66%"]);
+
+  // Mirrors MarketingShowcase's midpoint tracking (see its comment on why useMotionValueEvent,
+  // not a plain useEffect, is required for a MotionValue). No mobile/desktop split here -- this
+  // component is the horizontal-scroll treatment at every viewport width, unlike MarketingShowcase.
+  const midpointTrackedRef = useRef(false);
+  useMotionValueEvent(scrollYProgress, "change", (progress) => {
+    if (progress > 0.5 && !midpointTrackedRef.current) {
+      midpointTrackedRef.current = true;
+      trackEvent("horizontal_scroll_midpoint_reached", { page: "demo" });
+    }
+  });
 
   return (
     <div ref={targetRef} className="relative h-[300vh] -mx-6 md:-mx-24" style={{ background: "var(--color-bg)" }}>
