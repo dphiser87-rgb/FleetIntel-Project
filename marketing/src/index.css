@@ -38,6 +38,18 @@
     letter-spacing: 0.2em;
     color: var(--color-muted);
   }
+  /* Step 2 structure pass: real headings, but placeholder body copy -- styled dashed/muted so it
+     reads unmistakably as "not final," per the process's Step 3 (real words) hand-off. */
+  .placeholder-copy {
+    color: var(--color-muted);
+    border-bottom: 1px dashed var(--color-border);
+    display: inline;
+  }
+}
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
