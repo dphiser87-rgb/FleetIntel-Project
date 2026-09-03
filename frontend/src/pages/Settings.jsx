@@ -7,12 +7,12 @@ import { useCurrency } from "@/lib/CurrencyContext";
 import { CURRENCIES } from "@/lib/currency";
 
 const DIGESTS = [
-  { key: "weekly_digest", label: "Weekly KPI digest", description: "Every Monday at 13:00 UTC — KPIs, cost anomalies, pending jobs and low-stock parts." },
-  { key: "health_digest", label: "Fleet health digest", description: "A list of at-risk and watch-status vehicles with their top contributing factors. Frequency is configurable." },
-  { key: "overdue_checklists", label: "Overdue checklists alert", description: "Scheduled checklists that have gone past their configured frequency. Checked daily." },
+  { key: "weekly_digest", label: "Weekly KPI digest", defaultFrequency: "weekly", description: "KPIs, cost anomalies, pending jobs and low-stock parts." },
+  { key: "health_digest", label: "Fleet health digest", defaultFrequency: "weekly", description: "A list of at-risk and watch-status vehicles with their top contributing factors." },
+  { key: "overdue_checklists", label: "Overdue checklists alert", defaultFrequency: "daily", description: "Scheduled checklists that have gone past their configured frequency." },
 ];
 
-const HEALTH_DIGEST_FREQUENCIES = [
+const DIGEST_FREQUENCIES = [
   { value: "daily", label: "Daily" },
   { value: "weekly", label: "Weekly" },
   { value: "monthly", label: "Monthly" },
@@ -125,11 +125,12 @@ export default function Settings() {
     }
   };
 
-  const saveHealthDigestFrequency = async (frequency) => {
+  const saveDigestFrequency = async (key, frequency) => {
     const prev = prefs;
-    setPrefs({ ...prefs, health_digest_frequency: frequency });
+    const field = `${key}_frequency`;
+    setPrefs({ ...prefs, [field]: frequency });
     try {
-      await api.patch("/workspace", { notification_prefs: { health_digest_frequency: frequency } });
+      await api.patch("/workspace", { notification_prefs: { [field]: frequency } });
     } catch (e) {
       toast.error("Failed to save — reverting");
       setPrefs(prev);
@@ -321,7 +322,8 @@ export default function Settings() {
               </div>
               <h3 className="font-display text-2xl font-bold tracking-tight">Notification preferences</h3>
               <div className="mt-2 text-sm text-muted-foreground">
-                Controls whether each automated email sends at all. Recipient is always the workspace owner.
+                Controls whether each automated email sends at all, and how often. Checked daily;
+                recipient is always the workspace owner.
                 {!canManage && " Only admins and managers can change these."}
               </div>
               <div className="mt-4 divide-y divide-border/50">
@@ -334,15 +336,15 @@ export default function Settings() {
                         <div className="text-xs text-muted-foreground mt-0.5">{d.description}</div>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        {d.key === "health_digest" && on && (
+                        {on && (
                           <select
-                            value={prefs?.health_digest_frequency || "weekly"}
+                            value={prefs?.[`${d.key}_frequency`] || d.defaultFrequency}
                             disabled={!canManage || prefs === null}
-                            onChange={(e) => saveHealthDigestFrequency(e.target.value)}
-                            data-testid="health-digest-frequency"
+                            onChange={(e) => saveDigestFrequency(d.key, e.target.value)}
+                            data-testid={`digest-frequency-${d.key}`}
                             className="bg-[#0b0b0d] border border-border text-xs px-2 py-1.5 disabled:opacity-50"
                           >
-                            {HEALTH_DIGEST_FREQUENCIES.map((f) => (
+                            {DIGEST_FREQUENCIES.map((f) => (
                               <option key={f.value} value={f.value}>{f.label}</option>
                             ))}
                           </select>

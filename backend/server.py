@@ -29,12 +29,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 from PIL import Image as PILImage
-try:
-    # Only available inside Emergent's own hosted platform image, not on public PyPI —
-    # OCR endpoint degrades to a 503 outside that environment instead of failing to boot.
-    from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
-except ImportError:
-    LlmChat = UserMessage = ImageContent = None
+import anthropic
 import pyotp
 import qrcode
 from io import BytesIO
@@ -4861,12 +4856,15 @@ async def _send_workspace_digest(workspace_id: str):
     return await send_email(to=owner_email, subject=subject, html=html)
 
 async def _run_weekly_digest():
+    """Sends the KPI digest to every workspace for which it's currently due (per-workspace
+    configurable frequency, default weekly -- matches its original fixed schedule)."""
     workspaces = await fetch_all("select id, notification_prefs from workspaces")
     for ws in workspaces:
-        if (ws.get("notification_prefs") or {}).get("weekly_digest") is False:
+        if not _digest_due(ws.get("notification_prefs"), "weekly_digest", "weekly"):
             continue
         try:
             await _send_workspace_digest(ws["id"])
+            await _mark_digest_evaluated(ws["id"], "weekly_digest")
         except Exception as e:
             logger.error(f"digest for {ws.get('id')} failed: {e}")
 
@@ -4885,6 +4883,7 @@ async def cron_weekly_digest(request: Request):
 async def send_digest_now(user: dict = Depends(get_current_user)):
     """Manual trigger of the weekly digest for this workspace."""
     email_id = await _send_workspace_digest(user["workspace_id"])
+    await _mark_digest_evaluated(user["workspace_id"], "weekly_digest")
     await log_event(user, "digest.sent", "workspace", user["workspace_id"], {"email_id": email_id})
     return {"sent": bool(email_id), "email_id": email_id}
 
@@ -4944,37 +4943,42 @@ async def cron_health_digest(request: Request):
 async def send_health_digest_now(user: dict = Depends(get_current_user)):
     """Manual trigger of the health digest for this workspace."""
     email_id = await _send_health_digest(user["workspace_id"])
-    if email_id:
-        await _mark_health_digest_sent(user["workspace_id"])
+    await _mark_digest_evaluated(user["workspace_id"], "health_digest")
     await log_event(user, "health_digest.sent", "workspace", user["workspace_id"], {"email_id": email_id})
     return {"sent": bool(email_id), "email_id": email_id}
 
-# 'each_trip' (used by checklist scheduling's FREQUENCY_DAYS below) doesn't apply here — the health
-# digest has no usage-based cadence, only calendar ones, so this is its own mapping.
-HEALTH_DIGEST_FREQUENCY_DAYS = {"daily": 1, "weekly": 7, "monthly": 30, "quarterly": 91}
+# 'each_trip' (used by checklist scheduling's FREQUENCY_DAYS below) doesn't apply to the digests
+# above/below -- they have no usage-based cadence, only calendar ones (DIGEST_FREQUENCY_DAYS).
+DIGEST_FREQUENCY_DAYS = {"daily": 1, "weekly": 7, "monthly": 30, "quarterly": 91}
 
-def _health_digest_due(prefs: dict) -> bool:
-    """Whether a workspace's fleet health digest is due, given its configured frequency and the
-    last time one was sent. Defaults to weekly (matching the digest's original fixed schedule) when
-    no frequency has been chosen yet."""
+def _digest_due(prefs: dict, digest_key: str, default_frequency: str) -> bool:
+    """Whether a workspace's <digest_key> digest is due, given its configured frequency and the
+    last time it was evaluated. `default_frequency` is what each digest used to run on before this
+    became configurable (weekly for weekly_digest/health_digest, daily for overdue_checklists) --
+    used both as the fallback when no frequency has been chosen yet, and to look up the interval
+    when an unrecognized value somehow gets stored."""
     prefs = prefs or {}
-    if prefs.get("health_digest") is False:
+    if prefs.get(digest_key) is False:
         return False
-    last_sent = prefs.get("health_digest_last_sent_at")
-    if not last_sent:
+    last_evaluated = prefs.get(f"{digest_key}_last_sent_at")
+    if not last_evaluated:
         return True
-    freq = prefs.get("health_digest_frequency", "weekly")
-    interval_days = HEALTH_DIGEST_FREQUENCY_DAYS.get(freq, 7)
+    freq = prefs.get(f"{digest_key}_frequency", default_frequency)
+    interval_days = DIGEST_FREQUENCY_DAYS.get(freq, DIGEST_FREQUENCY_DAYS[default_frequency])
     try:
-        last_dt = datetime.fromisoformat(last_sent)
+        last_dt = datetime.fromisoformat(last_evaluated)
     except (TypeError, ValueError):
         return True
     return (datetime.now(timezone.utc) - last_dt) >= timedelta(days=interval_days)
 
-async def _mark_health_digest_sent(workspace_id: str):
+async def _mark_digest_evaluated(workspace_id: str, digest_key: str):
+    # Stamped on every due-triggered evaluation, not just ones that actually emailed something --
+    # overdue_checklists in particular often has nothing to report, and if the timestamp only moved
+    # on an actual send, a quiet stretch would make it look perpetually overdue and get re-evaluated
+    # every tick regardless of the configured frequency.
     await execute(
         "update workspaces set notification_prefs = coalesce(notification_prefs, '{}'::jsonb) || :p ::jsonb where id = :id",
-        p=json_dumps({"health_digest_last_sent_at": datetime.now(timezone.utc).isoformat()}), id=workspace_id,
+        p=json_dumps({f"{digest_key}_last_sent_at": datetime.now(timezone.utc).isoformat()}), id=workspace_id,
     )
 
 async def _run_health_digest_due_check():
@@ -4983,12 +4987,11 @@ async def _run_health_digest_due_check():
     /cron/daily-tick."""
     workspaces = await fetch_all("select id, notification_prefs from workspaces")
     for ws in workspaces:
-        if not _health_digest_due(ws.get("notification_prefs")):
+        if not _digest_due(ws.get("notification_prefs"), "health_digest", "weekly"):
             continue
         try:
-            email_id = await _send_health_digest(ws["id"])
-            if email_id:
-                await _mark_health_digest_sent(ws["id"])
+            await _send_health_digest(ws["id"])
+            await _mark_digest_evaluated(ws["id"], "health_digest")
         except Exception as e:
             logger.error(f"health digest for {ws.get('id')} failed: {e}")
 
@@ -5162,12 +5165,15 @@ async def _send_overdue_checklists_digest(workspace_id: str) -> Optional[str]:
     return await send_email(to=owner["email"], subject=subject, html=html)
 
 async def _run_overdue_checklists():
+    """Sends the overdue-checklists alert to every workspace for which it's currently due
+    (per-workspace configurable frequency, default daily -- matches its original fixed schedule)."""
     workspaces = await fetch_all("select id, notification_prefs from workspaces")
     for ws in workspaces:
-        if (ws.get("notification_prefs") or {}).get("overdue_checklists") is False:
+        if not _digest_due(ws.get("notification_prefs"), "overdue_checklists", "daily"):
             continue
         try:
             await _send_overdue_checklists_digest(ws["id"])
+            await _mark_digest_evaluated(ws["id"], "overdue_checklists")
         except Exception as e:
             logger.error(f"overdue-checklists digest for {ws.get('id')} failed: {e}")
 
@@ -5182,14 +5188,16 @@ async def cron_overdue_checklists(request: Request):
 
 @api.api_route("/cron/daily-tick", methods=["GET", "POST"])
 async def cron_daily_tick(request: Request):
-    """The one daily-scheduled Vercel Cron entry point (see vercel.json) -- runs both
-    overdue-checklists (unconditional daily) and the fleet health digest due-check (per-workspace
-    configurable frequency). Consolidated into one endpoint to fit within Vercel Hobby's 2
-    cron-job limit alongside the separate weekly /cron/weekly-digest entry."""
+    """The single daily-scheduled Vercel Cron entry point (see vercel.json). All three digests
+    (weekly-digest, health-digest, overdue-checklists) are now per-workspace configurable-frequency
+    due-checks rather than fixed schedules, so one daily tick is enough to drive all of them --
+    /cron/weekly-digest and /cron/overdue-checklists stay as separate endpoints for manual/testing
+    use (same due-check logic), but nothing schedules them directly anymore."""
     auth = request.headers.get("Authorization", "")
     expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
     if not expected or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
+    asyncio.create_task(_run_weekly_digest())
     asyncio.create_task(_run_overdue_checklists())
     asyncio.create_task(_run_health_digest_due_check())
     return {"ok": True, "queued": True}
@@ -5271,6 +5279,7 @@ async def send_maintenance_reminders_now(user: dict = Depends(require_module("ma
 async def send_overdue_checklists_now(user: dict = Depends(get_current_user)):
     """Manual trigger of the overdue-checklists email for this workspace."""
     email_id = await _send_overdue_checklists_digest(user["workspace_id"])
+    await _mark_digest_evaluated(user["workspace_id"], "overdue_checklists")
     await log_event(user, "overdue_checklists.sent", "workspace", user["workspace_id"], {"email_id": email_id})
     return {"sent": bool(email_id), "email_id": email_id}
 
@@ -5360,26 +5369,42 @@ async def revoke_invite(iid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --- OCR (Camera OCR) ---
+OCR_MEDIA_TYPES = {"jpeg", "jpg", "png", "gif", "webp"}
+
 @api.post("/ocr")
 async def ocr_image(req: OCRIn, user: dict = Depends(get_current_user)):
-    key = os.environ.get("EMERGENT_LLM_KEY")
+    key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise HTTPException(status_code=503, detail="LLM key not configured")
-    if LlmChat is None:
-        raise HTTPException(status_code=503, detail="OCR unavailable outside Emergent's hosted platform")
     raw = req.image_base64
+    media_type = "image/jpeg"  # camera photos default to JPEG when no data: prefix is present
     if raw.startswith("data:"):
-        raw = raw.split(",", 1)[-1]
+        header, raw = raw.split(",", 1)
+        fmt = header.split(";")[0].split("/")[-1].lower()
+        if fmt == "jpg":
+            fmt = "jpeg"
+        if fmt in OCR_MEDIA_TYPES:
+            media_type = f"image/{fmt}"
     prompt = (
         "Extract only the license plate number from this photo. Return just the plate string, no other text."
         if req.mode == "plate" else
         "Extract only the odometer reading (numeric km/mi) from this photo. Return just the integer, no units, no other text."
     )
     try:
-        chat = LlmChat(api_key=key, session_id=f"ocr-{user['id']}-{uuid.uuid4().hex[:6]}",
-                       system_message="You are an OCR assistant. Reply with only the requested value, nothing else.").with_model("openai", "gpt-4o-mini")
-        img = ImageContent(image_base64=raw)
-        result = await chat.send_message(UserMessage(text=prompt, file_contents=[img]))
+        client = anthropic.AsyncAnthropic(api_key=key)
+        message = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=50,
+            system="You are an OCR assistant. Reply with only the requested value, nothing else.",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": raw}},
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+        result = "".join(block.text for block in message.content if block.type == "text")
         text = (result or "").strip().strip('"').strip("'")
         if req.mode == "odometer":
             digits = "".join(ch for ch in text if ch.isdigit())
