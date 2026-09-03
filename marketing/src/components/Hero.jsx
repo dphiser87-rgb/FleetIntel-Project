@@ -4,7 +4,7 @@ export default function Hero() {
   return (
     <section className="noise-bg border-b border-border">
       <div className="max-w-6xl mx-auto px-6 py-24 md:py-32">
-        <div className="overline mb-4">Fleet cost intelligence</div>
+        <div className="eyebrow mb-4">Fleet cost intelligence</div>
         <h1 className="font-display font-black text-5xl md:text-7xl leading-[0.95] tracking-tighter max-w-3xl">
           Every dollar,<br />
           <span className="text-primary">every mile,</span><br />
