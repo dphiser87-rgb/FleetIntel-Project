@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { CostSpikeCanvas } from "./components/CostSpikeCanvas";
 
 // Custom luxury easing curve (very slow, smooth deceleration)
 const luxuryEase = [0.16, 1, 0.3, 1];
@@ -103,6 +104,9 @@ export default function LuxuryScrollDemo() {
           </motion.div>
         </motion.div>
       </section>
+
+      {/* SECTION 4: Scroll-Linked Cost-Spike Canvas (useScroll + useTransform) */}
+      <CostSpikeCanvas />
     </div>
   );
 }
