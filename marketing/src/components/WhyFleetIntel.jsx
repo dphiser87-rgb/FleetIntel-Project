@@ -28,8 +28,11 @@ export default function WhyFleetIntel() {
         <div className="space-y-10">
           {POINTS.map((p, i) => (
             <Reveal key={p.title} delayMs={i * 120}>
-              <div className="grid md:grid-cols-[auto_1fr] gap-6 md:gap-10 items-start" data-testid={`why-${i}`}>
-                <div className="font-mono text-sm" style={{ color: "var(--color-primary)" }}>{String(i + 1).padStart(2, "0")}</div>
+              <div
+                className="group grid md:grid-cols-[auto_1fr] gap-6 md:gap-10 items-start -mx-4 px-4 py-3 rounded-lg transition-colors duration-300 hover:[background:var(--color-surface)]"
+                data-testid={`why-${i}`}
+              >
+                <div className="font-mono text-sm transition-opacity duration-300 opacity-70 group-hover:opacity-100" style={{ color: "var(--color-primary)" }}>{String(i + 1).padStart(2, "0")}</div>
                 <div>
                   <h3 className="font-display font-bold text-xl mb-2">{p.title}</h3>
                   <p className="leading-relaxed" style={{ color: "var(--color-muted)" }}>{p.body}</p>

@@ -84,24 +84,50 @@ decoration) — echoes the executive-investigates-a-spike story from the intervi
 
 ## Motion
 
-- **Structural**: sticky nav on scroll; sections fade/rise ~10px on first view (once, not repeating,
-  turned up from the original ~6px per later feedback). Features and Why-FleetIntel items reveal
-  individually with a staggered delay (100-120ms apart) instead of the whole block at once.
+- **Structural**: nav starts transparent over the hero and settles into a blurred bar (`backdrop-blur-xl`
+  + tinted `bg`) once you scroll past it (`scrollY > 80`, the same threshold `ScrollPrompt` uses for its
+  own fade, so both read as one coordinated "past the hero" moment). Sections fade/rise ~10px on first
+  view (once, not repeating, turned up from the original ~6px per later feedback). Features and
+  Why-FleetIntel items reveal individually with a staggered delay (100-120ms apart) instead of the whole
+  block at once. Hero content itself rises in on mount, not gated behind a scroll trigger, so the page
+  is already alive before the first scroll.
 - **Scroll-driven**: "How it works" pins its image panel (`position: sticky`) while captions scroll
   past, swapping the shown screenshot via `IntersectionObserver` — the one deliberately larger/more
   kinetic scroll effect on the page (matches the "Smooth & premium" pick, pushed further per request).
-- **Polish**: buttons scale slightly on press (`active:scale-95`); links underline-on-hover, not by default.
+- **Polish**: buttons scale up slightly + brighten on hover, scale down on press (`active:scale-95`);
+  secondary/outlined buttons and the Login pill pick up the primary accent on hover instead; nav/footer
+  links fade from 70% to 100% opacity on hover (corrected here — this section previously said
+  underline-on-hover, which was never actually implemented); Features cards and Why-FleetIntel rows get
+  a border/background highlight on hover. A custom cursor and a magnetic primary button were considered
+  and deliberately not built — this is an enterprise B2B tool for fleet/ops/finance buyers (see
+  References), not a design-portfolio site, and both read as agency-demo flourishes that work against
+  the "could someone say AI made this" test rather than for it.
+- **Film grain**: tried (static SVG noise overlay, no motion) and removed after a side-by-side look —
+  the real screenshots and plain copy already carry the "this is real" weight without it. Documented
+  here so it isn't re-added without someone re-running that same comparison.
 - **Restraint rule**: never animate more than one property per element, no infinite/looping animations,
-  respect `prefers-reduced-motion` (disable all transform/opacity entrance animation for it).
+  respect `prefers-reduced-motion` (disable all transform/opacity entrance animation for it). Parallax
+  (hero image) additionally switches off on touch/coarse-pointer devices, not just reduced-motion —
+  scroll-position-tied movement fights touch-scroll momentum.
 - **One deliberate exception**: the hero `ScrollPrompt` (bouncing scroll-hint dot, fades out past
   80px scroll) loops for as long as it's visible. It's a wayfinding cue, not decorative motion, and
   it's still fully neutralized under `prefers-reduced-motion` via the global rule above.
+- **Keyboard focus**: an explicit `:focus-visible` outline in the primary accent on every link/button
+  — not left to browser default, which can read as low-contrast against this near-black background.
 
 ## Components
 
 Reuse the shape language, not the literal Design A components: rounded cards (`surface` bg, `border`
 outline), pill or rounded-lg buttons (primary = filled green, secondary = outlined `ink`), mono-numeral
-stat callouts, a sticky top nav with a filled-pill Login button.
+stat callouts, a sticky top nav with a filled-pill Login button. Below `md`, the nav's link row is
+replaced by a hamburger-triggered dropdown menu (plain inline SVG icon, no icon library) covering the
+same four links — there is no separate "mobile nav" content, every link the desktop nav offers stays
+reachable.
+
+**Flagged, not fixed in this pass**: Features is a uniform 3-column, 6-card grid — closer to the
+"identical card grid" anti-pattern below than any other section on the site. It reads less templated
+than the classic AI-builder version (no icon set, real variable-length copy, not one-word titles) but
+is still worth a look if this ever gets revisited.
 
 ## Copy rules
 

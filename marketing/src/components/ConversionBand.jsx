@@ -14,7 +14,7 @@ export default function ConversionBand() {
           <a
             href="mailto:hello@fleetintel.africa?subject=Book%20a%20call"
             data-testid="band-book-call"
-            className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest font-semibold transition-transform active:scale-95"
+            className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest font-semibold transition-[transform,filter] hover:scale-[1.02] hover:brightness-110 active:scale-95"
             style={{ background: "var(--color-primary)", color: "oklch(18% 0.02 155)" }}
           >
             Book a call
@@ -22,7 +22,7 @@ export default function ConversionBand() {
           <a
             href="mailto:hello@fleetintel.africa?subject=Request%20a%20demo"
             data-testid="band-demo"
-            className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest border transition-transform active:scale-95"
+            className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest border transition-[transform,border-color] hover:scale-[1.02] hover:[border-color:var(--color-primary)] active:scale-95"
             style={{ borderColor: "var(--color-border)" }}
           >
             Request a demo

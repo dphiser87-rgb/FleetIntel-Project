@@ -41,7 +41,7 @@ export default function Features() {
           {FEATURES.map((f, i) => (
             <Reveal key={f.name} delayMs={(i % 3) * 100}>
               <div
-                className="h-full rounded-xl border p-6"
+                className="h-full rounded-xl border p-6 transition-colors duration-300 hover:[border-color:var(--color-primary)]"
                 style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
                 data-testid={`feature-${f.name}`}
               >

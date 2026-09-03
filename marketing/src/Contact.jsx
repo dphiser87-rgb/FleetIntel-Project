@@ -24,7 +24,7 @@ export default function Contact() {
             <a
               href="mailto:hello@fleetintel.africa"
               onClick={() => trackEvent("contact_email_click")}
-              className="underline"
+              className="underline opacity-90 hover:opacity-100 transition-opacity"
               style={{ color: "var(--color-primary)" }}
             >
               hello@fleetintel.africa
@@ -37,7 +37,7 @@ export default function Contact() {
               href="mailto:hello@fleetintel.africa?subject=Book%20a%20call"
               data-testid="contact-book-call"
               onClick={() => trackEvent("book_call_click", { source: "contact_page" })}
-              className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest font-semibold transition-transform active:scale-95"
+              className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest font-semibold transition-[transform,filter] hover:scale-[1.02] hover:brightness-110 active:scale-95"
               style={{ background: "var(--color-primary)", color: "oklch(18% 0.02 155)" }}
             >
               Book a call
@@ -46,7 +46,7 @@ export default function Contact() {
               href="mailto:hello@fleetintel.africa?subject=Request%20a%20demo"
               data-testid="contact-demo"
               onClick={() => trackEvent("request_demo_click", { source: "contact_page" })}
-              className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest border transition-transform active:scale-95"
+              className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest border transition-[transform,border-color] hover:scale-[1.02] hover:[border-color:var(--color-primary)] active:scale-95"
               style={{ borderColor: "var(--color-border)" }}
             >
               Request a demo

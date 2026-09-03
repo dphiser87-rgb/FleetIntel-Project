@@ -32,7 +32,9 @@ export function useParallax(strength = 0.15) {
   const ref = useRef(null);
 
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    // Touch devices excluded too, not just reduced-motion: parallax tied to scroll position fights
+    // touch-scroll momentum/rubber-banding and reads as janky rather than premium on a phone.
+    if (window.matchMedia("(prefers-reduced-motion: reduce), (pointer: coarse)").matches) return;
     const el = ref.current;
     if (!el) return;
     let ticking = false;

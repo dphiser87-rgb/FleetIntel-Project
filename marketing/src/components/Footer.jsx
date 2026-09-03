@@ -19,12 +19,12 @@ export default function Footer() {
         </div>
 
         <div className="flex flex-wrap gap-x-10 gap-y-4">
-          <a href="/#how-it-works" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>How it works</a>
-          <a href="/#features" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Features</a>
-          <a href="/#why" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Why FleetIntel</a>
-          <a href="/contact" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Contact</a>
-          <a href={`${APP_URL}/login`} className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Login</a>
-          <a href="mailto:hello@fleetintel.africa" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>hello@fleetintel.africa</a>
+          <a href="/#how-it-works" className="text-sm opacity-70 hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>How it works</a>
+          <a href="/#features" className="text-sm opacity-70 hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Features</a>
+          <a href="/#why" className="text-sm opacity-70 hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Why FleetIntel</a>
+          <a href="/contact" className="text-sm opacity-70 hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Contact</a>
+          <a href={`${APP_URL}/login`} className="text-sm opacity-70 hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Login</a>
+          <a href="mailto:hello@fleetintel.africa" className="text-sm opacity-70 hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>hello@fleetintel.africa</a>
         </div>
       </div>
       <div className="border-t" style={{ borderColor: "var(--color-border)" }}>

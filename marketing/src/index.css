@@ -29,6 +29,13 @@
     font-family: var(--font-display);
     letter-spacing: -0.02em;
   }
+  /* Explicit rather than relying on the browser default: an unstyled default ring can read as
+     low-contrast against this near-black background depending on browser/OS. :focus-visible only
+     (not plain :focus) so it shows for keyboard nav without also outlining every mouse click. */
+  a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
 }
 
 @layer utilities {
@@ -73,6 +80,11 @@
   backface-visibility: hidden;
   perspective: 1000px;
 }
+
+/* Film grain was tried here as part of a polish pass (static SVG noise overlay, no motion) and then
+   deliberately removed after a side-by-side look -- the site already reads as specific and real
+   (actual product screenshots, plain copy) without it, and restraint calls for cutting an effect
+   that isn't earning its place rather than keeping it because it was built. */
 
 html { scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) {
