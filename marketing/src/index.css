@@ -1,29 +1,26 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@700;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
 @import "tailwindcss";
 
-/* Mirrors the real tokens shipped in frontend/src/index.css (dark, sharp-cornered, green accent) --
-   NOT the aspirational light/blue theme documented in design_guidelines.json/CLAUDE.md, which was
-   never actually shipped. Kept as a static copy since this is a fully separate deploy from frontend/. */
+/* Design B ("Night Ops") -- see design.md. Green-tinted charcoal, not flat black; rounded corners,
+   not sharp; same font family choices as the app for continuity, different weight/usage. */
 @theme {
-  --color-background: #080809;
-  --color-surface: #121214;
-  --color-border: #27272a;
-  --color-primary: #34c759;
-  --color-primary-foreground: #080809;
-  --color-foreground: #ffffff;
-  --color-muted: #a1a1a6;
+  --color-bg: oklch(18% 0.02 155);
+  --color-surface: oklch(22% 0.02 155);
+  --color-ink: oklch(96% 0.01 155);
+  --color-primary: oklch(70% 0.18 150);
+  --color-alert: oklch(60% 0.20 25);
+  --color-border: oklch(30% 0.02 155);
+  --color-muted: oklch(70% 0.01 155);
 
   --font-display: 'Outfit', sans-serif;
   --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
-
-  --radius-sharp: 0.125rem;
 }
 
 @layer base {
   html, body {
-    background-color: var(--color-background);
-    color: var(--color-foreground);
+    background-color: var(--color-bg);
+    color: var(--color-ink);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
   }
@@ -41,16 +38,8 @@
     letter-spacing: 0.2em;
     color: var(--color-muted);
   }
-  .noise-bg {
-    background-image:
-      radial-gradient(1200px 500px at 90% -10%, rgba(255, 59, 48, 0.09), transparent 60%),
-      radial-gradient(900px 500px at -10% 110%, rgba(52, 199, 89, 0.05), transparent 60%);
-  }
 }
 
-::selection { background-color: rgba(52, 199, 89, 0.35); color: white; }
-
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: #0b0b0d; }
-::-webkit-scrollbar-thumb { background: #27272a; border: 2px solid #0b0b0d; }
-::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
