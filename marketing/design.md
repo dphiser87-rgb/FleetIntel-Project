@@ -12,7 +12,7 @@ scattered vehicle costs (fuel, maintenance, downtime, parts) into a single trust
 and its architecture is open enough to plug in an existing telematics provider (fuel, kilometers,
 driver assignment) rather than locking a customer into proprietary hardware.
 
-**Thesis line**: "See exactly what every vehicle costs you — before it becomes a problem."
+**Thesis line**: "See exactly what every vehicle costs you. Before it becomes a problem."
 
 Built in Africa, for African fleet operators — a specialization to lead with, not a boundary. Copy
 should read as "purpose-built for African fleet operations," never "Africa-only," so the story extends
@@ -83,11 +83,19 @@ stat callouts, a sticky top nav with a filled-pill Login button.
 
 ## Copy rules
 
-- Real content only — no fabricated testimonials, customer counts, or years-in-business.
-- Telematics is a capability/architecture claim ("open API — connect your existing telematics
+- Real content only, no fabricated testimonials, customer counts, or years in business.
+- Telematics is a capability/architecture claim ("open API, connect your existing telematics
   provider"), never phrased as a live, pre-built one-click integration.
 - Every feature claim must map to something actually shipped in the product.
 - "Purpose-built for Africa," not "Africa-only."
+- No em dashes, anywhere. Use a period, a colon, or a comma instead.
+- Sentence case everywhere except the mono/eyebrow utility (which stays uppercase by design).
+- Headlines short. Captions three to five words, one accented word each.
+- Specific beats generic. A concrete, checkable claim beats an adjective every time.
+- Every claim falsifiable. No "luxury," "premium," "experience," "journey."
+- No feature-list clutter, no jargon for its own sake.
+- No heading that just restates the section label above it.
+- Voice: plain, dry, a little understated. The product does the talking, not the adjectives.
 
 ## Assets plan
 

@@ -8,7 +8,7 @@ export default function ConversionBand() {
     <section className="border-b" style={{ borderColor: "var(--color-border)" }}>
       <Reveal className="max-w-6xl mx-auto px-6 py-20 text-center">
         <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight mb-8">
-          <span className="placeholder-copy">[placeholder — closing conversion headline]</span>
+          See your fleet's real costs. Book a call.
         </h2>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <a
