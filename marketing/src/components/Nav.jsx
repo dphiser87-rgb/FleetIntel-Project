@@ -9,7 +9,7 @@ export default function Nav() {
       style={{ background: "color-mix(in oklab, var(--color-bg) 80%, transparent)", borderColor: "var(--color-border)" }}
     >
       <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-        <a href="#" className="flex items-center gap-2.5">
+        <a href="/" className="flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-md flex items-center justify-center shrink-0" style={{ background: "var(--color-primary)" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <path d="M3 17l6-6 4 4 8-8" stroke="oklch(18% 0.02 155)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
@@ -28,9 +28,10 @@ export default function Nav() {
         </a>
 
         <nav className="hidden md:flex items-center gap-8">
-          <a href="#how-it-works" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>How it works</a>
-          <a href="#features" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Features</a>
-          <a href="#why" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Why FleetIntel</a>
+          <a href="/#how-it-works" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>How it works</a>
+          <a href="/#features" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Features</a>
+          <a href="/#why" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Why FleetIntel</a>
+          <a href="/contact" className="text-sm hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Contact</a>
         </nav>
 
         <div className="flex items-center gap-3">
