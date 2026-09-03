@@ -83,26 +83,35 @@
   only ever ran inside Emergent's own hosting pods, so it (and the three scheduled emails it drove)
   had already gone silently inert since the move to Vercel — confirmed via `WEBHOOK_CRON_SECRET`
   being unset in production (the cron endpoints were 401-ing unconditionally, cron or manual). Fixed:
-  `WEBHOOK_CRON_SECRET`/`CRON_SECRET` set in Vercel prod env; `/api/cron/weekly-digest` and a new
-  consolidated `/api/cron/daily-tick` (handles overdue-checklists + the health-digest due-check, see
-  below) wired into `vercel.json`'s `crons` array at the original schedule times (weekly-digest
-  Mon 13:00 UTC, daily tick 07:00 UTC) — 2 total jobs, fits Vercel Hobby's cap.
-- **Configurable health-digest frequency** (closes the P2 item below, health_digest only —
-  weekly_digest/overdue_checklists stay on their fixed schedules): `notification_prefs` gained
-  `health_digest_frequency` (daily/weekly/monthly/quarterly, default weekly) and
-  `health_digest_last_sent_at`; `_health_digest_due()` compares them each daily tick instead of a
-  fixed schedule. Picker added to Settings.jsx's existing notification-preferences card, next to the
-  health-digest toggle.
-- OCR (`/api/ocr`, camera license-plate extraction) confirmed non-functional in production: needs
-  both the `emergentintegrations` package (not on public PyPI, Emergent-hosted-platform-only) and an
-  `EMERGENT_LLM_KEY` env var, neither present on Vercel. Left as-is pending a decision on replacing it
-  with a directly-integrated LLM provider — not done in this pass.
+  `WEBHOOK_CRON_SECRET`/`CRON_SECRET` set in Vercel prod env; a single `/api/cron/daily-tick`
+  (07:00 UTC) now drives all three digests via the due-check below. `/api/cron/weekly-digest` and
+  `/api/cron/overdue-checklists` stay as separate endpoints for manual/testing use (same due-check
+  logic) but nothing schedules them directly anymore -- 1 total Vercel cron job, well under Hobby's
+  2-job cap.
+- **Configurable digest frequency, all three digests** (closes the P2 item below in full): generalized
+  from the health-digest-only version. `notification_prefs` gained `<digest>_frequency`
+  (daily/weekly/monthly/quarterly) and `<digest>_last_sent_at` per digest
+  (weekly_digest/health_digest default weekly, overdue_checklists defaults daily, matching each
+  digest's original fixed schedule); shared `_digest_due()`/`_mark_digest_evaluated()` helpers
+  evaluate all three every daily tick instead of each running on its own fixed schedule. Note: this
+  means weekly-cadence digests now fire ~7 days after each workspace's own last send rather than
+  always on a calendar Monday -- timing drifts per workspace instead of being globally synchronized,
+  which is expected given the point was making cadence configurable per workspace. Picker (all four
+  frequencies) added to Settings.jsx's notification-preferences card for all three digests, not just
+  health-digest.
+- **OCR migrated to Anthropic (Claude Haiku 4.5)**: replaced `emergentintegrations`'s OpenAI-via-proxy
+  call with a direct `anthropic.AsyncAnthropic` vision call (same plate/odometer prompts, same
+  response parsing). `ANTHROPIC_API_KEY` env var (not yet set in Vercel prod as of this writing --
+  pending the user providing a real key; endpoint 503s gracefully until then, same pattern as
+  before). `anthropic==1.3.0` added to requirements.txt. Verified request-shape correctness against
+  the real API using a fake key (got a clean 401 AuthenticationError, not a shape/validation error).
 
 ## Backlog / Next (P1/P2)
 - P1: Refactor server.py (~2020 lines) into routers/ (auth, fleet, incidents, analytics, prefs, digests)
 - P2: Aggregate incidents enrichment via `$lookup` once fleet scales past a few hundred rows
 - P2: Persist daily health snapshots so trend survives event deletions
-- P2: Configurable digest frequency + recipient list per workspace (health_digest frequency done
-  2026-09-03; weekly_digest/overdue_checklists frequency and per-digest recipient lists still open)
-- P1: Replace OCR's Emergent-platform LLM dependency with a directly-integrated provider, or remove
+- P2: Per-digest recipient lists (still just the workspace owner for all three) -- configurable
+  frequency itself is done as of 2026-09-03, see above
+- P0: Set ANTHROPIC_API_KEY in Vercel prod once the user provides a real key -- OCR code is done but
+  inert without it
   the feature if not worth the replacement cost
