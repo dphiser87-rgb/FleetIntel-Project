@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { CostSpikeCanvas } from "./components/CostSpikeCanvas";
+import { HorizontalNarrative } from "./components/HorizontalNarrative";
 
 // Custom luxury easing curve (very slow, smooth deceleration)
 const luxuryEase = [0.16, 1, 0.3, 1];
@@ -11,7 +12,7 @@ const luxuryEase = [0.16, 1, 0.3, 1];
 export default function LuxuryScrollDemo() {
   return (
     <div
-      className="min-h-[300vh] px-6 md:px-24 font-sans select-none overflow-x-hidden"
+      className="min-h-[300vh] px-6 md:px-24 font-sans select-none"
       style={{ background: "var(--color-bg)", color: "var(--color-ink)" }}
     >
       <div className="fixed top-6 left-6 z-50 eyebrow" style={{ color: "var(--color-muted)" }}>
@@ -107,6 +108,9 @@ export default function LuxuryScrollDemo() {
 
       {/* SECTION 4: Scroll-Linked Cost-Spike Canvas (useScroll + useTransform) */}
       <CostSpikeCanvas />
+
+      {/* SECTION 5: Horizontal Scroll Narrative (vertical scroll -> horizontal translation) */}
+      <HorizontalNarrative />
     </div>
   );
 }
