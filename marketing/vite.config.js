@@ -11,4 +11,23 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  // Vite 8 defaults to its newer oxc/rolldown minifier, which doesn't expose a drop-console-style
+  // option yet, and esbuild isn't installed as a package here either -- terser is the one that
+  // actually supports this cleanly, so it's installed as a devDependency and pinned explicitly.
+  build: {
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true,
+      },
+    },
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/js/[name]-[hash].js',
+        chunkFileNames: 'assets/js/[name]-[hash].js',
+        assetFileNames: 'assets/[ext]/[name]-[hash].[ext]',
+      },
+    },
+  },
 })
