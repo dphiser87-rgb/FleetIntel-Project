@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { CostSpikeCanvas } from "@/components/CostSpikeCanvas";
 import { HorizontalNarrative } from "@/components/HorizontalNarrative";
 import { ScrollVisibilityGate } from "@/components/ScrollVisibilityGate";
+import { AccessibilitySkipBar } from "@/components/AccessibilitySkipBar";
 
 // Custom luxury easing curve (very slow, smooth deceleration)
 const luxuryEase = [0.16, 1, 0.3, 1];
@@ -16,6 +17,8 @@ export default function LuxuryScrollDemo() {
       className="demo-theme min-h-[300vh] px-6 md:px-24 font-sans select-none"
       style={{ background: "var(--color-bg)", color: "var(--color-ink)" }}
     >
+      <AccessibilitySkipBar />
+
       <div className="fixed top-6 left-6 z-50 eyebrow" style={{ color: "var(--color-muted)" }}>
         Motion demo — <a href="/" className="underline" style={{ color: "var(--color-primary)" }}>back to site</a>
       </div>
@@ -120,6 +123,15 @@ export default function LuxuryScrollDemo() {
       <ScrollVisibilityGate estimatedHeight="300vh">
         <HorizontalNarrative />
       </ScrollVisibilityGate>
+
+      {/* Skip target: lands here, past every scroll-linked/pinned section above. tabIndex={-1}
+          so it reliably receives focus on activation (some browsers otherwise just scroll without
+          moving focus, which breaks the skip link's purpose for keyboard users). */}
+      <div id="primary-content" tabIndex={-1} className="py-24 text-center">
+        <a href="/" className="underline text-sm" style={{ color: "var(--color-primary)" }}>
+          Back to site
+        </a>
+      </div>
     </div>
   );
 }

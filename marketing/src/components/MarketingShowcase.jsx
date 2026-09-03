@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, useScroll, useTransform, AnimatePresence } from "framer-motion";
+import { AccessibilitySkipBar } from "@/components/AccessibilitySkipBar";
 
 // Motion-style comparison demo only (mounted at /demo2 by main.jsx) -- a second alternative to
 // /demo's HorizontalNarrative, not wired into the shipped site. Adapted from a user-provided TSX
@@ -53,6 +54,8 @@ export default function MarketingShowcase() {
 
   return (
     <div className="demo-theme">
+      <AccessibilitySkipBar />
+
       <AnimatePresence>
         {!isReady && (
           <motion.div
@@ -126,6 +129,15 @@ export default function MarketingShowcase() {
             </div>
           </div>
         )}
+
+        {/* Skip target: lands here, past the horizontal panels above. tabIndex={-1} so it
+            reliably receives focus on activation (some browsers otherwise just scroll without
+            moving focus, which breaks the skip link's purpose for keyboard users). */}
+        <div id="primary-content" tabIndex={-1} className="py-24 text-center">
+          <a href="/" className="underline text-sm" style={{ color: "var(--color-primary)" }}>
+            Back to site
+          </a>
+        </div>
       </div>
     </div>
   );
