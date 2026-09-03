@@ -1,10 +1,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@700;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
 @import "tailwindcss";
 
-/* Design B ("Night Ops") -- see design.md. Green-tinted charcoal, not flat black; rounded corners,
-   not sharp; same font family choices as the app for continuity, different weight/usage. */
+/* Design B ("Night Ops") -- see design.md. Background now matches Design A's exact background
+   (#080809, per explicit user request) -- everything else (surface, ink, primary, alert, border,
+   rounded corners, motion, fonts) is unchanged from the original Night Ops direction. */
 @theme {
-  --color-bg: oklch(18% 0.02 155);
+  --color-bg: #080809;
   --color-surface: oklch(22% 0.02 155);
   --color-ink: oklch(96% 0.01 155);
   --color-primary: oklch(70% 0.18 150);

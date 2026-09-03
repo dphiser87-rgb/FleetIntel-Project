@@ -27,12 +27,13 @@ by real screenshots of the actual dashboard and platform (not illustrations).
 
 ## Palette (OKLCH, named roles)
 
-Same DNA as the operator app (dark, green-forward) but warmer — a green-tinted charcoal instead of
-flat black, so it feels related to the product without duplicating Design A.
+Same DNA as the operator app (dark, green-forward). **Updated**: `bg` now matches Design A's exact
+background (`#080809`) per explicit request — everything else in the palette is unchanged from the
+original Night Ops direction (surface/ink/primary/alert/border/muted stay green-tinted).
 
-| Role | OKLCH | Use |
+| Role | Value | Use |
 |---|---|---|
-| `bg` | `oklch(18% 0.02 155)` | Page background — deep green-charcoal, never flat black |
+| `bg` | `#080809` | Page background — matches Design A exactly |
 | `surface` | `oklch(22% 0.02 155)` | Cards, raised panels |
 | `ink` | `oklch(96% 0.01 155)` | Primary text — off-white, green-tinted, never pure white |
 | `primary` | `oklch(70% 0.18 150)` | Brand green — CTAs, links, signature accent |
@@ -40,7 +41,7 @@ flat black, so it feels related to the product without duplicating Design A.
 | `border` | `oklch(30% 0.02 155)` | Dividers, card outlines |
 | `muted` | `oklch(70% 0.01 155)` | Secondary text |
 
-Rule: every neutral is tinted toward the green brand hue (155°) — no pure `#000`/`#fff` anywhere.
+Rule: every neutral other than `bg` is tinted toward the green brand hue (155°).
 `primary` is the one saturated accent; `alert` is a second, deliberately rare accent reserved for
 incident/cost-spike storytelling (the executive investigating a spike, the insurance-share flow) —
 never used for routine UI chrome.
