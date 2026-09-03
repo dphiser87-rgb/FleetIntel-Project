@@ -48,6 +48,18 @@
   }
 }
 
+/* /demo comparison page only (LuxuryScrollDemo + its child sections) -- scoped override of the
+   same --color-* custom properties, so the real site above is completely untouched. User-supplied
+   palette: saturated operational green accent, off-white text, low-contrast muted green-gray, and
+   orange (not red) for critical incidents. */
+.demo-theme {
+  --color-bg: #080809;
+  --color-primary: #00ff66;
+  --color-ink: #f4f6f4;
+  --color-muted: #67776b;
+  --color-alert: #ea580c;
+}
+
 html { scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

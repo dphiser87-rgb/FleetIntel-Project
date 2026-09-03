@@ -12,7 +12,7 @@ const luxuryEase = [0.16, 1, 0.3, 1];
 export default function LuxuryScrollDemo() {
   return (
     <div
-      className="min-h-[300vh] px-6 md:px-24 font-sans select-none"
+      className="demo-theme min-h-[300vh] px-6 md:px-24 font-sans select-none"
       style={{ background: "var(--color-bg)", color: "var(--color-ink)" }}
     >
       <div className="fixed top-6 left-6 z-50 eyebrow" style={{ color: "var(--color-muted)" }}>

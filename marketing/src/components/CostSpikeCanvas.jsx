@@ -9,7 +9,7 @@ import { useRef } from "react";
 // here too, even in a motion demo.
 //
 // useTransform's color interpolation needs a real parseable color string, not a CSS var(), so the
-// alert-red glow below uses its RGB triplet (222, 59, 61 -- the real oklch(60% 0.20 25) converted).
+// alert glow below uses its RGB triplet (234, 88, 12 -- the demo-theme's #ea580c incident orange).
 export function CostSpikeCanvas() {
   const containerRef = useRef(null);
 
@@ -24,7 +24,7 @@ export function CostSpikeCanvas() {
   const borderGlow = useTransform(
     scrollYProgress,
     [0.3, 0.5, 0.7, 0.9],
-    ["rgba(222, 59, 61, 0)", "rgba(222, 59, 61, 0.4)", "rgba(222, 59, 61, 0.4)", "rgba(222, 59, 61, 0)"]
+    ["rgba(234, 88, 12, 0)", "rgba(234, 88, 12, 0.4)", "rgba(234, 88, 12, 0.4)", "rgba(234, 88, 12, 0)"]
   );
 
   const textBlur = useTransform(scrollYProgress, [0.3, 0.5], ["blur(8px)", "blur(0px)"]);
