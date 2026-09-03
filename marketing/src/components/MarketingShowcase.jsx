@@ -18,7 +18,7 @@ const PANELS = [
   { tag: "Control", title: "An approval chain that fits your team", desc: "Costing moves through workshop, operations, and finance in sequence. No dedicated workshop manager? Reassign who approves it without changing the workflow." },
 ];
 
-export default function MarketingShowcase() {
+export default function MarketingShowcase({ withSkipNav = true } = {}) {
   const [isReady, setIsReady] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const targetRef = useRef(null);
@@ -54,7 +54,7 @@ export default function MarketingShowcase() {
 
   return (
     <div className="demo-theme">
-      <AccessibilitySkipBar />
+      {withSkipNav && <AccessibilitySkipBar />}
 
       <AnimatePresence>
         {!isReady && (
@@ -130,14 +130,16 @@ export default function MarketingShowcase() {
           </div>
         )}
 
-        {/* Skip target: lands here, past the horizontal panels above. tabIndex={-1} so it
-            reliably receives focus on activation (some browsers otherwise just scroll without
-            moving focus, which breaks the skip link's purpose for keyboard users). */}
-        <div id="primary-content" tabIndex={-1} className="py-24 text-center">
-          <a href="/" className="underline text-sm" style={{ color: "var(--color-primary)" }}>
-            Back to site
-          </a>
-        </div>
+        {withSkipNav && (
+          // Skip target: lands here, past the horizontal panels above. tabIndex={-1} so it
+          // reliably receives focus on activation (some browsers otherwise just scroll without
+          // moving focus, which breaks the skip link's purpose for keyboard users).
+          <div id="primary-content" tabIndex={-1} className="py-24 text-center">
+            <a href="/" className="underline text-sm" style={{ color: "var(--color-primary)" }}>
+              Back to site
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );
