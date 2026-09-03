@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
-import { CostSpikeCanvas } from "./components/CostSpikeCanvas";
-import { HorizontalNarrative } from "./components/HorizontalNarrative";
+import { CostSpikeCanvas } from "@/components/CostSpikeCanvas";
+import { HorizontalNarrative } from "@/components/HorizontalNarrative";
 
 // Custom luxury easing curve (very slow, smooth deceleration)
 const luxuryEase = [0.16, 1, 0.3, 1];
