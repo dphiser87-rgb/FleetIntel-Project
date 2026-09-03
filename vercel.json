@@ -8,5 +8,9 @@
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api" },
     { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/cron/weekly-digest", "schedule": "0 13 * * 1" },
+    { "path": "/api/cron/daily-tick", "schedule": "0 7 * * *" }
   ]
 }

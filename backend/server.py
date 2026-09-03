@@ -4860,23 +4860,25 @@ async def _send_workspace_digest(workspace_id: str):
     )
     return await send_email(to=owner_email, subject=subject, html=html)
 
-@api.post("/cron/weekly-digest")
+async def _run_weekly_digest():
+    workspaces = await fetch_all("select id, notification_prefs from workspaces")
+    for ws in workspaces:
+        if (ws.get("notification_prefs") or {}).get("weekly_digest") is False:
+            continue
+        try:
+            await _send_workspace_digest(ws["id"])
+        except Exception as e:
+            logger.error(f"digest for {ws.get('id')} failed: {e}")
+
+@api.api_route("/cron/weekly-digest", methods=["GET", "POST"])
 async def cron_weekly_digest(request: Request):
-    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work. GET is for
+    # Vercel Cron Jobs (they only invoke via GET); POST remains for manual/testing use.
     auth = request.headers.get("Authorization", "")
     expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
     if not expected or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    async def _run():
-        workspaces = await fetch_all("select id, notification_prefs from workspaces")
-        for ws in workspaces:
-            if (ws.get("notification_prefs") or {}).get("weekly_digest") is False:
-                continue
-            try:
-                await _send_workspace_digest(ws["id"])
-            except Exception as e:
-                logger.error(f"digest for {ws.get('id')} failed: {e}")
-    asyncio.create_task(_run())
+    asyncio.create_task(_run_weekly_digest())
     return {"ok": True, "queued": True}
 
 @api.post("/workspace/send-digest")
@@ -4926,30 +4928,69 @@ async def _send_health_digest(workspace_id: str) -> Optional[str]:
     )
     return await send_email(to=owner["email"], subject=subject, html=html)
 
-@api.post("/cron/health-digest")
+@api.api_route("/cron/health-digest", methods=["GET", "POST"])
 async def cron_health_digest(request: Request):
+    """Manual/testing entry point -- the automated daily tick (see /cron/daily-tick) is what
+    actually drives production sends now, since health digest frequency is per-workspace
+    configurable rather than fixed. Same due-check logic either way."""
     auth = request.headers.get("Authorization", "")
     expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
     if not expected or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    async def _run():
-        workspaces = await fetch_all("select id, notification_prefs from workspaces")
-        for ws in workspaces:
-            if (ws.get("notification_prefs") or {}).get("health_digest") is False:
-                continue
-            try:
-                await _send_health_digest(ws["id"])
-            except Exception as e:
-                logger.error(f"health digest for {ws.get('id')} failed: {e}")
-    asyncio.create_task(_run())
+    asyncio.create_task(_run_health_digest_due_check())
     return {"ok": True, "queued": True}
 
 @api.post("/workspace/send-health-digest")
 async def send_health_digest_now(user: dict = Depends(get_current_user)):
     """Manual trigger of the health digest for this workspace."""
     email_id = await _send_health_digest(user["workspace_id"])
+    if email_id:
+        await _mark_health_digest_sent(user["workspace_id"])
     await log_event(user, "health_digest.sent", "workspace", user["workspace_id"], {"email_id": email_id})
     return {"sent": bool(email_id), "email_id": email_id}
+
+# 'each_trip' (used by checklist scheduling's FREQUENCY_DAYS below) doesn't apply here — the health
+# digest has no usage-based cadence, only calendar ones, so this is its own mapping.
+HEALTH_DIGEST_FREQUENCY_DAYS = {"daily": 1, "weekly": 7, "monthly": 30, "quarterly": 91}
+
+def _health_digest_due(prefs: dict) -> bool:
+    """Whether a workspace's fleet health digest is due, given its configured frequency and the
+    last time one was sent. Defaults to weekly (matching the digest's original fixed schedule) when
+    no frequency has been chosen yet."""
+    prefs = prefs or {}
+    if prefs.get("health_digest") is False:
+        return False
+    last_sent = prefs.get("health_digest_last_sent_at")
+    if not last_sent:
+        return True
+    freq = prefs.get("health_digest_frequency", "weekly")
+    interval_days = HEALTH_DIGEST_FREQUENCY_DAYS.get(freq, 7)
+    try:
+        last_dt = datetime.fromisoformat(last_sent)
+    except (TypeError, ValueError):
+        return True
+    return (datetime.now(timezone.utc) - last_dt) >= timedelta(days=interval_days)
+
+async def _mark_health_digest_sent(workspace_id: str):
+    await execute(
+        "update workspaces set notification_prefs = coalesce(notification_prefs, '{}'::jsonb) || :p ::jsonb where id = :id",
+        p=json_dumps({"health_digest_last_sent_at": datetime.now(timezone.utc).isoformat()}), id=workspace_id,
+    )
+
+async def _run_health_digest_due_check():
+    """Sends the fleet health digest to every workspace for which it's currently due (per-workspace
+    configurable frequency), not on a fixed schedule -- called from the daily tick, see
+    /cron/daily-tick."""
+    workspaces = await fetch_all("select id, notification_prefs from workspaces")
+    for ws in workspaces:
+        if not _health_digest_due(ws.get("notification_prefs")):
+            continue
+        try:
+            email_id = await _send_health_digest(ws["id"])
+            if email_id:
+                await _mark_health_digest_sent(ws["id"])
+        except Exception as e:
+            logger.error(f"health digest for {ws.get('id')} failed: {e}")
 
 FREQUENCY_DAYS = {"daily": 1, "weekly": 7, "monthly": 30}  # 'each_trip' is usage-based, not time-based — excluded
 
@@ -5120,22 +5161,37 @@ async def _send_overdue_checklists_digest(workspace_id: str) -> Optional[str]:
     )
     return await send_email(to=owner["email"], subject=subject, html=html)
 
-@api.post("/cron/overdue-checklists")
+async def _run_overdue_checklists():
+    workspaces = await fetch_all("select id, notification_prefs from workspaces")
+    for ws in workspaces:
+        if (ws.get("notification_prefs") or {}).get("overdue_checklists") is False:
+            continue
+        try:
+            await _send_overdue_checklists_digest(ws["id"])
+        except Exception as e:
+            logger.error(f"overdue-checklists digest for {ws.get('id')} failed: {e}")
+
+@api.api_route("/cron/overdue-checklists", methods=["GET", "POST"])
 async def cron_overdue_checklists(request: Request):
     auth = request.headers.get("Authorization", "")
     expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
     if not expected or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    async def _run():
-        workspaces = await fetch_all("select id, notification_prefs from workspaces")
-        for ws in workspaces:
-            if (ws.get("notification_prefs") or {}).get("overdue_checklists") is False:
-                continue
-            try:
-                await _send_overdue_checklists_digest(ws["id"])
-            except Exception as e:
-                logger.error(f"overdue-checklists digest for {ws.get('id')} failed: {e}")
-    asyncio.create_task(_run())
+    asyncio.create_task(_run_overdue_checklists())
+    return {"ok": True, "queued": True}
+
+@api.api_route("/cron/daily-tick", methods=["GET", "POST"])
+async def cron_daily_tick(request: Request):
+    """The one daily-scheduled Vercel Cron entry point (see vercel.json) -- runs both
+    overdue-checklists (unconditional daily) and the fleet health digest due-check (per-workspace
+    configurable frequency). Consolidated into one endpoint to fit within Vercel Hobby's 2
+    cron-job limit alongside the separate weekly /cron/weekly-digest entry."""
+    auth = request.headers.get("Authorization", "")
+    expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    if not expected or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    asyncio.create_task(_run_overdue_checklists())
+    asyncio.create_task(_run_health_digest_due_check())
     return {"ok": True, "queued": True}
 
 FLEET_MANAGER_ROLES = ("manager", "operations_manager", "admin")

@@ -71,10 +71,38 @@
 - **Vehicle Health Trend**: `_score_vehicle` refactored to accept `as_of`; new endpoint `GET /api/analytics/vehicle/{vid}/health-trend?days=30` backfills daily score from history. VehicleDetail renders recharts LineChart with ReferenceLines at 80/55 and current-score readout.
 - **Incident Photos Lightbox**: `/incidents` rows show thumbnail strip (4 max + "+N" badge); full-screen viewer with next/prev buttons, ArrowLeft/Right keys, Esc to close, counter "N / M".
 - **Auto-Assign Driver**: Report-incident modal on VehicleDetail pre-selects the vehicle's currently-assigned driver and shows an "auto-filled from vehicle" hint; syncs when drivers load after modal opens.
-- **Health Alerts (weekly digest)**: `_send_health_digest` composes a Resend email of at-risk/watch vehicles with top 3 factors each; scheduled by `.emergent/crons.yml → fleet-health-digest`; manual trigger via `POST /api/workspace/send-health-digest`.
+- **Health Alerts (weekly digest)**: `_send_health_digest` composes a Resend email of at-risk/watch vehicles with top 3 factors each; manual trigger via `POST /api/workspace/send-health-digest`. (Scheduling mechanism superseded 2026-09-03 — see below.)
+
+## Implemented (2026-09-03 — Emergent platform migration cleanup)
+- Removed all remaining Emergent-platform branding/tooling: `frontend/public/index.html`'s title,
+  meta description, the preview-mode debug logger script, and the Emergent-hosted PostHog analytics
+  block (was sending real user session recordings to Emergent's own infra, not anything self-hosted);
+  `@emergentbase/visual-edits` dev tool (craco.config.js + package.json); `.emergent/` and
+  `test_result.md` (platform housekeeping, not app code).
+- **Cron scheduling migrated to Vercel Cron Jobs** (`vercel.json`): `.emergent/crons.yml`'s scheduler
+  only ever ran inside Emergent's own hosting pods, so it (and the three scheduled emails it drove)
+  had already gone silently inert since the move to Vercel — confirmed via `WEBHOOK_CRON_SECRET`
+  being unset in production (the cron endpoints were 401-ing unconditionally, cron or manual). Fixed:
+  `WEBHOOK_CRON_SECRET`/`CRON_SECRET` set in Vercel prod env; `/api/cron/weekly-digest` and a new
+  consolidated `/api/cron/daily-tick` (handles overdue-checklists + the health-digest due-check, see
+  below) wired into `vercel.json`'s `crons` array at the original schedule times (weekly-digest
+  Mon 13:00 UTC, daily tick 07:00 UTC) — 2 total jobs, fits Vercel Hobby's cap.
+- **Configurable health-digest frequency** (closes the P2 item below, health_digest only —
+  weekly_digest/overdue_checklists stay on their fixed schedules): `notification_prefs` gained
+  `health_digest_frequency` (daily/weekly/monthly/quarterly, default weekly) and
+  `health_digest_last_sent_at`; `_health_digest_due()` compares them each daily tick instead of a
+  fixed schedule. Picker added to Settings.jsx's existing notification-preferences card, next to the
+  health-digest toggle.
+- OCR (`/api/ocr`, camera license-plate extraction) confirmed non-functional in production: needs
+  both the `emergentintegrations` package (not on public PyPI, Emergent-hosted-platform-only) and an
+  `EMERGENT_LLM_KEY` env var, neither present on Vercel. Left as-is pending a decision on replacing it
+  with a directly-integrated LLM provider — not done in this pass.
 
 ## Backlog / Next (P1/P2)
 - P1: Refactor server.py (~2020 lines) into routers/ (auth, fleet, incidents, analytics, prefs, digests)
 - P2: Aggregate incidents enrichment via `$lookup` once fleet scales past a few hundred rows
 - P2: Persist daily health snapshots so trend survives event deletions
-- P2: Configurable digest frequency + recipient list per workspace
+- P2: Configurable digest frequency + recipient list per workspace (health_digest frequency done
+  2026-09-03; weekly_digest/overdue_checklists frequency and per-digest recipient lists still open)
+- P1: Replace OCR's Emergent-platform LLM dependency with a directly-integrated provider, or remove
+  the feature if not worth the replacement cost
