@@ -60,7 +60,7 @@ export default function Scenarios() {
 
   return (
     <section id="how-it-works" className="border-b" style={{ borderColor: "var(--color-border)" }}>
-      <div className="max-w-6xl mx-auto px-6 py-20 md:py-28">
+      <div className="px-6 md:px-12 lg:px-20 py-20 md:py-28">
         <Reveal>
           <div className="eyebrow mb-3">How it works</div>
           <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-16">
