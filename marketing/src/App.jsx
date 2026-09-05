@@ -3,6 +3,7 @@ import Nav from "./components/Nav";
 import Hero from "./components/Hero";
 import Industries from "./components/Industries";
 import WhyFleetIntel from "./components/WhyFleetIntel";
+import KpiDashboard from "./components/KpiDashboard";
 import Showcase from "./components/Showcase";
 import Scenarios from "./components/Scenarios";
 import Features from "./components/Features";
@@ -49,6 +50,7 @@ export default function App() {
         <ScrollPrompt />
         <Industries />
         <WhyFleetIntel />
+        <KpiDashboard />
         <Showcase />
         <Scenarios />
         <Features />

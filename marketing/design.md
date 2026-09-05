@@ -66,9 +66,12 @@ Sections separated by a full-bleed `border` line, not shadows. Rounded corners t
 to `rounded-xl`, roughly 8–16px) — a deliberate structural difference from Design A's sharp 2px corners.
 
 **Section order** (revised): Hero → Industries strip → Why FleetIntel (moved up from its original
-position, so the differentiation argument lands before feature detail) → Showcase (the Executive
+position, so the differentiation argument lands before feature detail) → Dashboard (the everyday
+Fleet Operations view, KPI-tile configurability, added 2026-09-05) → Showcase (the Executive
 Dashboard screenshot, full-visible, its own section — not the hero background) → How it works
-(pinned scrollytelling) → Features → Conversion band → Footer.
+(pinned scrollytelling, whose third scenario drills back into the Executive Dashboard from Showcase
+— Dashboard/Showcase/Scenarios read as one escalation: everyday view, executive view, real
+investigation) → Features → Conversion band → Footer.
 
 **"How it works" is a pinned scrollytelling section on desktop**: the screenshot panel is
 `sticky top-24` on one side while the three scenario captions scroll past on the other, each caption
