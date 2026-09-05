@@ -40,7 +40,7 @@ export default function Hero() {
 
       <div className="relative max-w-6xl mx-auto px-6 py-20 md:py-32">
         <div
-          className={`max-w-xl transition-[opacity,transform] duration-700 ease-out ${
+          className={`max-w-xl transition-[opacity,translate] duration-700 ease-out ${
             mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           }`}
         >
