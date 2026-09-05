@@ -12,7 +12,7 @@ scattered vehicle costs (fuel, maintenance, downtime, parts) into a single trust
 and its architecture is open enough to plug in an existing telematics provider (fuel, kilometers,
 driver assignment) rather than locking a customer into proprietary hardware.
 
-**Thesis line**: "See exactly what every vehicle costs you. Before it becomes a problem."
+**Thesis line**: "See exactly what every vehicle costs you. Before it becomes a liability."
 
 **Motto** (footer, title case by design as a distinct tagline treatment, not body copy):
 "Your Fleet. Your Control. Your Savings."

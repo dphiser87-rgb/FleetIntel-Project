@@ -47,7 +47,7 @@ export default function Hero() {
           <div className="eyebrow mb-4">Fleet cost intelligence · Africa · Offline-first</div>
           <h1 className="font-display font-black text-4xl md:text-6xl leading-[1.02]">
             See exactly what every vehicle costs you.{" "}
-            <span style={{ color: "var(--color-primary)" }}>Before it becomes a problem.</span>
+            <span style={{ color: "var(--color-primary)" }}>Before it becomes a liability.</span>
           </h1>
           <p className="mt-6 text-lg leading-relaxed" style={{ color: "var(--color-muted)" }}>
             Fuel, maintenance, downtime, parts: FleetIntel turns scattered vehicle costs into one
