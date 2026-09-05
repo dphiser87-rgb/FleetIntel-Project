@@ -74,6 +74,9 @@ export default function Hero() {
               Request a demo
             </a>
           </div>
+          <p className="mt-4 text-xs" style={{ color: "var(--color-muted)" }}>
+            Works offline. Syncs the moment signal returns.
+          </p>
 
           {/* Mobile fallback: the graphic stacks below the text instead of bleeding behind it. */}
           <div className="md:hidden mt-10">
