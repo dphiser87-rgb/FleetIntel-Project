@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
-import { useParallax } from "../hooks/useReveal";
-import ImagePlaceholder from "./ImagePlaceholder";
+import DashboardMotionGraphic from "./DashboardMotionGraphic";
 import { trackEvent } from "@/utils/trackEvent";
 
+// Full-bleed hero background: chosen 2026-09-05 after comparing this against a boxed-panel
+// alternative at /hero-a and /hero-b. The background is DashboardMotionGraphic, a live-rendered
+// animation (KPI tiles counting up, gauges filling, a trend line drawing), not an actual video file
+// or a real screenshot -- see that component's own comment for why. This replaces the earlier boxed
+// real-screenshot treatment; the real screenshot itself is still used elsewhere (Showcase.jsx).
 export default function Hero() {
   const [mounted, setMounted] = useState(false);
-  const parallaxRef = useParallax(0.08);
 
   // Alive before the first scroll -- plays on mount, not gated behind an IntersectionObserver.
   useEffect(() => {
@@ -14,10 +17,30 @@ export default function Hero() {
   }, []);
 
   return (
-    <section className="border-b overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
-      <div className="max-w-6xl mx-auto px-6 py-20 md:py-28 grid md:grid-cols-2 gap-14 items-center">
+    <section className="relative border-b overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
+      {/* Desktop only: the background bleed needs real width to sit beside the text without
+          colliding with it. At full width on a phone it renders directly underneath the text --
+          confirmed broken during comparison (numbers/labels overlapping the headline). */}
+      <div
+        className={`hidden md:flex absolute inset-y-0 right-0 w-2/3 items-center pr-10 transition-opacity duration-700 ${mounted ? "opacity-100" : "opacity-0"}`}
+        aria-hidden="true"
+      >
+        <div className="w-full max-w-xl ml-auto">
+          <DashboardMotionGraphic />
+        </div>
+      </div>
+
+      {/* Scrim: solid at the text edge, fully transparent by the graphic's side, so the graphic still
+          reads clearly on its own half while the text stays legible over its own. Desktop only, same
+          reason as above -- on mobile there's no bleed underneath to scrim against. */}
+      <div
+        className="hidden md:block absolute inset-0"
+        style={{ background: "linear-gradient(to right, var(--color-bg) 0%, var(--color-bg) 38%, color-mix(in oklab, var(--color-bg) 55%, transparent) 60%, transparent 85%)" }}
+      />
+
+      <div className="relative max-w-6xl mx-auto px-6 py-20 md:py-32">
         <div
-          className={`transition-[opacity,transform] duration-700 ease-out ${
+          className={`max-w-xl transition-[opacity,transform] duration-700 ease-out ${
             mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           }`}
         >
@@ -51,19 +74,11 @@ export default function Hero() {
               Request a demo
             </a>
           </div>
-        </div>
 
-        <div
-          ref={parallaxRef}
-          className={`transition-[opacity,transform] duration-700 delay-150 ease-out ${
-            mounted ? "opacity-100" : "opacity-0"
-          }`}
-        >
-          <ImagePlaceholder
-            src="/assets/dashboard.png"
-            alt="FleetIntel's KPI dashboard, showing real cost, downtime, and fuel figures"
-            aspect="aspect-[4/3]"
-          />
+          {/* Mobile fallback: the graphic stacks below the text instead of bleeding behind it. */}
+          <div className="md:hidden mt-10">
+            <DashboardMotionGraphic />
+          </div>
         </div>
       </div>
     </section>

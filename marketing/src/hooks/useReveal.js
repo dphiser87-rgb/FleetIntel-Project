@@ -25,30 +25,3 @@ export function useReveal() {
 
   return [ref, visible];
 }
-
-// Lightweight scroll-tied parallax for the hero only (per design.md restraint: hero + reveals,
-// nothing more) -- a plain rAF-throttled scroll listener rather than a new dependency.
-export function useParallax(strength = 0.15) {
-  const ref = useRef(null);
-
-  useEffect(() => {
-    // Touch devices excluded too, not just reduced-motion: parallax tied to scroll position fights
-    // touch-scroll momentum/rubber-banding and reads as janky rather than premium on a phone.
-    if (window.matchMedia("(prefers-reduced-motion: reduce), (pointer: coarse)").matches) return;
-    const el = ref.current;
-    if (!el) return;
-    let ticking = false;
-    const onScroll = () => {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(() => {
-        el.style.transform = `translateY(${window.scrollY * strength}px)`;
-        ticking = false;
-      });
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [strength]);
-
-  return ref;
-}
