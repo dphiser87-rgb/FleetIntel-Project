@@ -7,7 +7,7 @@ const POINTS = [
   },
   {
     title: "Works where the signal doesn't",
-    body: "Inspections and job updates queue locally on a mechanic's phone the moment the network drops, and sync automatically the moment it's back. No lost checklists. No re-work.",
+    body: "Whether it's a mechanic, technician, or driver, inspections and job updates queue locally on their phone the moment the network drops, and sync automatically the moment it's back. No lost checklists. No re-work.",
   },
   {
     title: "Role-based, not role-flattened",
