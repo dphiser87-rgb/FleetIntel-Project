@@ -1,0 +1,86 @@
+import { useEffect, useState } from "react";
+import DashboardMotionGraphic from "./DashboardMotionGraphic";
+import { trackEvent } from "@/utils/trackEvent";
+
+// Comparison variant B (mounted at /hero-b): the actual Webfleet pattern -- the motion graphic fills
+// the hero as a background, text overlaid on a left-to-right scrim for legibility. This is the same
+// shape of treatment already tried once with a static image and explicitly rejected ("this is not
+// fully visible as I want") -- built again here, with real motion this time, specifically so that
+// difference can be judged directly against variant A rather than assumed.
+export default function HeroVideoBleed() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const t = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(t);
+  }, []);
+
+  return (
+    <section className="relative border-b overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
+      {/* Desktop only: the background bleed needs real width to sit beside the text without
+          colliding with it. At w-full on a phone it was rendering directly underneath the text --
+          the exact "not fully visible" problem that got the static-image version of this rejected
+          the first time, just with a chart line through the headline instead of a dimmed photo. */}
+      <div
+        className={`hidden md:flex absolute inset-y-0 right-0 w-2/3 items-center pr-10 transition-opacity duration-700 ${mounted ? "opacity-100" : "opacity-0"}`}
+        aria-hidden="true"
+      >
+        <div className="w-full max-w-xl ml-auto">
+          <DashboardMotionGraphic />
+        </div>
+      </div>
+
+      {/* Scrim: solid at the text edge, fully transparent by the graphic's side, so the graphic still
+          reads clearly on its own half while the text stays legible over its own. Desktop only, same
+          reason as above -- on mobile there's no bleed underneath to scrim against. */}
+      <div
+        className="hidden md:block absolute inset-0"
+        style={{ background: "linear-gradient(to right, var(--color-bg) 0%, var(--color-bg) 38%, color-mix(in oklab, var(--color-bg) 55%, transparent) 60%, transparent 85%)" }}
+      />
+
+      <div className="relative max-w-6xl mx-auto px-6 py-20 md:py-32">
+        <div
+          className={`max-w-xl transition-[opacity,transform] duration-700 ease-out ${
+            mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+          }`}
+        >
+          <div className="eyebrow mb-4">Fleet cost intelligence · Africa</div>
+          <h1 className="font-display font-black text-4xl md:text-6xl leading-[1.02] tracking-tighter">
+            See exactly what every vehicle costs you.{" "}
+            <span style={{ color: "var(--color-primary)" }}>Before it becomes a problem.</span>
+          </h1>
+          <p className="mt-6 text-lg leading-relaxed" style={{ color: "var(--color-muted)" }}>
+            Fuel, maintenance, downtime, parts: FleetIntel turns scattered vehicle costs into one
+            number your team can trust. Built for logistics, transport, EMS, and security fleets
+            across Africa.
+          </p>
+          <div className="mt-9 flex flex-wrap items-center gap-3">
+            <a
+              href="mailto:hello@fleetintel.africa?subject=Book%20a%20call"
+              data-testid="hero-book-call"
+              onClick={() => trackEvent("book_call_click")}
+              className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest font-semibold transition-[transform,filter] hover:scale-[1.02] hover:brightness-110 active:scale-95"
+              style={{ background: "var(--color-primary)", color: "oklch(18% 0.02 155)" }}
+            >
+              Book a call
+            </a>
+            <a
+              href="mailto:hello@fleetintel.africa?subject=Request%20a%20demo"
+              data-testid="hero-demo"
+              onClick={() => trackEvent("request_demo_click")}
+              className="rounded-full px-6 py-3.5 text-xs uppercase tracking-widest border transition-[transform,border-color] hover:scale-[1.02] hover:[border-color:var(--color-primary)] active:scale-95"
+              style={{ borderColor: "var(--color-border)" }}
+            >
+              Request a demo
+            </a>
+          </div>
+
+          {/* Mobile fallback: the graphic stacks below the text instead of bleeding behind it. */}
+          <div className="md:hidden mt-10">
+            <DashboardMotionGraphic />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
