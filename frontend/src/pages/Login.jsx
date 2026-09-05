@@ -36,7 +36,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-background noise-bg grid lg:grid-cols-2">
-      <div className="hidden lg:flex flex-col justify-between p-12 border-r border-border">
+      <div className="hidden lg:flex flex-col justify-between p-12 border-r border-border overflow-y-auto">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-primary flex items-center justify-center">
             <ChartLine size={22} weight="bold" color="#fff" />
@@ -44,10 +44,13 @@ export default function Login() {
           <div>
             <div className="font-display font-black text-xl leading-none tracking-tight">FleetIntel</div>
             <div className="overline mt-1">Cost intelligence platform</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-muted-foreground mt-1">
+              Your Fleet. Your Control. Your Savings.
+            </div>
           </div>
         </div>
         <div>
-          <div className="overline mb-4">Operator console</div>
+          <div className="overline mb-4" style={{ color: "hsl(var(--primary))" }}>Operator console</div>
           <h1 className="font-display font-black text-6xl leading-[0.95] tracking-tighter">
             Every dollar,<br/>
             <span className="text-primary">every mile,</span><br/>
@@ -74,7 +77,6 @@ export default function Login() {
 
       <div className="flex items-center justify-center p-8">
         <div className="w-full max-w-sm">
-          <div className="overline mb-3">Sign in</div>
           <h2 className="font-display font-black text-4xl tracking-tight mb-8">
             Access your fleet
           </h2>
@@ -113,14 +115,20 @@ export default function Login() {
             <button
               data-testid="login-submit"
               disabled={loading}
-              className="w-full bg-primary text-primary-foreground py-3 text-sm uppercase tracking-widest hover:bg-primary/90 disabled:opacity-60 transition-colors"
+              className="w-full h-14 rounded-full bg-primary text-primary-foreground text-sm font-semibold uppercase tracking-[0.08em] transition-all duration-200 hover:bg-primary/90 hover:shadow-[0_0_24px_rgba(34,197,94,0.45)] disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:shadow-none cursor-pointer"
             >
               {loading ? "Authenticating…" : (needs2fa ? "Verify & sign in" : "Sign in")}
             </button>
           </form>
-          <div className="mt-6 text-xs text-muted-foreground">
-            No account?{" "}
-            <Link to="/register" className="text-white underline underline-offset-4" data-testid="register-link">Create one</Link>
+          <div className="mt-6 text-xs text-muted-foreground flex items-center gap-2">
+            No account?
+            <Link
+              to="/register"
+              data-testid="register-link"
+              className="inline-flex items-center rounded-full border border-primary text-primary px-4 py-1.5 text-xs font-semibold tracking-wide transition-all duration-200 hover:bg-primary hover:text-primary-foreground"
+            >
+              Create one
+            </Link>
           </div>
           <div className="mt-8 border-t border-border pt-4 text-xs text-muted-foreground">
             <div className="overline mb-2">Demo credentials</div>
