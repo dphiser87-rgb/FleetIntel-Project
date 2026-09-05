@@ -6,7 +6,7 @@ const INDUSTRIES = [
   "Emergency medical services",
   "Security & armed response",
   "Services",
-  "Any company with vehicles",
+  "Any business with a moving vehicle",
 ];
 
 export default function Industries() {
