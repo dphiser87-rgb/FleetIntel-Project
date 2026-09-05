@@ -42,9 +42,11 @@ export default function Login() {
             <ChartLine size={22} weight="bold" color="#fff" />
           </div>
           <div>
-            <div className="font-display font-black text-xl leading-none tracking-tight">FleetIntel</div>
-            <div className="overline mt-1">Cost intelligence platform</div>
-            <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-muted-foreground mt-1">
+            <div className="flex items-baseline gap-2">
+              <span className="font-display font-black text-xl leading-none tracking-tight">FleetIntel</span>
+              <span className="overline">— Cost intelligence platform</span>
+            </div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-muted-foreground mt-1.5">
               Your Fleet. Your Control. Your Savings.
             </div>
           </div>
@@ -52,9 +54,9 @@ export default function Login() {
         <div>
           <div className="overline mb-4" style={{ color: "hsl(var(--primary))" }}>Operator console</div>
           <h1 className="font-display font-black text-6xl leading-[0.95] tracking-tighter">
-            Every dollar,<br/>
-            <span className="text-primary">every mile,</span><br/>
-            accounted for.
+            See exactly what<br/>
+            every vehicle costs you.<br/>
+            <span className="text-primary">Before it becomes a liability.</span>
           </h1>
           <p className="mt-6 text-muted-foreground max-w-md leading-relaxed">
             A cost-intelligence layer for fleet operations. KPIs, digital inspections, and a maintenance
@@ -129,10 +131,6 @@ export default function Login() {
             >
               Create one
             </Link>
-          </div>
-          <div className="mt-8 border-t border-border pt-4 text-xs text-muted-foreground">
-            <div className="overline mb-2">Demo credentials</div>
-            <div className="mono">dphiser87@gmail.com / admin123</div>
           </div>
         </div>
       </div>
