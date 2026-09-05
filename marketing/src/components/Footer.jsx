@@ -1,4 +1,4 @@
-const APP_URL = "https://app.fleetintel.africa";
+const APP_URL = "http://localhost:3000"; // TEMP: local testing only, revert to https://app.fleetintel.africa before deploy
 
 export default function Footer() {
   return (

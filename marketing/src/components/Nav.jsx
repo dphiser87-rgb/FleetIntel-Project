@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { trackEvent } from "@/utils/trackEvent";
 
-const APP_URL = "https://app.fleetintel.africa";
+const APP_URL = "http://localhost:3000"; // TEMP: local testing only, revert to https://app.fleetintel.africa before deploy
 
 const LINKS = [
   { href: "/#how-it-works", label: "How it works" },
