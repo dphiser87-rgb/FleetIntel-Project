@@ -53,6 +53,10 @@
     font-size: 0.65rem;
     letter-spacing: 0.2em;
     color: #A1A1A6;
+    /* Tailwind ships its own built-in `.overline` utility (text-decoration-line: overline) --
+       this custom class collides with that exact name, so every label using it picked up an
+       unwanted decoration line. Explicit override cancels it. */
+    text-decoration-line: none;
   }
   .grid-borders > * {
     border-right: 1px solid rgba(39, 39, 42, 0.6);
