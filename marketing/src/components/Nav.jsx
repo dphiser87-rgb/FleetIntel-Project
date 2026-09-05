@@ -40,7 +40,7 @@ export default function Nav() {
         borderColor: isScrolled ? "var(--color-border)" : "transparent",
       }}
     >
-      <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div className="px-6 md:px-12 lg:px-20 py-4 flex items-center justify-between">
         <a href="/" className="flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-md flex items-center justify-center shrink-0" style={{ background: "var(--color-primary)" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
