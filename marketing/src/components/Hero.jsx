@@ -78,8 +78,21 @@ export default function Hero() {
             Works offline. Syncs the moment signal returns.
           </p>
 
+          {/* Mobile-only scroll cue, in-flow rather than fixed to the viewport bottom like the
+              desktop ScrollPrompt -- on mobile the stacked layout below (graphic under the text)
+              means a fixed-bottom element lands right on top of the graphic instead of empty space.
+              Sitting in normal flow here avoids that collision entirely and scrolls away with the
+              page once the visitor starts scrolling, same practical effect without the fixed-position
+              fight. */}
+          <div className="md:hidden mt-8 flex items-center gap-3" aria-hidden="true">
+            <div className="w-6 h-8 rounded-full border flex justify-center p-1.5" style={{ borderColor: "var(--color-muted)" }}>
+              <div className="w-1 h-2 rounded-full animate-scroll-dot" style={{ background: "var(--color-primary)" }} />
+            </div>
+            <span className="eyebrow">Scroll</span>
+          </div>
+
           {/* Mobile fallback: the graphic stacks below the text instead of bleeding behind it. */}
-          <div className="md:hidden mt-10">
+          <div className="md:hidden mt-6">
             <DashboardMotionGraphic />
           </div>
         </div>

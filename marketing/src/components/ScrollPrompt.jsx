@@ -14,7 +14,7 @@ export default function ScrollPrompt() {
 
   return (
     <div
-      className={`fixed bottom-10 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-3 transition-all duration-500 ease-out select-none
+      className={`hidden md:flex fixed bottom-10 left-1/2 -translate-x-1/2 z-40 flex-col items-center gap-3 transition-all duration-500 ease-out select-none
         ${isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"}`}
       aria-hidden="true"
       data-testid="scroll-prompt"
