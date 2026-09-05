@@ -51,7 +51,9 @@ never used for routine UI chrome.
 
 ## Type
 
-- **Display**: Outfit, 700/900 — headlines, thesis line, section titles. Tight tracking (`-0.02em`).
+- **Display**: Outfit, 700/900 — headlines, thesis line, section titles. Tight tracking (`-0.02em`),
+  except h1: `-0.01em` — at the hero's size + 900 weight, `-0.02em` was tight enough that adjacent
+  characters visually touched.
 - **Body**: IBM Plex Sans, 400/500/600 — paragraphs, nav, buttons.
 - **Utility**: JetBrains Mono, 400/700 — overlines, labels, stats/numbers (cost figures, KPIs).
 - Scale: thesis/H1 ~56–72px desktop / ~36px mobile; H2 ~32–40px; body ~16–18px; overline ~11px

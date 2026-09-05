@@ -45,7 +45,7 @@ export default function Hero() {
           }`}
         >
           <div className="eyebrow mb-4">Fleet cost intelligence · Africa</div>
-          <h1 className="font-display font-black text-4xl md:text-6xl leading-[1.02] tracking-tighter">
+          <h1 className="font-display font-black text-4xl md:text-6xl leading-[1.02]">
             See exactly what every vehicle costs you.{" "}
             <span style={{ color: "var(--color-primary)" }}>Before it becomes a problem.</span>
           </h1>

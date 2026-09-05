@@ -16,7 +16,7 @@ export default function Contact() {
       <div id="primary-content" tabIndex={-1}>
         <section className="max-w-3xl mx-auto px-6 py-20 md:py-28">
           <div className="eyebrow mb-4">Contact</div>
-          <h1 className="font-display font-black text-4xl md:text-5xl leading-[1.05] tracking-tighter">
+          <h1 className="font-display font-black text-4xl md:text-5xl leading-[1.05]">
             Talk to us.
           </h1>
           <p className="mt-6 text-lg leading-relaxed" style={{ color: "var(--color-muted)" }}>

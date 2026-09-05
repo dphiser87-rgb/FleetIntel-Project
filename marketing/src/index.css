@@ -29,6 +29,12 @@
     font-family: var(--font-display);
     letter-spacing: -0.02em;
   }
+  /* h1 only: at the hero's huge size + Outfit 900 weight, -0.02em was tight enough that adjacent
+     characters visually touched/overlapped -- reads as broken, not as intentional tight tracking.
+     h2-h6 stay at -0.02em, they're smaller and don't show the same overlap. */
+  h1 {
+    letter-spacing: -0.01em;
+  }
   /* Explicit rather than relying on the browser default: an unstyled default ring can read as
      low-contrast against this near-black background depending on browser/OS. :focus-visible only
      (not plain :focus) so it shows for keyboard nav without also outlining every mouse click. */
