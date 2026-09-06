@@ -28,6 +28,9 @@ export default function ConversionBand() {
             Request a demo
           </a>
         </div>
+        <p className="mt-4 text-xs" style={{ color: "var(--color-muted)" }}>
+          Works offline. Syncs the moment signal returns.
+        </p>
       </Reveal>
     </section>
   );
