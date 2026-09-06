@@ -1,13 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-// Fades out once the visitor scrolls past the hero -- a wayfinding cue, not decorative motion, so
-// it's the one deliberate exception to the "no looping animation" rule in design.md (still fully
-// neutralized under prefers-reduced-motion via the global rule in index.css).
+// Hides while scrolling down, reappears the moment you scroll up -- chosen over a version that
+// stayed visible for the whole page after comparing both live. Still neutralized entirely under
+// prefers-reduced-motion via the global rule in index.css.
 export default function ScrollPrompt() {
   const [isVisible, setIsVisible] = useState(true);
+  const lastY = useRef(0);
 
   useEffect(() => {
-    const handleScroll = () => setIsVisible(window.scrollY <= 80);
+    const handleScroll = () => {
+      const y = window.scrollY;
+      const goingUp = y < lastY.current;
+      setIsVisible(goingUp || y <= 80);
+      lastY.current = y;
+    };
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
