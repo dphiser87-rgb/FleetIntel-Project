@@ -34,7 +34,7 @@ export default function Features() {
         <Reveal>
           <div className="eyebrow mb-3">What's inside</div>
           <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-14">
-            Everything you need to know where the money goes.
+            Know more. Spend less. Run smarter.
           </h2>
         </Reveal>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
