@@ -26,6 +26,7 @@ export default function Hero() {
         aria-hidden="true"
       >
         <div className="w-full max-w-xl ml-auto">
+          <div className="eyebrow mb-3">Fleet cost intelligence · Africa</div>
           <DashboardMotionGraphic />
         </div>
       </div>
@@ -44,16 +45,18 @@ export default function Hero() {
             mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           }`}
         >
-          <div className="eyebrow mb-4">Fleet cost intelligence · Africa · Offline-first</div>
           <h1 className="font-display font-black text-4xl md:text-6xl leading-[1.02]">
             See exactly what every vehicle costs you.{" "}
             <span style={{ color: "var(--color-primary)" }}>Before it becomes a liability.</span>
           </h1>
-          <p className="mt-6 text-lg leading-relaxed" style={{ color: "var(--color-muted)" }}>
-            Fuel, maintenance, downtime, parts: FleetIntel turns scattered vehicle costs into one
-            number your team can trust. Built for logistics, transport, EMS, and security fleets
-            across Africa.
-          </p>
+          <div className="mt-6 space-y-3 text-lg leading-relaxed" style={{ color: "var(--color-muted)" }}>
+            <p className="font-semibold" style={{ color: "var(--color-ink)" }}>Fuel. Maintenance. Downtime. Parts.</p>
+            <p>
+              FleetIntel brings every vehicle cost together, giving your team one clear number to
+              understand, control, and reduce fleet costs.
+            </p>
+            <p>Built for African fleets.</p>
+          </div>
           <div className="mt-9 flex flex-wrap items-center gap-3">
             <a
               href="mailto:hello@fleetintel.africa?subject=Book%20a%20call"
@@ -93,6 +96,7 @@ export default function Hero() {
 
           {/* Mobile fallback: the graphic stacks below the text instead of bleeding behind it. */}
           <div className="md:hidden mt-6">
+            <div className="eyebrow mb-3">Fleet cost intelligence · Africa</div>
             <DashboardMotionGraphic />
           </div>
         </div>
