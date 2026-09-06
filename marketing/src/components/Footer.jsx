@@ -19,6 +19,7 @@ export default function Footer() {
         </div>
 
         <div className="flex flex-wrap gap-x-10 gap-y-4">
+          <a href="/" className="text-sm opacity-70 hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Home</a>
           <a href="/#how-it-works" className="text-sm opacity-70 hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>How it works</a>
           <a href="/#features" className="text-sm opacity-70 hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Features</a>
           <a href="/#why" className="text-sm opacity-70 hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }}>Why FleetIntel</a>
