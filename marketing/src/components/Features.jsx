@@ -1,47 +1,54 @@
+import Reveal from "./Reveal";
+
 const FEATURES = [
   {
-    title: "Cost-intelligence dashboard",
-    body: "KPIs, cost-per-vehicle, downtime, and anomaly detection in one view — not a spreadsheet reconciled at month-end.",
+    name: "Cost-intelligence dashboard",
+    body: "KPIs, cost per vehicle, downtime, and anomaly detection in one view. Not a spreadsheet reconciled at month end.",
   },
   {
-    title: "Digital inspections & checklists",
-    body: "Field teams run structured vehicle checklists from a phone, offline-capable, syncing automatically once back online.",
+    name: "Digital inspections & checklists",
+    body: "Field teams run structured vehicle checklists from a phone. Offline-capable, syncing automatically once back online.",
   },
   {
-    title: "Maintenance & costing approvals",
-    body: "Parts requisitions and job costing flow through a real approval chain — workshop, operations, and finance each get their say.",
+    name: "Maintenance & costing approvals",
+    body: "Parts requisitions and job costing move through a real approval chain. Workshop, operations, and finance each get their say.",
   },
   {
-    title: "Drivers & incidents",
-    body: "Driver records, license expiry tracking, and incident reporting with photo evidence — built for response fleets and depot operations alike.",
+    name: "Drivers & incidents",
+    body: "Driver records, license expiry tracking, and incident reporting with photo evidence. Built for response fleets and depot operations alike.",
   },
   {
-    title: "Offline-first mobile app",
-    body: "Mechanics and inspectors keep working with no signal — submissions queue locally and sync the moment connectivity returns.",
+    name: "Offline-first mobile app",
+    body: "Mechanics and inspectors keep working with no signal. Submissions queue locally and sync the moment connectivity returns.",
   },
   {
-    title: "Built for African currencies",
-    body: "Multi-currency support across the continent, so every cost figure is in the currency your team actually works in.",
+    name: "Open API for telematics",
+    body: "Already using a telematics provider? Connect it for automatic fuel, kilometer, and driver-assignment data. No need to rip and replace.",
   },
 ];
 
 export default function Features() {
   return (
-    <section id="features" className="border-b border-border">
-      <div className="max-w-6xl mx-auto px-6 py-20 md:py-28">
-        <div className="eyebrow mb-3">What's inside</div>
-        <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-14">
-          Everything a fleet team needs to know where the money goes.
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-border">
-          {FEATURES.map((f) => (
-            <div key={f.title} className="bg-background p-8" data-testid={`feature-${f.title}`}>
-              <div className="w-8 h-8 border border-primary/40 mb-6 flex items-center justify-center">
-                <div className="w-2 h-2 bg-primary" />
+    <section id="features" className="border-b" style={{ borderColor: "var(--color-border)" }}>
+      <div className="px-6 md:px-12 lg:px-20 py-20 md:py-28">
+        <Reveal>
+          <div className="eyebrow mb-3">What's inside</div>
+          <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-14">
+            Everything you need to know where the money goes.
+          </h2>
+        </Reveal>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {FEATURES.map((f, i) => (
+            <Reveal key={f.name} delayMs={(i % 3) * 100}>
+              <div
+                className="h-full rounded-xl border p-6 transition-colors duration-300 hover:[border-color:var(--color-primary)]"
+                style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
+                data-testid={`feature-${f.name}`}
+              >
+                <h3 className="font-display font-bold text-base mb-2">{f.name}</h3>
+                <p className="text-sm leading-relaxed" style={{ color: "var(--color-muted)" }}>{f.body}</p>
               </div>
-              <h3 className="font-display font-bold text-lg mb-2">{f.title}</h3>
-              <p className="text-sm text-muted leading-relaxed">{f.body}</p>
-            </div>
+            </Reveal>
           ))}
         </div>
       </div>

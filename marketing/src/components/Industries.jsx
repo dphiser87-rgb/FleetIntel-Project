@@ -1,28 +1,32 @@
+import Reveal from "./Reveal";
+
 const INDUSTRIES = [
   "Logistics & distribution",
   "Transportation",
   "Emergency medical services",
   "Security & armed response",
-  "Any fleet-operated business",
+  "Services",
+  "Any business with a moving vehicle",
 ];
 
 export default function Industries() {
   return (
-    <section className="border-b border-border">
-      <div className="max-w-6xl mx-auto px-6 py-10">
+    <section className="border-b" style={{ borderColor: "var(--color-border)" }}>
+      <Reveal className="px-6 md:px-12 lg:px-20 py-10">
         <div className="eyebrow mb-4">Built for</div>
         <div className="flex flex-wrap gap-3">
           {INDUSTRIES.map((i) => (
             <span
               key={i}
               data-testid={`industry-${i}`}
-              className="text-xs uppercase tracking-widest border border-border px-3 py-2 text-muted"
+              className="text-xs uppercase tracking-widest rounded-full border px-4 py-2"
+              style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
             >
               {i}
             </span>
           ))}
         </div>
-      </div>
+      </Reveal>
     </section>
   );
 }

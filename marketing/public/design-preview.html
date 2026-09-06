@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FleetIntel — Design Directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Outfit:wght@700;900&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f2f2f0; font-family: 'IBM Plex Sans', sans-serif; color: #111; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 40px 24px 100px; }
+  .intro { margin-bottom: 40px; }
+  .intro h1 { font-family: 'Space Grotesk', sans-serif; font-size: 28px; margin: 0 0 8px; }
+  .intro p { color: #555; max-width: 640px; line-height: 1.5; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 28px; }
+  .card { border-radius: 14px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08); border: 1px solid rgba(0,0,0,0.06); }
+  .card-inner { padding: 32px 28px; min-height: 560px; display: flex; flex-direction: column; }
+  .badge { display: inline-block; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; padding: 5px 10px; border-radius: 999px; margin-bottom: 18px; align-self: flex-start; }
+  .rec-badge { background: #000; color: #fff; font-weight: 700; }
+  .direction-name { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.6; margin-bottom: 4px; }
+  .thesis { font-size: 26px; line-height: 1.15; margin: 0 0 6px; font-weight: 700; }
+  .sample { font-size: 14px; line-height: 1.5; opacity: 0.8; margin-bottom: 24px; }
+  .swatches { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .swatch { flex: 1; min-width: 60px; border-radius: 8px; padding: 10px 8px; font-size: 10px; font-weight: 600; }
+  .swatch-label { display: block; opacity: 0.7; margin-top: 30px; }
+  .fonts { font-size: 12px; opacity: 0.7; line-height: 1.6; margin-bottom: 20px; }
+  .reason { margin-top: auto; font-size: 13px; line-height: 1.5; padding-top: 16px; border-top: 1px solid rgba(0,0,0,0.1); opacity: 0.85; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .cta-row { display: flex; gap: 10px; margin-top: 20px; }
+  .cta { padding: 10px 18px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="intro">
+    <h1>FleetIntel — three directions</h1>
+    <p>All rooted in your green/white/black identity, none of them a repeat of the app's current dark theme (Design A) or the dark navy look shared by Geotab/Powerfleet/Webfleet. Reply 1, 2, or 3.</p>
+  </div>
+  <div class="grid">
+
+    <!-- DIRECTION 1: FIELD GREEN -->
+    <div class="card">
+      <div class="card-inner" style="background: oklch(98% 0.01 145); color: oklch(20% 0.02 145);">
+        <span class="badge rec-badge">Recommended</span>
+        <div class="direction-name">Direction 1 — Field Green</div>
+        <div class="thesis" style="font-family: 'Space Grotesk', sans-serif;">See exactly what every vehicle costs you — before it becomes a problem.</div>
+        <div class="sample" style="font-family: 'IBM Plex Sans', sans-serif;">Cost intelligence for logistics, transport, EMS, and security fleets across Africa.</div>
+        <div class="swatches">
+          <div class="swatch" style="background: oklch(98% 0.01 145); border:1px solid #ddd; color:#333;">bg</div>
+          <div class="swatch" style="background: oklch(55% 0.16 150); color:#fff;">primary</div>
+          <div class="swatch" style="background: oklch(20% 0.02 145); color:#fff;">ink</div>
+          <div class="swatch" style="background: oklch(70% 0.15 70); color:#111;">alert</div>
+          <div class="swatch" style="background: oklch(90% 0.01 145); color:#333;">border</div>
+        </div>
+        <div class="fonts">
+          Display: <b>Space Grotesk</b> 700 &nbsp;·&nbsp; Body: <b>IBM Plex Sans</b> &nbsp;·&nbsp; Utility: <span class="mono">IBM Plex Mono</span>
+        </div>
+        <div class="cta-row">
+          <div class="cta" style="background: oklch(55% 0.16 150); color:#fff;">Book a call</div>
+          <div class="cta" style="border:1px solid oklch(20% 0.02 145); color: oklch(20% 0.02 145);">Request a demo</div>
+        </div>
+        <div class="reason">Light, trust-building, paper-white base lets real product screenshots and photography breathe — green carries the brand, a warm amber marks cost alerts/spikes (ties directly to the executive cost-spike scenario). Reads as premium enterprise software, not a stock SaaS template.</div>
+      </div>
+    </div>
+
+    <!-- DIRECTION 2: NIGHT OPS -->
+    <div class="card">
+      <div class="card-inner" style="background: oklch(18% 0.02 155); color: oklch(96% 0.01 155);">
+        <div class="direction-name">Direction 2 — Night Ops</div>
+        <div class="thesis" style="font-family: 'Outfit', sans-serif;">See exactly what every vehicle costs you — before it becomes a problem.</div>
+        <div class="sample" style="font-family: 'IBM Plex Sans', sans-serif;">Cost intelligence for logistics, transport, EMS, and security fleets across Africa.</div>
+        <div class="swatches">
+          <div class="swatch" style="background: oklch(18% 0.02 155); border:1px solid #444; color:#eee;">bg</div>
+          <div class="swatch" style="background: oklch(70% 0.18 150); color:#111;">primary</div>
+          <div class="swatch" style="background: oklch(96% 0.01 155); color:#111;">ink</div>
+          <div class="swatch" style="background: oklch(60% 0.20 25); color:#fff;">alert</div>
+          <div class="swatch" style="background: oklch(30% 0.02 155); color:#eee;">border</div>
+        </div>
+        <div class="fonts">
+          Display: <b>Outfit</b> 900 &nbsp;·&nbsp; Body: <b>IBM Plex Sans</b> &nbsp;·&nbsp; Utility: <span class="mono">JetBrains Mono</span>
+        </div>
+        <div class="cta-row">
+          <div class="cta" style="background: oklch(70% 0.18 150); color:#111; border-radius: 999px;">Book a call</div>
+          <div class="cta" style="border:1px solid oklch(96% 0.01 155); color: oklch(96% 0.01 155); border-radius: 999px;">Request a demo</div>
+        </div>
+        <div class="reason">Same DNA as the operator app (dark, green-forward) but warmer — a green-tinted charcoal instead of flat black, soft rounded shapes instead of sharp corners, so it feels related to the product without being a duplicate of Design A. Closest to the field's "control room at night" reality.</div>
+      </div>
+    </div>
+
+    <!-- DIRECTION 3: SIGNAL WHITE -->
+    <div class="card">
+      <div class="card-inner" style="background: oklch(99% 0.005 145); color: oklch(15% 0.01 145);">
+        <div class="direction-name">Direction 3 — Signal White</div>
+        <div class="thesis" style="font-family: 'Fraunces', serif;">See exactly what every vehicle costs you — before it becomes a problem.</div>
+        <div class="sample" style="font-family: 'IBM Plex Sans', sans-serif;">Cost intelligence for logistics, transport, EMS, and security fleets across Africa.</div>
+        <div class="swatches">
+          <div class="swatch" style="background: oklch(99% 0.005 145); border:1px solid #ddd; color:#333;">bg</div>
+          <div class="swatch" style="background: oklch(58% 0.17 148); color:#fff;">accent</div>
+          <div class="swatch" style="background: oklch(15% 0.01 145); color:#fff;">ink</div>
+          <div class="swatch" style="background: oklch(55% 0.01 145); color:#fff;">muted</div>
+          <div class="swatch" style="background: oklch(88% 0.005 145); color:#333;">border</div>
+        </div>
+        <div class="fonts">
+          Display: <b>Fraunces</b> 500 &nbsp;·&nbsp; Body: <b>IBM Plex Sans</b> &nbsp;·&nbsp; Utility: <span class="mono">JetBrains Mono</span>
+        </div>
+        <div class="cta-row">
+          <div class="cta" style="background: oklch(15% 0.01 145); color:#fff;">Book a call</div>
+          <div class="cta" style="border:1px solid oklch(15% 0.01 145); color: oklch(15% 0.01 145);">Request a demo</div>
+        </div>
+        <div class="reason">Editorial and premium — near-white throughout, black carries almost all the weight, and green is used as ONE deliberate signal color (CTAs, key numbers only). A serif display line gives it a distinct, considered voice against every dark-navy enterprise-fleet competitor.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
