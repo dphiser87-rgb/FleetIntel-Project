@@ -64,7 +64,7 @@ export default function Scenarios() {
         <Reveal>
           <div className="eyebrow mb-3">How it works</div>
           <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-16">
-            Real fleets. Not stock photos.
+            Real fleets. Real challenges. Real insights.
           </h2>
         </Reveal>
 
