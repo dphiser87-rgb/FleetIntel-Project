@@ -232,7 +232,13 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
             </div>
             <div className="border-t border-border p-4 flex gap-2 flex-wrap shrink-0">
               <button onClick={deactivate} data-testid="deactivate-member" className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary"><Prohibit size={14} /> Deactivate</button>
-              <button onClick={resetPassword} data-testid="reset-password-member" className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary"><Key size={14} /> Reset password</button>
+              <button
+                onClick={resetPassword}
+                disabled={member.role === "admin"}
+                title={member.role === "admin" ? "Admin password resets must go through the FleetIntel team directly" : undefined}
+                data-testid="reset-password-member"
+                className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-inherit"
+              ><Key size={14} /> Reset password</button>
               <button onClick={duplicate} data-testid="duplicate-member" className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary"><Copy size={14} /> Duplicate</button>
               <button onClick={remove} data-testid="delete-member" className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary ml-auto"><Trash size={14} /> Delete</button>
             </div>

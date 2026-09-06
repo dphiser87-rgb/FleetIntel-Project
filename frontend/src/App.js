@@ -7,6 +7,7 @@ import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import ResetPassword from "@/pages/ResetPassword";
+import ForgotPassword from "@/pages/ForgotPassword";
 import Dashboard from "@/pages/Dashboard";
 import ExecutiveDashboard from "@/pages/ExecutiveDashboard";
 import Fleet from "@/pages/Fleet";
@@ -57,6 +58,7 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/public/vehicle/:token" element={<PublicVehicle />} />
             <Route path="/public/incident/:token" element={<PublicIncident />} />
             <Route path="/" element={<Protected><CurrencyProvider><Layout /></CurrencyProvider></Protected>}>
