@@ -8,8 +8,8 @@ import { ChartLine } from "@phosphor-icons/react";
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("dphiser87@gmail.com");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [needs2fa, setNeeds2fa] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -127,6 +127,9 @@ export default function Login() {
               Forgot password?
             </Link>
           </div>
+          <p className="mt-4 text-xs text-muted-foreground">
+            Works offline. Syncs the moment signal returns.
+          </p>
         </div>
       </div>
     </div>
