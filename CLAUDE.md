@@ -8,10 +8,10 @@ FleetIntel is a fleet maintenance-cost intelligence SaaS: vehicles, drivers, ins
 jobs, parts inventory, and incidents, with KPI/cost analytics, anomaly detection, and forecasting on top.
 It's multi-tenant — every workspace's data is isolated from every other workspace's.
 
-The repo was originally scaffolded by the **Emergent** AI app-builder platform. `.emergent/` (config,
-crons, markers) and `test_result.md` (a main-agent/testing-agent handoff protocol) are platform tooling,
-not application code — don't treat conventions described there as this project's own engineering
-standards.
+The repo was originally scaffolded by the **Emergent** AI app-builder platform, but that platform is no
+longer in use — its scaffolding artifacts (`.emergent/`, `test_result.md`, the `@emergentbase/visual-edits`
+dev tool, the preview-mode debug logger and analytics scripts in `frontend/public/index.html`) have been
+removed. Don't reintroduce Emergent-platform tooling or branding.
 
 ## Commands
 
@@ -72,8 +72,7 @@ the shared `Layout` component. `frontend/src/components/` holds shared component
 
 **Craco config** (`frontend/craco.config.js`) sets a `@` → `src` path alias, enforces the
 `react-hooks/rules-of-hooks` ESLint rule as an error, and conditionally wires in a dev-only webpack
-health-check plugin (`ENABLE_HEALTH_CHECK`) and the `@emergentbase/visual-edits` dev tool — both are
-optional and degrade gracefully if absent.
+health-check plugin (`ENABLE_HEALTH_CHECK`) — optional, degrades gracefully if absent.
 
 **Design system** (`design_guidelines.json`): a country-aware theme — base brand colors (electric blue
 `#0EA5E9`, teal `#14B8A6`, lime `#84CC16`) with per-country overrides (10 African countries, e.g.

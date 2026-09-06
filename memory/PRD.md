@@ -71,10 +71,47 @@
 - **Vehicle Health Trend**: `_score_vehicle` refactored to accept `as_of`; new endpoint `GET /api/analytics/vehicle/{vid}/health-trend?days=30` backfills daily score from history. VehicleDetail renders recharts LineChart with ReferenceLines at 80/55 and current-score readout.
 - **Incident Photos Lightbox**: `/incidents` rows show thumbnail strip (4 max + "+N" badge); full-screen viewer with next/prev buttons, ArrowLeft/Right keys, Esc to close, counter "N / M".
 - **Auto-Assign Driver**: Report-incident modal on VehicleDetail pre-selects the vehicle's currently-assigned driver and shows an "auto-filled from vehicle" hint; syncs when drivers load after modal opens.
-- **Health Alerts (weekly digest)**: `_send_health_digest` composes a Resend email of at-risk/watch vehicles with top 3 factors each; scheduled by `.emergent/crons.yml → fleet-health-digest`; manual trigger via `POST /api/workspace/send-health-digest`.
+- **Health Alerts (weekly digest)**: `_send_health_digest` composes a Resend email of at-risk/watch vehicles with top 3 factors each; manual trigger via `POST /api/workspace/send-health-digest`. (Scheduling mechanism superseded 2026-09-03 — see below.)
+
+## Implemented (2026-09-03 — Emergent platform migration cleanup)
+- Removed all remaining Emergent-platform branding/tooling: `frontend/public/index.html`'s title,
+  meta description, the preview-mode debug logger script, and the Emergent-hosted PostHog analytics
+  block (was sending real user session recordings to Emergent's own infra, not anything self-hosted);
+  `@emergentbase/visual-edits` dev tool (craco.config.js + package.json); `.emergent/` and
+  `test_result.md` (platform housekeeping, not app code).
+- **Cron scheduling migrated to Vercel Cron Jobs** (`vercel.json`): `.emergent/crons.yml`'s scheduler
+  only ever ran inside Emergent's own hosting pods, so it (and the three scheduled emails it drove)
+  had already gone silently inert since the move to Vercel — confirmed via `WEBHOOK_CRON_SECRET`
+  being unset in production (the cron endpoints were 401-ing unconditionally, cron or manual). Fixed:
+  `WEBHOOK_CRON_SECRET`/`CRON_SECRET` set in Vercel prod env; a single `/api/cron/daily-tick`
+  (07:00 UTC) now drives all three digests via the due-check below. `/api/cron/weekly-digest` and
+  `/api/cron/overdue-checklists` stay as separate endpoints for manual/testing use (same due-check
+  logic) but nothing schedules them directly anymore -- 1 total Vercel cron job, well under Hobby's
+  2-job cap.
+- **Configurable digest frequency, all three digests** (closes the P2 item below in full): generalized
+  from the health-digest-only version. `notification_prefs` gained `<digest>_frequency`
+  (daily/weekly/monthly/quarterly) and `<digest>_last_sent_at` per digest
+  (weekly_digest/health_digest default weekly, overdue_checklists defaults daily, matching each
+  digest's original fixed schedule); shared `_digest_due()`/`_mark_digest_evaluated()` helpers
+  evaluate all three every daily tick instead of each running on its own fixed schedule. Note: this
+  means weekly-cadence digests now fire ~7 days after each workspace's own last send rather than
+  always on a calendar Monday -- timing drifts per workspace instead of being globally synchronized,
+  which is expected given the point was making cadence configurable per workspace. Picker (all four
+  frequencies) added to Settings.jsx's notification-preferences card for all three digests, not just
+  health-digest.
+- **OCR migrated to Anthropic (Claude Haiku 4.5)**: replaced `emergentintegrations`'s OpenAI-via-proxy
+  call with a direct `anthropic.AsyncAnthropic` vision call (same plate/odometer prompts, same
+  response parsing). `ANTHROPIC_API_KEY` env var (not yet set in Vercel prod as of this writing --
+  pending the user providing a real key; endpoint 503s gracefully until then, same pattern as
+  before). `anthropic==1.3.0` added to requirements.txt. Verified request-shape correctness against
+  the real API using a fake key (got a clean 401 AuthenticationError, not a shape/validation error).
 
 ## Backlog / Next (P1/P2)
 - P1: Refactor server.py (~2020 lines) into routers/ (auth, fleet, incidents, analytics, prefs, digests)
 - P2: Aggregate incidents enrichment via `$lookup` once fleet scales past a few hundred rows
 - P2: Persist daily health snapshots so trend survives event deletions
-- P2: Configurable digest frequency + recipient list per workspace
+- P2: Per-digest recipient lists (still just the workspace owner for all three) -- configurable
+  frequency itself is done as of 2026-09-03, see above
+- P0: Set ANTHROPIC_API_KEY in Vercel prod once the user provides a real key -- OCR code is done but
+  inert without it
+  the feature if not worth the replacement cost
