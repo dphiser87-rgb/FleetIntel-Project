@@ -115,9 +115,23 @@ export default function Team() {
 
   const bulkResetPassword = async () => {
     if (selectedIds.size === 0) return;
-    if (!window.confirm(`Email a password reset link to ${selectedIds.size} member(s)?`)) return;
-    await Promise.all(Array.from(selectedIds).map((id) => api.post(`/users/${id}/reset-password`)));
-    toast.success("Password reset emails sent");
+    // Admin accounts sit at the top of a workspace's permission tree -- the backend now 403s a
+    // reset targeting one (must go through the FleetIntel team directly instead), so skip them here
+    // rather than let the whole batch fail on one admin row.
+    const ids = Array.from(selectedIds);
+    const adminCount = ids.filter((id) => members.find((m) => m.id === id)?.role === "admin").length;
+    const targetIds = ids.filter((id) => members.find((m) => m.id === id)?.role !== "admin");
+    if (targetIds.length === 0) {
+      toast.error("Admin password resets must go through the FleetIntel team directly");
+      return;
+    }
+    if (!window.confirm(`Email a password reset link to ${targetIds.length} member(s)?`)) return;
+    await Promise.all(targetIds.map((id) => api.post(`/users/${id}/reset-password`)));
+    toast.success(
+      adminCount > 0
+        ? `Password reset emails sent. Skipped ${adminCount} admin account(s) -- those go through the FleetIntel team directly.`
+        : "Password reset emails sent"
+    );
     setSelectedIds(new Set());
   };
 

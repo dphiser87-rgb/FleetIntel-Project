@@ -122,14 +122,9 @@ export default function Login() {
               {loading ? "Authenticating…" : (needs2fa ? "Verify & sign in" : "Sign in")}
             </button>
           </form>
-          <div className="mt-6 text-xs text-muted-foreground flex items-center gap-2">
-            No account?
-            <Link
-              to="/register"
-              data-testid="register-link"
-              className="inline-flex items-center rounded-full border border-primary text-primary px-4 py-1.5 text-xs font-semibold tracking-wide transition-all duration-200 hover:bg-primary hover:text-primary-foreground"
-            >
-              Create one
+          <div className="mt-6 text-xs text-muted-foreground">
+            <Link to="/forgot-password" data-testid="forgot-password-link" className="text-white underline underline-offset-4">
+              Forgot password?
             </Link>
           </div>
         </div>

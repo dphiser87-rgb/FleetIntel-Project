@@ -209,6 +209,17 @@ def require_module(module: str, level: str = "read"):
         return user
     return dep
 
+PLATFORM_OWNER_EMAIL = os.environ.get("PLATFORM_OWNER_EMAIL", "")
+
+async def require_platform_owner(user: dict = Depends(get_current_user)) -> dict:
+    """Gates workspace provisioning and admin-account password resets to the platform owner's own
+    account -- not any workspace's admin/manager, since those are scoped to their own workspace and
+    this crosses workspace boundaries. Empty PLATFORM_OWNER_EMAIL (unset) locks this out entirely
+    rather than matching everyone, so a missing env var fails closed, not open."""
+    if not PLATFORM_OWNER_EMAIL or user.get("email", "").lower() != PLATFORM_OWNER_EMAIL.lower():
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return user
+
 # --- Models ---
 class RegisterReq(BaseModel):
     email: EmailStr
@@ -218,6 +229,15 @@ class RegisterReq(BaseModel):
                             "workshop_head", "operations_staff", "finance_staff", "executive"]] = "manager"
     invite_code: Optional[str] = None
     workspace_name: Optional[str] = None
+
+class ProvisionWorkspaceReq(BaseModel):
+    workspace_name: str
+    admin_name: str
+    admin_email: EmailStr
+    admin_password: str
+
+class ForgotPasswordReq(BaseModel):
+    email: EmailStr
 
 class LoginReq(BaseModel):
     email: EmailStr
@@ -621,46 +641,41 @@ def _parse_datetime(s):
 # --- Auth routes ---
 @api.post("/auth/register")
 async def register(req: RegisterReq):
+    """Invite-only: joins an existing workspace. Public self-serve workspace creation was removed --
+    new workspaces are provisioned by the platform owner via POST /admin/workspaces instead, matching
+    how FleetIntel is actually sold (a booked call, not a signup form)."""
     email = req.email.lower()
     if await fetch_one("select 1 from user_profiles where email = :email", email=email):
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Resolve workspace via invite or new workspace
-    role = req.role
-    if req.invite_code:
-        invite = await fetch_one(
-            "select * from invites where code = :code and used_by is null", code=req.invite_code
+    if not req.invite_code:
+        raise HTTPException(
+            status_code=400,
+            detail="New workspaces are set up by the FleetIntel team -- contact hello@fleetintel.africa to get started.",
         )
-        if not invite:
-            raise HTTPException(status_code=400, detail="Invalid or used invite code")
-        if invite.get("email") and invite["email"].lower() != email:
-            raise HTTPException(status_code=400, detail="Invite email mismatch")
-        workspace_id = invite["workspace_id"]
-        role = invite.get("role") or role
-        invite_permissions = invite.get("permissions") or PROFILE_PRESETS.get(role, {})
-        target_ws = await fetch_one(
-            "select min_password_length, costing_approver_role from workspaces where id = :id", id=workspace_id
-        )
-        min_password_length = (target_ws or {}).get("min_password_length") or 8
-        # Workspaces with no dedicated Workshop Manager can designate another role as costing
-        # approver (Settings -> costing_approver_role) -- apply it here so it takes effect on every
-        # new hire automatically, not just the people already on the team when the setting was set.
-        if target_ws and target_ws.get("costing_approver_role") == role:
-            invite_permissions = {**invite_permissions, "modules": {**invite_permissions.get("modules", {}), "quotes": "full"}}
-    else:
-        invite_permissions = PROFILE_PRESETS.get(role, {})
-        workspace_id = str(uuid.uuid4())
-        min_password_length = 8  # no workspace row exists yet to read a configured minimum from
+
+    invite = await fetch_one(
+        "select * from invites where code = :code and used_by is null", code=req.invite_code
+    )
+    if not invite:
+        raise HTTPException(status_code=400, detail="Invalid or used invite code")
+    if invite.get("email") and invite["email"].lower() != email:
+        raise HTTPException(status_code=400, detail="Invite email mismatch")
+    workspace_id = invite["workspace_id"]
+    role = invite.get("role") or req.role
+    invite_permissions = invite.get("permissions") or PROFILE_PRESETS.get(role, {})
+    target_ws = await fetch_one(
+        "select min_password_length, costing_approver_role from workspaces where id = :id", id=workspace_id
+    )
+    min_password_length = (target_ws or {}).get("min_password_length") or 8
+    # Workspaces with no dedicated Workshop Manager can designate another role as costing
+    # approver (Settings -> costing_approver_role) -- apply it here so it takes effect on every
+    # new hire automatically, not just the people already on the team when the setting was set.
+    if target_ws and target_ws.get("costing_approver_role") == role:
+        invite_permissions = {**invite_permissions, "modules": {**invite_permissions.get("modules", {}), "quotes": "full"}}
 
     if len(req.password) < min_password_length:
         raise HTTPException(status_code=400, detail=f"Password must be at least {min_password_length} characters")
-
-    if not req.invite_code:
-        await execute(
-            "insert into workspaces (id, name, owner_email) values (:id, :name, :owner_email)",
-            id=workspace_id, name=req.workspace_name or f"{req.name}'s Fleet", owner_email=email,
-        )
-        await _seed_default_taxonomies(workspace_id)
 
     try:
         supa_user = await auth_supabase.admin_create_user(email, req.password)
@@ -675,11 +690,10 @@ async def register(req: RegisterReq):
             id=user_id, email=email, name=req.name, role=role, workspace_id=workspace_id,
             permissions=json_dumps(invite_permissions),
         )
-        if req.invite_code:
-            await execute(
-                "update invites set used_by = :uid, used_at = now() where code = :code",
-                uid=user_id, code=req.invite_code,
-            )
+        await execute(
+            "update invites set used_by = :uid, used_at = now() where code = :code",
+            uid=user_id, code=req.invite_code,
+        )
     except Exception:
         await auth_supabase.admin_delete_user(user_id)
         raise
@@ -688,11 +702,51 @@ async def register(req: RegisterReq):
         "select id, email, name, role, workspace_id, prefs, totp_enabled, created_at "
         "from user_profiles where id = :id", id=user_id,
     )
-    if req.invite_code:
-        await log_event(user, "invite.accepted", "user", user_id, {"email": email, "role": role})
+    await log_event(user, "invite.accepted", "user", user_id, {"email": email, "role": role})
 
     session = await auth_supabase.password_sign_in(email, req.password)
     return {"user": user, "token": session["access_token"], "refresh_token": session["refresh_token"]}
+
+@api.post("/admin/workspaces")
+async def provision_workspace(req: ProvisionWorkspaceReq, _owner: dict = Depends(require_platform_owner)):
+    """Owner-only replacement for the public self-serve workspace creation removed from /auth/register
+    above. Creates a new workspace plus its first admin user in one call; does not log the caller in
+    as that admin -- the owner hands the credentials to the new client directly."""
+    email = req.admin_email.lower()
+    if await fetch_one("select 1 from user_profiles where email = :email", email=email):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if len(req.admin_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    workspace_id = str(uuid.uuid4())
+    await execute(
+        "insert into workspaces (id, name, owner_email) values (:id, :name, :owner_email)",
+        id=workspace_id, name=req.workspace_name, owner_email=email,
+    )
+    await _seed_default_taxonomies(workspace_id)
+
+    try:
+        supa_user = await auth_supabase.admin_create_user(email, req.admin_password)
+    except auth_supabase.SupabaseAuthError as e:
+        await execute("delete from workspaces where id = :id", id=workspace_id)
+        raise HTTPException(status_code=e.status_code if e.status_code < 500 else 400, detail=e.detail)
+    user_id = supa_user["id"]
+
+    try:
+        await execute(
+            "insert into user_profiles (id, email, name, role, workspace_id, permissions) "
+            "values (:id, :email, :name, 'admin', :workspace_id, :permissions ::jsonb)",
+            id=user_id, email=email, name=req.admin_name, workspace_id=workspace_id,
+            permissions=json_dumps(PROFILE_PRESETS.get("admin", {})),
+        )
+    except Exception:
+        await auth_supabase.admin_delete_user(user_id)
+        raise
+
+    user = await fetch_one(
+        "select id, email, name, role, workspace_id, created_at from user_profiles where id = :id", id=user_id,
+    )
+    return {"workspace_id": workspace_id, "admin": user}
 
 LOCKOUT_COOLDOWN_MINUTES = 15
 
@@ -1031,6 +1085,40 @@ async def deactivate_user(uid: str, user: dict = Depends(get_current_user)):
     return await fetch_one(f"select {SAFE_USER_COLS} from user_profiles where id = :id", id=uid)
 
 PASSWORD_RESET_TTL_MINUTES = 15
+PASSWORD_RESET_COOLDOWN_MINUTES = 2  # cheap dupe-send guard; not real rate limiting (none exists in this codebase)
+
+async def _send_password_reset_email(target: dict, requested_by_text: str, ws_name: str) -> Optional[str]:
+    """Shared by every reset-issuing path (admin/manager-triggered, self-service forgot-password,
+    and the owner's force-reset) so the token/email logic exists exactly once."""
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    await execute(
+        "insert into password_resets (id, user_id, token_hash, expires_at) values (:id, :uid, :hash, :exp)",
+        id=str(uuid.uuid4()), uid=target["id"], hash=token_hash,
+        exp=datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES),
+    )
+    link = f"{FRONTEND_URL}/reset-password?token={token}"
+    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
+    html = (
+        f'<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:3px solid #0EA5E9">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape(ws_name)}</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:22px">Reset your password</h1></td></tr>'
+        f'<tr><td style="padding:24px">'
+        f'<p style="margin:0 0 16px 0">{escape(requested_by_text)} for your {escape(from_name)} account ({escape(target["email"])}).</p>'
+        f'<p style="margin:0 0 20px 0"><a href="{escape(link)}" style="display:inline-block;background:#0f172a;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px">Choose a new password</a></p>'
+        f'<p style="margin:0;font-size:13px;color:#64748b">This link expires in {PASSWORD_RESET_TTL_MINUTES} minutes and can only be used once. If you didn\'t expect this, you can ignore this email — your password won\'t change.</p>'
+        f'<p style="margin:16px 0 0 0;font-size:12px;color:#888">Sent by {escape(from_name)}. We never ask for your password or card details by email.</p>'
+        f'</td></tr></table>'
+    )
+    return await send_email(to=target["email"], subject=f"Reset your {from_name} password", html=html)
+
+async def _recent_reset_exists(user_id: str) -> bool:
+    row = await fetch_one(
+        "select 1 from password_resets where user_id = :uid and created_at > :since",
+        uid=user_id, since=datetime.now(timezone.utc) - timedelta(minutes=PASSWORD_RESET_COOLDOWN_MINUTES),
+    )
+    return row is not None
 
 @api.post("/users/{uid}/reset-password")
 async def reset_user_password(uid: str, user: dict = Depends(get_current_user)):
@@ -1042,31 +1130,40 @@ async def reset_user_password(uid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Forbidden")
     target = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
     if not target: raise HTTPException(status_code=404, detail="Not found")
+    if target["role"] == "admin":
+        # Any admin/manager in a workspace could otherwise reset a co-admin's password with zero
+        # platform-owner involvement -- admin accounts sit at the top of a workspace's permission
+        # tree, so this specifically routes through /admin/users/{uid}/force-reset-password instead.
+        raise HTTPException(status_code=403, detail="Admin password resets must go through the FleetIntel team directly")
 
-    token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    await execute(
-        "insert into password_resets (id, user_id, token_hash, expires_at) values (:id, :uid, :hash, :exp)",
-        id=str(uuid.uuid4()), uid=uid, hash=token_hash,
-        exp=datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES),
-    )
     ws = await fetch_one("select name from workspaces where id = :id", id=user["workspace_id"]) or {"name": "Fleet"}
-    link = f"{FRONTEND_URL}/reset-password?token={token}"
-    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
-    html = (
-        f'<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
-        f'<tr><td style="padding:24px;border-bottom:3px solid #0EA5E9">'
-        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape(ws["name"])}</div>'
-        f'<h1 style="margin:8px 0 0 0;font-size:22px">Reset your password</h1></td></tr>'
-        f'<tr><td style="padding:24px">'
-        f'<p style="margin:0 0 16px 0">An administrator requested a password reset for your {escape(from_name)} account ({escape(target["email"])}).</p>'
-        f'<p style="margin:0 0 20px 0"><a href="{escape(link)}" style="display:inline-block;background:#0f172a;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px">Choose a new password</a></p>'
-        f'<p style="margin:0;font-size:13px;color:#64748b">This link expires in {PASSWORD_RESET_TTL_MINUTES} minutes and can only be used once. If you didn\'t expect this, you can ignore this email — your password won\'t change.</p>'
-        f'<p style="margin:16px 0 0 0;font-size:12px;color:#888">Sent by {escape(from_name)}. We never ask for your password or card details by email.</p>'
-        f'</td></tr></table>'
-    )
-    email_id = await send_email(to=target["email"], subject=f"Reset your {from_name} password", html=html)
+    email_id = await _send_password_reset_email(target, "An administrator requested a password reset", ws["name"])
     await log_event(user, "user.password_reset", "user", uid, {"name": target["name"]})
+    return {"ok": True, "email_id": email_id}
+
+@api.post("/auth/forgot-password")
+async def forgot_password(req: ForgotPasswordReq):
+    """Public self-service reset request -- deliberately returns the identical response whether the
+    email exists, doesn't exist, or belongs to an admin, so the response itself never leaks account
+    existence or role. Admin accounts are excluded from self-service by design (see
+    reset_user_password's comment); they're pointed at contacting the FleetIntel team instead."""
+    target = await fetch_one("select * from user_profiles where email = :email", email=req.email.lower())
+    if target and target["role"] != "admin" and not await _recent_reset_exists(target["id"]):
+        ws = await fetch_one("select name from workspaces where id = :id", id=target["workspace_id"]) or {"name": "Fleet"}
+        await _send_password_reset_email(target, "You (or someone using your email) requested a password reset", ws["name"])
+        await log_event(target, "user.password_reset_requested", "user", str(target["id"]), {})
+    return {"ok": True}
+
+@api.post("/admin/users/{uid}/force-reset-password")
+async def force_reset_password(uid: str, owner: dict = Depends(require_platform_owner)):
+    """Owner-only: the actual mechanism behind 'admin accounts contact the FleetIntel team' -- lets
+    the owner send a reset link to ANY user, admin included, across any workspace. Without this,
+    reset_user_password's admin block above would leave no way to ever complete one."""
+    target = await fetch_one("select * from user_profiles where id = :id", id=uid)
+    if not target: raise HTTPException(status_code=404, detail="Not found")
+    ws = await fetch_one("select name from workspaces where id = :id", id=target["workspace_id"]) or {"name": "Fleet"}
+    email_id = await _send_password_reset_email(target, "The FleetIntel team processed a password reset request", ws["name"])
+    await log_event(owner, "user.password_reset", "user", uid, {"name": target["name"], "via": "platform_owner"})
     return {"ok": True, "email_id": email_id}
 
 @api.post("/auth/reset-password")
