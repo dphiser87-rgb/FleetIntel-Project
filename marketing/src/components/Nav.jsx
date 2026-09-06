@@ -4,6 +4,7 @@ import { trackEvent } from "@/utils/trackEvent";
 const APP_URL = "https://app.fleetintel.africa";
 
 const LINKS = [
+  { href: "/", label: "Home" },
   { href: "/#how-it-works", label: "How it works" },
   { href: "/#features", label: "Features" },
   { href: "/#why", label: "Why FleetIntel" },
