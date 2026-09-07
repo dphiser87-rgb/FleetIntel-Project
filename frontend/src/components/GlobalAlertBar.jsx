@@ -164,7 +164,11 @@ export default function GlobalAlertBar() {
   }
 
   return (
-    <div className="bg-[#0b0b0d] border-b border-border px-8 py-3 flex items-center gap-6 flex-wrap relative" data-testid="live-alerts-bar">
+    <div
+      className="bg-[#0b0b0d] border-b border-border relative"
+      data-testid="live-alerts-bar"
+    >
+    <div className="px-8 py-3 flex items-center gap-6 flex-wrap">
       <div className="flex items-center gap-2">
         <span className="w-2 h-2 bg-primary rounded-full animate-pulse" />
         <span className="text-xs uppercase tracking-widest text-primary font-bold">Live alerts</span>
@@ -243,6 +247,14 @@ export default function GlobalAlertBar() {
           <X size={12} /> Hide
         </button>
       </div>
+    </div>
+      <div
+        className="h-0.5 w-full"
+        style={{
+          background: alerts.critical > 0 ? "hsl(var(--destructive))" : alerts.warnings > 0 ? "#F97316" : "#34C759",
+          opacity: 0.6,
+        }}
+      />
     </div>
   );
 }
