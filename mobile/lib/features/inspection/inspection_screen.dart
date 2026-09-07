@@ -4,14 +4,17 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:signature/signature.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/app_theme.dart';
+import 'vehicle_diagram.dart';
 
 /// Checklist item types and defect-capture rules mirror the backend contract (InspectionAnswer /
 /// InspectionIn in server.py) and the proven Expo prototype's InspectionScreen.js: a "fail" answer
@@ -24,6 +27,8 @@ class _Answer {
   String note = '';
   String? photoDataUrl;
   String? defectType;
+  final noteController = TextEditingController();
+  final key = GlobalKey();
 }
 
 class InspectionScreen extends ConsumerStatefulWidget {
@@ -43,18 +48,30 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
   final _notesController = TextEditingController();
   final _odometerController = TextEditingController();
   final _signatureController = SignatureController(penColor: Colors.white, penStrokeWidth: 3);
+  final _speech = SpeechToText();
   String? _signatureDataUrl;
   bool _submitting = false;
+  bool _speechAvailable = false;
   final _picker = ImagePicker();
 
   List<Map<String, dynamic>> get _sections =>
       (widget.template['sections'] as List? ?? []).map((s) => Map<String, dynamic>.from(s)).toList();
 
   @override
+  void initState() {
+    super.initState();
+    _speech.initialize().then((ok) => setState(() => _speechAvailable = ok));
+  }
+
+  @override
   void dispose() {
     _notesController.dispose();
     _odometerController.dispose();
     _signatureController.dispose();
+    for (final a in _answers.values) {
+      a.noteController.dispose();
+    }
+    _speech.stop();
     super.dispose();
   }
 
@@ -94,6 +111,29 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
 
   bool get _canSubmit => !_odometerMissing && _signatureDataUrl != null && !_hasUnresolvedFails;
 
+  /// Jumps to the first checklist item whose label matches the tapped diagram hotspot's
+  /// keywords -- lets a driver tap "Tyres" on the vehicle diagram instead of scrolling and
+  /// reading section headers to find where tyre-related items live.
+  void _onTapHotspot(VehicleHotspot hotspot) {
+    final keywords = kHotspotKeywords[hotspot] ?? [];
+    for (final section in _sections) {
+      for (final item in (section['items'] as List? ?? [])) {
+        final map = Map<String, dynamic>.from(item);
+        final label = (map['label'] as String? ?? '').toLowerCase();
+        if (keywords.any((k) => label.contains(k))) {
+          final ctx = _answerFor(map['id'] as String).key.currentContext;
+          if (ctx != null) {
+            Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300), alignment: 0.1);
+          }
+          return;
+        }
+      }
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('No ${kHotspotLabels[hotspot]!.toLowerCase()} items in this checklist.')),
+    );
+  }
+
   Future<void> _openSignaturePad() async {
     _signatureController.clear();
     final result = await showModalBottomSheet<Uint8List?>(
@@ -107,7 +147,7 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
     }
   }
 
-  Future<({double? lat, double? lng, String status})> _captureLocation() async {
+  Future<({double? lat, double? lng, String status, String? address})> _captureLocation() async {
     try {
       final permission = await Geolocator.checkPermission();
       var granted = permission;
@@ -115,17 +155,33 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
         granted = await Geolocator.requestPermission();
       }
       if (granted == LocationPermission.denied || granted == LocationPermission.deniedForever) {
-        return (lat: null, lng: null, status: 'denied');
+        return (lat: null, lng: null, status: 'denied', address: null);
       }
       if (!await Geolocator.isLocationServiceEnabled()) {
-        return (lat: null, lng: null, status: 'unavailable');
+        return (lat: null, lng: null, status: 'unavailable', address: null);
       }
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
       ).timeout(const Duration(seconds: 8));
-      return (lat: pos.latitude, lng: pos.longitude, status: 'captured');
+
+      String? address;
+      try {
+        final placemarks = await Geocoding()
+            .placemarkFromCoordinates(pos.latitude, pos.longitude)
+            .timeout(const Duration(seconds: 6));
+        if (placemarks.isNotEmpty) {
+          final p = placemarks.first;
+          address = [p.street, p.locality, p.administrativeArea, p.country]
+              .where((s) => s != null && s.isNotEmpty)
+              .join(', ');
+        }
+      } catch (_) {
+        // Reverse geocoding is best-effort -- the coordinates alone are still useful without it.
+      }
+
+      return (lat: pos.latitude, lng: pos.longitude, status: 'captured', address: address);
     } catch (_) {
-      return (lat: null, lng: null, status: 'unavailable');
+      return (lat: null, lng: null, status: 'unavailable', address: null);
     }
   }
 
@@ -152,6 +208,7 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
       'started_at': _startedAt,
       'latitude': location.lat,
       'longitude': location.lng,
+      'address': location.address,
       'location_status': location.status,
       'signature': _signatureDataUrl,
       'client_submission_id': _clientSubmissionId,
@@ -217,6 +274,16 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
         children: [
           Text('${widget.vehicle['make'] ?? ''} ${widget.vehicle['model'] ?? ''}',
               style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: VehicleDiagram(
+                vehicleType: widget.vehicle['type'] as String? ?? 'car',
+                onTapHotspot: _onTapHotspot,
+              ),
+            ),
+          ),
           const SizedBox(height: 16),
           Card(
             child: Padding(
@@ -235,6 +302,8 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
             missingForFail: _missingForFail,
             onCapturePhoto: _capturePhoto,
             onChanged: () => setState(() {}),
+            speech: _speech,
+            speechAvailable: _speechAvailable,
           ),
           const SizedBox(height: 12),
           Card(
@@ -243,7 +312,12 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
               child: TextField(
                 controller: _notesController,
                 maxLines: 3,
-                decoration: const InputDecoration(labelText: 'General notes'),
+                decoration: InputDecoration(
+                  labelText: 'General notes',
+                  suffixIcon: _speechAvailable
+                      ? _VoiceMicButton(speech: _speech, controller: _notesController)
+                      : null,
+                ),
               ),
             ),
           ),
@@ -300,6 +374,55 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
   }
 }
 
+/// Toggles on-device speech recognition and appends whatever it hears to [controller]'s text --
+/// shared by every note/description field in this screen so a driver never has to type with
+/// gloves on. Best-effort: if speech isn't available on the device this just doesn't render
+/// (see _speechAvailable), it's never a blocker.
+class _VoiceMicButton extends StatefulWidget {
+  const _VoiceMicButton({required this.speech, required this.controller});
+
+  final SpeechToText speech;
+  final TextEditingController controller;
+
+  @override
+  State<_VoiceMicButton> createState() => _VoiceMicButtonState();
+}
+
+class _VoiceMicButtonState extends State<_VoiceMicButton> {
+  bool _listening = false;
+  String _baseText = '';
+
+  Future<void> _toggle() async {
+    if (_listening) {
+      await widget.speech.stop();
+      setState(() => _listening = false);
+      return;
+    }
+    _baseText = widget.controller.text;
+    setState(() => _listening = true);
+    await widget.speech.listen(
+      onResult: (result) {
+        final heard = result.recognizedWords;
+        final merged = _baseText.isEmpty ? heard : '$_baseText $heard';
+        widget.controller.text = merged;
+        widget.controller.selection = TextSelection.collapsed(offset: merged.length);
+      },
+      listenFor: const Duration(seconds: 30),
+      pauseFor: const Duration(seconds: 4),
+    );
+    if (mounted) setState(() => _listening = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: Icon(_listening ? Icons.mic : Icons.mic_none, color: _listening ? AppColors.primary : AppColors.muted),
+      onPressed: _toggle,
+      tooltip: 'Dictate',
+    );
+  }
+}
+
 class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.section,
@@ -307,6 +430,8 @@ class _SectionCard extends StatelessWidget {
     required this.missingForFail,
     required this.onCapturePhoto,
     required this.onChanged,
+    required this.speech,
+    required this.speechAvailable,
   });
 
   final Map<String, dynamic> section;
@@ -314,6 +439,8 @@ class _SectionCard extends StatelessWidget {
   final List<String> Function(Map<String, dynamic>) missingForFail;
   final Future<void> Function(String) onCapturePhoto;
   final VoidCallback onChanged;
+  final SpeechToText speech;
+  final bool speechAvailable;
 
   @override
   Widget build(BuildContext context) {
@@ -331,6 +458,8 @@ class _SectionCard extends StatelessWidget {
               answer: answerFor(item['id'] as String),
               onCapturePhoto: onCapturePhoto,
               onChanged: onChanged,
+              speech: speech,
+              speechAvailable: speechAvailable,
             ),
           ],
         ),
@@ -340,12 +469,21 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _ItemRow extends StatelessWidget {
-  const _ItemRow({required this.item, required this.answer, required this.onCapturePhoto, required this.onChanged});
+  const _ItemRow({
+    required this.item,
+    required this.answer,
+    required this.onCapturePhoto,
+    required this.onChanged,
+    required this.speech,
+    required this.speechAvailable,
+  });
 
   final Map<String, dynamic> item;
   final _Answer answer;
   final Future<void> Function(String) onCapturePhoto;
   final VoidCallback onChanged;
+  final SpeechToText speech;
+  final bool speechAvailable;
 
   @override
   Widget build(BuildContext context) {
@@ -353,8 +491,10 @@ class _ItemRow extends StatelessWidget {
     final label = item['label'] as String? ?? '';
     final required = item['required'] == true;
     final isFail = (answer.value ?? '').toLowerCase() == 'fail';
+    answer.noteController.text = answer.note;
 
     return Container(
+      key: answer.key,
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.only(top: 12),
       decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.border))),
@@ -402,8 +542,15 @@ class _ItemRow extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: TextField(
+                controller: answer.noteController,
                 onChanged: (v) { answer.note = v; },
-                decoration: const InputDecoration(isDense: true, hintText: 'Note…'),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Note…',
+                  suffixIcon: speechAvailable
+                      ? _VoiceMicButton(speech: speech, controller: answer.noteController)
+                      : null,
+                ),
               ),
             ),
           if (isFail) ...[
@@ -418,8 +565,15 @@ class _ItemRow extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             TextField(
+              controller: answer.noteController,
               onChanged: (v) { answer.note = v; onChanged(); },
-              decoration: const InputDecoration(isDense: true, hintText: 'Describe the defect… *'),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Describe the defect… *',
+                suffixIcon: speechAvailable
+                    ? _VoiceMicButton(speech: speech, controller: answer.noteController)
+                    : null,
+              ),
             ),
             const SizedBox(height: 8),
             OutlinedButton(

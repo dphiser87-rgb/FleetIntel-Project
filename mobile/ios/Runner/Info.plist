@@ -30,6 +30,10 @@
 	<string>FleetIntel uses your camera to attach photos to defects found during vehicle inspections.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>FleetIntel records the vehicle's location when you complete an inspection.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>FleetIntel uses your microphone to let you dictate notes instead of typing.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>FleetIntel converts your dictated notes to text.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
