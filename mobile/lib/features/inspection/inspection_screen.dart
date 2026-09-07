@@ -14,7 +14,6 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/app_theme.dart';
-import 'vehicle_diagram.dart';
 
 /// Checklist item types and defect-capture rules mirror the backend contract (InspectionAnswer /
 /// InspectionIn in server.py) and the proven Expo prototype's InspectionScreen.js: a "fail" answer
@@ -110,29 +109,6 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
   }
 
   bool get _canSubmit => !_odometerMissing && _signatureDataUrl != null && !_hasUnresolvedFails;
-
-  /// Jumps to the first checklist item whose label matches the tapped diagram hotspot's
-  /// keywords -- lets a driver tap "Tyres" on the vehicle diagram instead of scrolling and
-  /// reading section headers to find where tyre-related items live.
-  void _onTapHotspot(VehicleHotspot hotspot) {
-    final keywords = kHotspotKeywords[hotspot] ?? [];
-    for (final section in _sections) {
-      for (final item in (section['items'] as List? ?? [])) {
-        final map = Map<String, dynamic>.from(item);
-        final label = (map['label'] as String? ?? '').toLowerCase();
-        if (keywords.any((k) => label.contains(k))) {
-          final ctx = _answerFor(map['id'] as String).key.currentContext;
-          if (ctx != null) {
-            Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300), alignment: 0.1);
-          }
-          return;
-        }
-      }
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('No ${kHotspotLabels[hotspot]!.toLowerCase()} items in this checklist.')),
-    );
-  }
 
   Future<void> _openSignaturePad() async {
     _signatureController.clear();
@@ -274,16 +250,6 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
         children: [
           Text('${widget.vehicle['make'] ?? ''} ${widget.vehicle['model'] ?? ''}',
               style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: VehicleDiagram(
-                vehicleType: widget.vehicle['type'] as String? ?? 'car',
-                onTapHotspot: _onTapHotspot,
-              ),
-            ),
-          ),
           const SizedBox(height: 16),
           Card(
             child: Padding(
