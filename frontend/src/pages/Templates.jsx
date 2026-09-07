@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Trash, PencilSimple, Copy, ClipboardText, MagnifyingGlass } from "@phosphor-icons/react";
+import { Plus, Trash, PencilSimple, Copy, ClipboardText, MagnifyingGlass, X } from "@phosphor-icons/react";
 
 const TYPE_BADGE = {
   vehicle: "border-[hsl(var(--chart-4))] text-[hsl(var(--chart-4))]",
@@ -17,12 +17,135 @@ const AVATAR_COLORS = ["#34C759", "#3B82F6", "#A855F7", "#14B8A6", "#FF3B30", "#
 const initials = (name) => (name || "?").split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
 const avatarColor = (id) => AVATAR_COLORS[[...(id || "")].reduce((s, c) => s + c.charCodeAt(0), 0) % AVATAR_COLORS.length];
 
+function itemCountOf(t) {
+  return (t.sections || []).reduce((s, sec) => s + (sec.items?.length || 0), 0);
+}
+
+function vehicleGroupLabel(t, groups) {
+  if (t.assignment_scope === "group") {
+    return groups.find(g => g.id === t.group_id)?.name || "Unnamed group";
+  }
+  if (t.assignment_scope === "specific") {
+    const n = (t.target_ids || []).length;
+    return `${n} specific vehicle${n === 1 ? "" : "s"}`;
+  }
+  return "All groups";
+}
+
+// Read-only preview of a template — opened by clicking anywhere on its row (not the action
+// icons). Mirrors the reference design's slide-over: Details / All Items tabs, footer actions.
+function DetailPanel({ template, users, groups, onClose, onEdit, onDelete, onDuplicate }) {
+  const [tab, setTab] = useState("details");
+  const enabledCount = itemCountOf(template);
+  const createdByName = users.find(u => u.id === template.created_by)?.name || "—";
+  const freq = template.frequency;
+
+  const rows = [
+    { label: "Template name", value: template.name },
+    { label: "Type", value: (template.type || "vehicle").replace(/^\w/, c => c.toUpperCase()) },
+    { label: "Frequency", value: freq ? FREQUENCY_LABEL[freq] : "Not scheduled" },
+    { label: "Number of enabled items", value: `${enabledCount}` },
+    { label: "Last update", value: template.updated_at ? new Date(template.updated_at).toLocaleString() : new Date(template.created_at).toLocaleDateString() },
+    { label: "Created by", value: createdByName },
+    { label: "Vehicle group", value: vehicleGroupLabel(template, groups) },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex" onClick={onClose} data-testid="template-detail-panel">
+      <div className="ml-auto h-full w-full max-w-md bg-[#0b0b0d] border-l border-border flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 flex items-center gap-4 flex-shrink-0 border-b border-border">
+          <div className="w-11 h-11 flex items-center justify-center text-white font-bold text-sm flex-shrink-0" style={{ background: avatarColor(template.id) }}>
+            {initials(template.name)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="overline text-muted-foreground">{freq ? FREQUENCY_LABEL[freq] : "Not scheduled"} · {enabledCount} steps</p>
+            <p className="font-display font-bold text-base uppercase leading-tight truncate">{template.name}</p>
+            <p className="text-muted-foreground text-xs mt-0.5 mono">
+              Last update: {template.updated_at ? new Date(template.updated_at).toLocaleString() : new Date(template.created_at).toLocaleDateString()}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" data-testid="close-detail-panel">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex border-b border-border flex-shrink-0">
+          {[["details", "Details"], ["items", "All Items"]].map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-colors border-b-2 -mb-px ${tab === key ? "text-primary border-primary" : "text-muted-foreground border-transparent hover:text-foreground"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {tab === "details" && (
+            <div className="divide-y divide-border">
+              {rows.map(row => (
+                <div key={row.label} className="py-3">
+                  <p className="overline text-muted-foreground mb-1">{row.label}</p>
+                  <p className="text-sm font-medium">{row.value}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {tab === "items" && (
+            <div className="space-y-5">
+              {(template.sections || []).map(sec => (sec.items || []).length > 0 && (
+                <div key={sec.id}>
+                  <p className="overline text-muted-foreground mb-2">{sec.title}</p>
+                  <div className="space-y-1">
+                    {sec.items.map(item => (
+                      <div key={item.id} className="flex items-center gap-2.5 py-1.5 px-2">
+                        <span className="text-base w-6 text-center">{item.icon?.startsWith("data:") ? <img src={item.icon} alt="" className="w-5 h-5 object-cover rounded-full inline-block" /> : (item.icon || "📋")}</span>
+                        <span className="text-sm">{item.label}</span>
+                        <span className="ml-auto text-[10px] font-semibold text-primary">ON</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {itemCountOf(template) === 0 && (
+                <div className="text-center py-12 text-sm text-muted-foreground">No items in this template yet.</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border flex-shrink-0">
+          <button onClick={() => { onDelete(); onClose(); }} data-testid="detail-delete" className="flex items-center gap-1.5 px-4 py-2 text-xs uppercase tracking-widest font-semibold border border-destructive text-destructive hover:bg-destructive/10 transition-colors">
+            <Trash size={14} /> Delete
+          </button>
+          <button onClick={() => { onDuplicate(); onClose(); }} data-testid="detail-duplicate" className="flex items-center gap-1.5 px-4 py-2 text-xs uppercase tracking-widest font-semibold border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors">
+            <Copy size={14} /> Duplicate
+          </button>
+          <button onClick={onEdit} data-testid="detail-edit" className="flex items-center gap-1.5 px-4 py-2 text-xs uppercase tracking-widest font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+            <PencilSimple size={14} /> Edit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Templates() {
+  const navigate = useNavigate();
   const [templates, setTemplates] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState(null);
 
   const load = () => api.get("/templates").then(r => setTemplates(r.data));
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    api.get("/users").then(r => setUsers(r.data || [])).catch(() => {});
+    api.get("/vehicle-groups").then(r => setGroups(r.data || [])).catch(() => {});
+  }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -82,11 +205,16 @@ export default function Templates() {
             </thead>
             <tbody>
               {filtered.map(t => {
-                const itemCount = (t.sections || []).reduce((s, sec) => s + (sec.items?.length || 0), 0);
+                const itemCount = itemCountOf(t);
                 const type = t.type || "vehicle";
                 const freq = t.frequency;
                 return (
-                  <tr key={t.id} data-testid={`template-row-${t.id}`} className="border-b border-border/50 hover:bg-white/[0.02]">
+                  <tr
+                    key={t.id}
+                    data-testid={`template-row-${t.id}`}
+                    onClick={() => setSelected(t)}
+                    className="border-b border-border/50 hover:bg-white/[0.02] cursor-pointer"
+                  >
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[11px] font-bold shrink-0" style={{ background: avatarColor(t.id) }}>
@@ -109,14 +237,14 @@ export default function Templates() {
                       {t.updated_at ? new Date(t.updated_at).toLocaleString() : new Date(t.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-4 py-3.5">
-                      <div className="flex gap-1.5 justify-end">
-                        <Link to={`/templates/${t.id}`} data-testid={`edit-template-${t.id}`} className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
+                      <div className="flex gap-1.5 justify-end" onClick={(e) => e.stopPropagation()}>
+                        <Link to={`/templates/${t.id}`} data-testid={`edit-template-${t.id}`} title="Edit" className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
                           <PencilSimple size={14} />
                         </Link>
-                        <button onClick={() => duplicate(t.id)} data-testid={`duplicate-template-${t.id}`} className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
+                        <button onClick={() => duplicate(t.id)} data-testid={`duplicate-template-${t.id}`} title="Copy" className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
                           <Copy size={14} />
                         </button>
-                        <button onClick={() => del(t.id)} data-testid={`delete-template-${t.id}`} className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
+                        <button onClick={() => del(t.id)} data-testid={`delete-template-${t.id}`} title="Delete" className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
                           <Trash size={14} />
                         </button>
                       </div>
@@ -134,6 +262,18 @@ export default function Templates() {
           )}
         </div>
       </div>
+
+      {selected && (
+        <DetailPanel
+          template={selected}
+          users={users}
+          groups={groups}
+          onClose={() => setSelected(null)}
+          onEdit={() => navigate(`/templates/${selected.id}`)}
+          onDelete={() => del(selected.id)}
+          onDuplicate={() => duplicate(selected.id)}
+        />
+      )}
     </div>
   );
 }

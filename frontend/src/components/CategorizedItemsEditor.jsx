@@ -21,14 +21,14 @@ const PRESET_ITEMS = {
     ["Fire extinguisher", "🔴"], ["First aid kit", "➕"], ["Vehicle documents", "📄"],
   ],
   exterior: [
-    ["Tires & Wheels", "🛞"], ["Forks", "🍴"], ["Mast & Chains", "⛓️"], ["Safety Devices", "🦺"],
-    ["Fluid Leaks", "💧"], ["Counterweight & Body", "⚖️"], ["Engine Oil", "🛢️"], ["Coolant", "🌡️"],
-    ["Belts & Hoses", "🔧"], ["Air Filter", "🌬️"], ["Battery", "🔋"], ["Fuel System", "⛽"],
-    ["Hydraulic Fluid", "🧴"],
+    ["Engine oil", "🛢️"], ["Coolant level", "🌡️"], ["Power steering fluid", "💧"], ["Brake fluid", "🔵"],
+    ["Fuel", "⛽"], ["Wheel rim & nuts", "⚙️"], ["Tyres", "⭕"], ["Tyre pressure", "💨"],
+    ["Head / stop lights", "💡"], ["Tail / dash lights", "🔴"], ["Indicators", "🟡"], ["Reverse lights", "⬜"],
+    ["Body exterior", "🚛"], ["Windscreen chips / cracks", "🔲"], ["Exterior mirrors", "🪞"],
   ],
   trailer: [
-    ["Tyres", "⭕"], ["Coupling Plate", "🔗"], ["Rear Doors", "🚪"],
-    ["Number Plate", "🪧"], ["Lights", "💡"], ["Body (External)", "🚛"],
+    ["Coupling / fifth wheel", "🔗"], ["Trailer lights", "💡"], ["Trailer tyres", "⭕"], ["Trailer body", "📦"],
+    ["Load securing", "⛓️"], ["Trailer brakes", "⛔"], ["Reflectors", "🔆"], ["Trailer doors / seals", "🚪"],
   ],
 };
 
