@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { usePolling } from "@/hooks/use-polling";
 
-const BREAKDOWN_COLOR = { compliant: "#34C759", due_soon: "#FFCC00", overdue: "#FF3B30", missed: "#8E8E93" };
+const BREAKDOWN_COLOR = { compliant: "#34C759", due_soon: "#FFCC00", overdue: "#FF3B30", missed: "#22C55E" };
 const BREAKDOWN_LABEL = { compliant: "Compliant", due_soon: "Due Soon", overdue: "Overdue", missed: "Missed" };
 
 const scoreColor = (s) => (s >= 80 ? "text-[#34C759]" : s >= 50 ? "text-[#FFCC00]" : "text-primary");
