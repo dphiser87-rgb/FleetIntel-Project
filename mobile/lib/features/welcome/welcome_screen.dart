@@ -19,11 +19,12 @@ class WelcomeScreen extends ConsumerWidget {
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(l10n.welcomeMessage(name), style: Theme.of(context).textTheme.headlineMedium),
               const SizedBox(height: 8),
@@ -41,6 +42,7 @@ class WelcomeScreen extends ConsumerWidget {
               const SizedBox(height: 16),
               const PendingSyncBadge(),
             ],
+            ),
           ),
         ),
       ),
