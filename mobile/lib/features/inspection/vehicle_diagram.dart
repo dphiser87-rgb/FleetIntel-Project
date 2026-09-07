@@ -38,23 +38,31 @@ class VehicleDiagram extends StatelessWidget {
   Widget build(BuildContext context) {
     return AspectRatio(
       aspectRatio: 16 / 9,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          CustomPaint(painter: _VehiclePainter(vehicleType: vehicleType)),
-          ..._hotspotsFor(vehicleType).entries.map(
-                (entry) => Positioned(
-                  left: entry.value.left,
-                  top: entry.value.top,
-                  width: entry.value.width,
-                  height: entry.value.height,
-                  child: _HotspotButton(
-                    label: kHotspotLabels[entry.key]!,
-                    onTap: () => onTapHotspot(entry.key),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          final h = constraints.maxHeight;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              CustomPaint(painter: _VehiclePainter(vehicleType: vehicleType)),
+              // Hotspot rects are stored as fractions (0..1) of the diagram's own size, not
+              // absolute pixels -- scale them here against the actual LayoutBuilder constraints.
+              ..._hotspotsFor(vehicleType).entries.map(
+                    (entry) => Positioned(
+                      left: entry.value.left * w,
+                      top: entry.value.top * h,
+                      width: entry.value.width * w,
+                      height: entry.value.height * h,
+                      child: _HotspotButton(
+                        label: kHotspotLabels[entry.key]!,
+                        onTap: () => onTapHotspot(entry.key),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
