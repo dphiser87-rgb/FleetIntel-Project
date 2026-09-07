@@ -49,11 +49,21 @@ export default function ComplianceDashboard() {
           <div className="overline mb-4">Compliance breakdown</div>
           <ResponsiveContainer width="100%" height={260}>
             <PieChart>
-              <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} paddingAngle={2}>
-                {pieData.map((d) => <Cell key={d.key} fill={BREAKDOWN_COLOR[d.key]} />)}
+              <Pie
+                data={pieData}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                outerRadius={90}
+                paddingAngle={2}
+                label={({ name, value, percent }) => `${name} ${value} (${Math.round(percent * 100)}%)`}
+                labelLine={{ stroke: "#636366" }}
+              >
+                {pieData.map((d) => <Cell key={d.key} fill={BREAKDOWN_COLOR[d.key]} stroke="#0b0b0d" strokeWidth={2} />)}
               </Pie>
               <Tooltip contentStyle={{ background: "#0b0b0d", border: "1px solid #27272a", fontFamily: "JetBrains Mono", fontSize: 12 }} />
-              <Legend />
+              <Legend formatter={(value, entry) => `${value} — ${entry.payload.value}`} />
             </PieChart>
           </ResponsiveContainer>
         </div>
