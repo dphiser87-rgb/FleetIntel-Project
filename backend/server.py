@@ -171,7 +171,8 @@ async def user_from_token(token: str) -> dict:
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
     user = await fetch_one(
-        "select id, email, name, role, workspace_id, prefs, totp_enabled, created_at, permissions "
+        "select id, email, name, role, workspace_id, prefs, totp_enabled, created_at, permissions, "
+        "phone, driver_id "
         "from user_profiles where id = :id",
         id=payload["sub"],
     )
@@ -226,7 +227,7 @@ class RegisterReq(BaseModel):
     password: str
     name: str
     role: Optional[Literal["admin", "manager", "inspector", "mechanic", "operations_manager", "finance",
-                            "workshop_head", "operations_staff", "finance_staff", "executive"]] = "manager"
+                            "workshop_head", "operations_staff", "finance_staff", "executive", "driver"]] = "manager"
     invite_code: Optional[str] = None
     workspace_name: Optional[str] = None
 
@@ -337,7 +338,7 @@ class PartAdjust(BaseModel):
 class InviteIn(BaseModel):
     email: EmailStr
     role: Literal["manager", "inspector", "mechanic", "admin", "operations_manager", "finance",
-                  "workshop_head", "operations_staff", "finance_staff", "executive"] = "manager"
+                  "workshop_head", "operations_staff", "finance_staff", "executive", "driver"] = "manager"
 
 class WorkspaceRename(BaseModel):
     name: Optional[str] = None
@@ -752,7 +753,18 @@ LOCKOUT_COOLDOWN_MINUTES = 15
 
 @api.post("/auth/login")
 async def login(req: LoginReq2FA):
-    email = req.email.lower()
+    identifier = req.email.strip()
+    if "@" in identifier:
+        email = identifier.lower()
+    else:
+        # Not email-shaped -- treat as a phone number (the mobile driver-login flow's alternate
+        # identifier) and resolve it to the account's real email before doing anything else.
+        # Supabase Auth itself only ever authenticates by email; this is a lookup step in front of
+        # that, not a second auth mechanism.
+        by_phone = await fetch_one("select email from user_profiles where phone = :phone", phone=identifier)
+        if not by_phone:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        email = by_phone["email"]
 
     # Look up the profile by email BEFORE attempting Supabase sign-in, so a locked account can be
     # rejected without even trying the password (and so a failed attempt has a row to increment on).
@@ -951,6 +963,11 @@ def _default_permissions(role: str) -> dict:
         # Pure oversight — full visibility everywhere, no write access anywhere. For CEO/COO-level
         # profiles: they need to see everything to make decisions, but shouldn't be editing records.
         modules = read_all
+    elif role == "driver":
+        # The most restrictive preset by design: a driver's whole job in the app is running their
+        # assigned vehicle's checklist -- nothing else. Not even read access elsewhere, unlike every
+        # other role above which defaults to read_all.
+        modules = {**{m: "none" for m in MODULE_KEYS}, "vehicle_checklist": "full"}
     else:
         modules = {m: "none" for m in MODULE_KEYS}
     return {
@@ -965,7 +982,7 @@ def _default_permissions(role: str) -> dict:
 
 PROFILE_PRESETS = {role: _default_permissions(role) for role in
                     ("admin", "manager", "inspector", "mechanic", "operations_manager", "finance",
-                     "workshop_head", "operations_staff", "finance_staff", "executive")}
+                     "workshop_head", "operations_staff", "finance_staff", "executive", "driver")}
 
 # --- Vehicle/asset visibility scoping ---
 # A second, data-level axis on top of the module (none/read/full) permissions above: which specific
@@ -3390,6 +3407,54 @@ def _validate_driver_app_access(email: Optional[str], app_access: dict):
     if (app_access or {}).get("vehicle_checklist") and not email:
         raise HTTPException(status_code=400, detail="Vehicle Checklist app access requires an email on file — add one in the Driver section first")
 
+async def _ensure_driver_account(driver_id: str, workspace_id: str) -> None:
+    """Finishes what the app_access.vehicle_checklist flag has always implied but never actually
+    did: creates the login account behind it. Called after any create/update that leaves that flag
+    true on a driver row. No-ops if a linked account already exists (checked by driver_id, so
+    flipping the flag off and back on doesn't create a second one), or if the driver has no email on
+    file (guarded already by _validate_driver_app_access, so that shouldn't happen in practice)."""
+    driver = await fetch_one("select * from drivers where id = :id", id=driver_id)
+    if not driver or not (driver.get("app_access") or {}).get("vehicle_checklist"):
+        return
+    if await fetch_one("select 1 from user_profiles where driver_id = :did", did=driver_id):
+        return
+    email = (driver.get("email") or "").lower()
+    if not email:
+        return
+
+    existing = await fetch_one("select id from user_profiles where email = :email", email=email)
+    if existing:
+        # An account with this email already exists (e.g. this person is also a staff user) --
+        # link rather than create a second, conflicting Supabase Auth identity.
+        await execute(
+            "update user_profiles set driver_id = :did, phone = coalesce(phone, :phone) where id = :id",
+            did=driver_id, phone=driver.get("phone"), id=existing["id"],
+        )
+        return
+
+    try:
+        supa_user = await auth_supabase.admin_create_user(email, secrets.token_urlsafe(24))
+    except auth_supabase.SupabaseAuthError as e:
+        logger.error(f"driver account provisioning failed for {email}: {e.detail}")
+        return
+    user_id = supa_user["id"]
+    try:
+        await execute(
+            "insert into user_profiles (id, email, name, role, workspace_id, permissions, phone, driver_id) "
+            "values (:id, :email, :name, 'driver', :ws, :permissions ::jsonb, :phone, :did)",
+            id=user_id, email=email, name=driver.get("name") or "Driver", ws=workspace_id,
+            permissions=json_dumps(PROFILE_PRESETS.get("driver", {})), phone=driver.get("phone"), did=driver_id,
+        )
+    except Exception:
+        await auth_supabase.admin_delete_user(user_id)
+        raise
+
+    target = await fetch_one("select id, email, name, workspace_id from user_profiles where id = :id", id=user_id)
+    ws = await fetch_one("select name from workspaces where id = :id", id=workspace_id) or {"name": "Fleet"}
+    await _send_password_reset_email(
+        target, "Your checklist app access is ready — set a password to get started", ws["name"],
+    )
+
 @api.get("/drivers")
 async def list_drivers(search: Optional[str] = None, limit: Optional[int] = None, offset: int = 0, user: dict = Depends(get_current_user)):
     if search:
@@ -3433,6 +3498,7 @@ async def create_driver(d: dict, user: dict = Depends(get_current_user)):
     )
     doc = await fetch_one("select * from drivers where id = :id", id=did)
     await log_event(user, "driver.created", "driver", did, {"name": doc["name"]})
+    await _ensure_driver_account(did, user["workspace_id"])
     return doc
 
 @api.get("/drivers/{did}")
@@ -3453,6 +3519,8 @@ async def update_driver(did: str, patch: dict, user: dict = Depends(get_current_
     if "hire_date" in patch: patch["hire_date"] = _parse_date(patch["hire_date"])
     if "license_issue_date" in patch: patch["license_issue_date"] = _parse_date(patch["license_issue_date"]) if patch["license_issue_date"] else None
     await update_row("drivers", did, user["workspace_id"], patch, DRIVER_COLS)
+    if "app_access" in patch:
+        await _ensure_driver_account(did, user["workspace_id"])
     return await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
 
 @api.delete("/drivers/{did}")
@@ -3477,6 +3545,45 @@ async def driver_history(did: str, user: dict = Depends(get_current_user)):
     )
     total = sum(m.get("actual_cost", 0) or 0 for m in maint if m.get("status") == "completed")
     return {"driver": d, "vehicle": vehicle, "inspections": inspections, "maintenance": maint, "total_cost": round(total, 2)}
+
+@api.get("/users/me/driver-context")
+async def driver_context(user: dict = Depends(get_current_user)):
+    """Powers the mobile driver flow's post-login screens: the vehicle already assigned to this
+    driver (so the app can ask them to confirm it rather than pick from an open list) and the
+    checklist templates that resolve for that vehicle -- same assignment_scope/group_id/target_ids
+    matching the web Inspection flow already relies on, reused here rather than reimplemented."""
+    if user.get("role") != "driver" or not user.get("driver_id"):
+        raise HTTPException(status_code=400, detail="Not a driver account")
+    driver = await fetch_one(
+        "select * from drivers where id = :id and workspace_id = :ws", id=user["driver_id"], ws=user["workspace_id"]
+    )
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver record not found")
+
+    vehicle = None
+    templates = []
+    if driver.get("assigned_vehicle_id"):
+        vehicle = await fetch_one(
+            "select * from vehicles where id = :id and workspace_id = :ws",
+            id=driver["assigned_vehicle_id"], ws=user["workspace_id"],
+        )
+        if vehicle:
+            candidates = await fetch_all(
+                "select * from templates where workspace_id = :ws and active = true and type = 'vehicle'",
+                ws=user["workspace_id"],
+            )
+            for t in candidates:
+                scope = t.get("assignment_scope", "all")
+                if scope == "all":
+                    applies = True
+                elif scope == "group":
+                    applies = vehicle.get("group_id") == t.get("group_id")
+                else:
+                    applies = vehicle["id"] in (t.get("target_ids") or [])
+                if applies:
+                    templates.append(t)
+
+    return {"driver": driver, "vehicle": vehicle, "templates": templates}
 
 def _d10(v) -> str:
     """Format a datetime (or None) as YYYY-MM-DD, matching the old ISO-string[:10] slicing."""
