@@ -4,7 +4,11 @@ import { api } from "@/lib/api";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { usePolling } from "@/hooks/use-polling";
 
+// The pie wedge and its legend entry intentionally use different colors per request -- wedge
+// stays green (the fill), legend swatch/text is red, so BREAKDOWN_COLOR and LEGEND_COLOR are two
+// separate maps rather than one shared color per status.
 const BREAKDOWN_COLOR = { compliant: "#34C759", due_soon: "#FFCC00", overdue: "#FF3B30", missed: "#22C55E" };
+const LEGEND_COLOR = { compliant: "#34C759", due_soon: "#FFCC00", overdue: "#FF3B30", missed: "#EF4444" };
 const BREAKDOWN_LABEL = { compliant: "Compliant", due_soon: "Due Soon", overdue: "Overdue", missed: "Missed" };
 
 const scoreColor = (s) => (s >= 80 ? "text-[#34C759]" : s >= 50 ? "text-[#FFCC00]" : "text-primary");
@@ -73,7 +77,18 @@ export default function ComplianceDashboard() {
                 {pieData.map((d) => <Cell key={d.key} fill={BREAKDOWN_COLOR[d.key]} stroke="#0b0b0d" strokeWidth={2} />)}
               </Pie>
               <Tooltip contentStyle={{ background: "#0b0b0d", border: "1px solid #27272a", fontFamily: "JetBrains Mono", fontSize: 12 }} />
-              <Legend formatter={(value, entry) => `${value} — ${entry.payload.value}`} />
+              <Legend
+                content={() => (
+                  <div className="flex items-center justify-center gap-4 mt-2">
+                    {pieData.map((d) => (
+                      <div key={d.key} className="flex items-center gap-1.5 text-sm" style={{ color: LEGEND_COLOR[d.key] }}>
+                        <span className="w-2.5 h-2.5" style={{ background: LEGEND_COLOR[d.key] }} />
+                        {d.name} — {d.value}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              />
             </PieChart>
           </ResponsiveContainer>
         </div>
