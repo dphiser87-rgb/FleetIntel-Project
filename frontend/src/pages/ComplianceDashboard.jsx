@@ -57,7 +57,17 @@ export default function ComplianceDashboard() {
                 cy="50%"
                 outerRadius={90}
                 paddingAngle={2}
-                label={({ name, value, percent }) => `${name} ${value} (${Math.round(percent * 100)}%)`}
+                label={({ cx, cy, midAngle, outerRadius, name, value, percent }) => {
+                  const RADIAN = Math.PI / 180;
+                  const r = outerRadius + 24;
+                  const x = cx + r * Math.cos(-midAngle * RADIAN);
+                  const y = cy + r * Math.sin(-midAngle * RADIAN);
+                  return (
+                    <text x={x} y={y} fill="#F0F1F3" fontSize={12} textAnchor={x > cx ? "start" : "end"} dominantBaseline="central">
+                      {`${name} ${value} (${Math.round(percent * 100)}%)`}
+                    </text>
+                  );
+                }}
                 labelLine={{ stroke: "#636366" }}
               >
                 {pieData.map((d) => <Cell key={d.key} fill={BREAKDOWN_COLOR[d.key]} stroke="#0b0b0d" strokeWidth={2} />)}
