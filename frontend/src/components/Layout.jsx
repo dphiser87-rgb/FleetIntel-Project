@@ -79,7 +79,7 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-background text-foreground flex">
       {/* Sidebar */}
-      <aside className="w-64 shrink-0 border-r border-border bg-[#0b0b0d] flex flex-col" data-testid="sidebar">
+      <aside className="w-64 shrink-0 border-r border-border bg-[#0b0b0d] flex flex-col h-screen sticky top-0" data-testid="sidebar">
         <div className="px-6 py-6 border-b border-border">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-primary flex items-center justify-center">
