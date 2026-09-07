@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../inspection/inspection_screen.dart';
+import '../inspection_3d/inspection_3d_screen.dart';
 
 /// Lists the checklist templates resolved for the confirmed vehicle (from the same
 /// driver-context payload the vehicle-confirm screen already fetched). Phase 1 mockup
@@ -32,14 +33,16 @@ class TemplatePickerScreen extends StatelessWidget {
                     trailing: const Icon(Icons.chevron_right),
                     onTap: vehicle == null
                         ? null
-                        : () => Navigator.of(context).push(
+                        : () {
+                            final is3D = template['asset_class'] != null && template['node_checklist'] != null;
+                            Navigator.of(context).push(
                               MaterialPageRoute(
-                                builder: (context) => InspectionScreen(
-                                  template: template,
-                                  vehicle: Map<String, dynamic>.from(vehicle),
-                                ),
+                                builder: (context) => is3D
+                                    ? Inspection3DScreen(template: template, vehicle: Map<String, dynamic>.from(vehicle))
+                                    : InspectionScreen(template: template, vehicle: Map<String, dynamic>.from(vehicle)),
                               ),
-                            ),
+                            );
+                          },
                   ),
                 );
               },
