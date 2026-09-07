@@ -6,7 +6,10 @@ plugins {
 
 android {
     namespace = "africa.fleetintel.fleetintel_mobile"
-    compileSdk = flutter.compileSdkVersion
+    // geocoding_android (and several of its transitive androidx deps) require compiling against
+    // API 34+; flutter.compileSdkVersion was resolving to 33 in this environment, so pin it
+    // explicitly rather than relying on the Flutter plugin's default.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
