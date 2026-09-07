@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Trash, FloppyDisk, ClipboardText, Car, Package, Truck, Image as ImageIcon } from "@phosphor-icons/react";
+import { Plus, Trash, FloppyDisk, ClipboardText, Car, Package, Truck, Image as ImageIcon, ArrowLeft } from "@phosphor-icons/react";
 import CategorizedItemsEditor from "@/components/CategorizedItemsEditor";
 import ToggleSwitch from "@/components/ToggleSwitch";
 
@@ -159,10 +159,15 @@ export default function TemplateBuilder() {
   return (
     <div className="noise-bg min-h-screen" data-testid="builder-page">
       <input ref={iconUploadRef} type="file" accept="image/*" className="hidden" onChange={onIconFileChange} />
-      <div className="border-b border-border px-8 py-6 flex items-center gap-4">
-        <Link to="/templates" className="w-12 h-12 shrink-0 bg-primary/10 border border-primary/40 flex items-center justify-center" data-testid="builder-back">
-          <ClipboardText size={22} weight="bold" className="text-primary" />
+      <div className="border-b border-border px-8 py-4">
+        <Link to="/templates" className="inline-flex items-center gap-1.5 text-xs uppercase tracking-widest font-semibold text-muted-foreground hover:text-primary transition-colors" data-testid="builder-back">
+          <ArrowLeft size={14} weight="bold" /> Back to Templates
         </Link>
+      </div>
+      <div className="border-b border-border px-8 py-6 flex items-center gap-4">
+        <div className="w-12 h-12 shrink-0 bg-primary/10 border border-primary/40 flex items-center justify-center">
+          <ClipboardText size={22} weight="bold" className="text-primary" />
+        </div>
         <div>
           <div className="overline">
             {frequency ? FREQUENCY_OPTIONS.find(f => f.value === frequency)?.label : "Not scheduled"} · {itemCount} step{itemCount !== 1 && "s"}
