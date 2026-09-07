@@ -1,0 +1,26 @@
+{
+  "@@locale": "en",
+  "appName": "FleetIntel",
+  "@appName": {},
+
+  "loginTitle": "Log in",
+  "loginIdentifierLabel": "Email or phone number",
+  "loginPasswordLabel": "Password",
+  "loginButton": "Log in",
+  "loginError": "Invalid credentials",
+
+  "welcomeMessage": "Welcome, {name}",
+  "@welcomeMessage": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "welcomeSubtitleDriver": "Let's check your vehicle before you head out.",
+
+  "vehicleConfirmTitle": "Confirm your vehicle",
+  "vehicleConfirmSubtitle": "Is this the vehicle you're driving today?",
+  "vehicleConfirmYes": "Yes, this is correct",
+  "odometerLabel": "Current odometer reading",
+
+  "templatePickerTitle": "Choose a checklist",
+
+  "inspectionStart": "Start inspection"
+}
