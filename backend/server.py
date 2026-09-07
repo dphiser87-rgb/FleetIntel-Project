@@ -3546,6 +3546,28 @@ async def driver_history(did: str, user: dict = Depends(get_current_user)):
     total = sum(m.get("actual_cost", 0) or 0 for m in maint if m.get("status") == "completed")
     return {"driver": d, "vehicle": vehicle, "inspections": inspections, "maintenance": maint, "total_cost": round(total, 2)}
 
+async def _templates_for_vehicle(vehicle: dict, workspace_id: str) -> list[dict]:
+    """Shared by driver-context (the assigned vehicle) and vehicle-templates (a driver-picked
+    substitute) so both resolve checklist templates the same way the web Inspection flow does --
+    matching assignment_scope/group_id/target_ids -- rather than two copies of this logic drifting
+    apart."""
+    candidates = await fetch_all(
+        "select * from templates where workspace_id = :ws and active = true and type = 'vehicle'",
+        ws=workspace_id,
+    )
+    templates = []
+    for t in candidates:
+        scope = t.get("assignment_scope", "all")
+        if scope == "all":
+            applies = True
+        elif scope == "group":
+            applies = vehicle.get("group_id") == t.get("group_id")
+        else:
+            applies = vehicle["id"] in (t.get("target_ids") or [])
+        if applies:
+            templates.append(t)
+    return templates
+
 @api.get("/users/me/driver-context")
 async def driver_context(user: dict = Depends(get_current_user)):
     """Powers the mobile driver flow's post-login screens: the vehicle already assigned to this
@@ -3568,22 +3590,41 @@ async def driver_context(user: dict = Depends(get_current_user)):
             id=driver["assigned_vehicle_id"], ws=user["workspace_id"],
         )
         if vehicle:
-            candidates = await fetch_all(
-                "select * from templates where workspace_id = :ws and active = true and type = 'vehicle'",
-                ws=user["workspace_id"],
-            )
-            for t in candidates:
-                scope = t.get("assignment_scope", "all")
-                if scope == "all":
-                    applies = True
-                elif scope == "group":
-                    applies = vehicle.get("group_id") == t.get("group_id")
-                else:
-                    applies = vehicle["id"] in (t.get("target_ids") or [])
-                if applies:
-                    templates.append(t)
+            templates = await _templates_for_vehicle(vehicle, user["workspace_id"])
 
     return {"driver": driver, "vehicle": vehicle, "templates": templates}
+
+@api.get("/users/me/available-vehicles")
+async def available_vehicles(user: dict = Depends(get_current_user)):
+    """Backs the mobile driver flow's "not my vehicle today" escape hatch -- a driver can be
+    handed a different vehicle than their on-file assigned_vehicle_id (a swap, a borrowed unit),
+    and POST /inspections itself never validated vehicle_id against the driver's assignment, so
+    this was only ever a client-side gap: no way to pick anything else. Every active vehicle in
+    the workspace, not scoped further -- there's no existing notion of "vehicles this driver is
+    allowed to substitute in for" to filter by."""
+    if user.get("role") != "driver":
+        raise HTTPException(status_code=400, detail="Not a driver account")
+    vehicles = await fetch_all(
+        "select id, make, model, plate, name, group_id from vehicles where workspace_id = :ws and status = 'active' "
+        "order by make, model",
+        ws=user["workspace_id"],
+    )
+    return {"vehicles": vehicles}
+
+@api.get("/users/me/vehicle-templates/{vehicle_id}")
+async def vehicle_templates(vehicle_id: str, user: dict = Depends(get_current_user)):
+    """Resolves checklist templates for a vehicle the driver picked from available-vehicles
+    (rather than their assigned one) -- same matching _templates_for_vehicle already does for
+    driver-context, just parameterized on a caller-supplied vehicle instead of the driver's own."""
+    if user.get("role") != "driver":
+        raise HTTPException(status_code=400, detail="Not a driver account")
+    vehicle = await fetch_one(
+        "select * from vehicles where id = :id and workspace_id = :ws", id=vehicle_id, ws=user["workspace_id"]
+    )
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    templates = await _templates_for_vehicle(vehicle, user["workspace_id"])
+    return {"vehicle": vehicle, "templates": templates}
 
 def _d10(v) -> str:
     """Format a datetime (or None) as YYYY-MM-DD, matching the old ISO-string[:10] slicing."""
