@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../inspection/inspection_screen.dart';
 
 /// Lists the checklist templates resolved for the confirmed vehicle (from the same
 /// driver-context payload the vehicle-confirm screen already fetched). Phase 1 mockup
@@ -14,6 +15,7 @@ class TemplatePickerScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final templates = (driverContext?['templates'] as List?) ?? [];
+    final vehicle = driverContext?['vehicle'] as Map?;
     return Scaffold(
       appBar: AppBar(title: Text(l10n.templatePickerTitle)),
       body: templates.isEmpty
@@ -28,9 +30,16 @@ class TemplatePickerScreen extends StatelessWidget {
                   child: ListTile(
                     title: Text(template['name'] as String? ?? 'Untitled'),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      // Phase 2: navigate into the Inspection flow with this template.
-                    },
+                    onTap: vehicle == null
+                        ? null
+                        : () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) => InspectionScreen(
+                                  template: template,
+                                  vehicle: Map<String, dynamic>.from(vehicle),
+                                ),
+                              ),
+                            ),
                   ),
                 );
               },

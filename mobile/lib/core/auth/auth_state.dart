@@ -1,8 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../db/app_database.dart';
+import '../db/outbox_repository.dart';
 import '../network/api_client.dart';
 import '../storage/token_store.dart';
+import 'access.dart';
 
 /// The user shape returned by user_from_token() in server.py -- id, email, name, role,
 /// workspace_id, permissions, phone, driver_id. Kept as a raw map rather than a typed
@@ -31,6 +34,20 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(tokenStore, onLogout: () async {
     await ref.read(authControllerProvider.notifier).logout();
   });
+});
+
+final appDatabaseProvider = Provider<AppDatabase>((ref) {
+  final db = AppDatabase();
+  ref.onDispose(db.close);
+  return db;
+});
+
+final outboxRepositoryProvider = Provider<OutboxRepository>((ref) {
+  return OutboxRepository(ref.watch(appDatabaseProvider), ref.watch(apiClientProvider).dio);
+});
+
+final accessRepositoryProvider = Provider<AccessRepository>((ref) {
+  return AccessRepository(ref.watch(apiClientProvider).dio, ref.watch(appDatabaseProvider));
 });
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>((ref) {

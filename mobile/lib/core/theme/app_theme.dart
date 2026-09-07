@@ -6,16 +6,18 @@ import 'package:flutter/material.dart';
 class AppColors {
   AppColors._();
 
-  static const background = Color(0xFF08090A); // hsl(240 6% 4%)
-  static const surface = Color(0xFF111214);
-  static const surfaceElevated = Color(0xFF17181B);
-  static const border = Color(0xFF262729);
-  static const primary = Color(0xFF22C55E); // hsl(142 71% 45%)
-  static const primaryInk = Color(0xFF07130B); // text placed on top of primary fill
-  static const ink = Color(0xFFF5F6F7);
-  static const muted = Color(0xFF9A9CA2);
-  static const danger = Color(0xFFEF4444);
-  static const warning = Color(0xFFF59E0B);
+  // Exact values pulled from frontend/src/index.css's :root HSL vars -- kept pixel-accurate to the
+  // web app rather than approximated, since Phase 1 mockups get compared against it directly.
+  static const background = Color(0xFF080809); // hsl(240 6% 4%), matches the CSS's explicit override
+  static const surface = Color(0xFF131315); // --card: hsl(240 5% 8%)
+  static const surfaceElevated = Color(0xFF1D1D20); // --secondary/--muted/--accent: hsl(240 4% 12%)
+  static const border = Color(0xFF27272A); // --border: hsl(240 4% 16%)
+  static const primary = Color(0xFF22C55E); // --primary: hsl(142 71% 45%)
+  static const primaryInk = Color(0xFF080809); // --primary-foreground: same as background
+  static const ink = Color(0xFFFFFFFF); // --foreground: 0 0% 100%
+  static const muted = Color(0xFFA3A3AD); // --muted-foreground: hsl(240 5% 65%)
+  static const danger = Color(0xFFFF3D2E); // --destructive: hsl(4 100% 59%)
+  static const warning = Color(0xFFFDB816); // --chart-3: hsl(45 100% 51%)
 }
 
 class AppRadius {

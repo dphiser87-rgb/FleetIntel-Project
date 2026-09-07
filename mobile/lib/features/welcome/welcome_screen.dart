@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_state.dart';
+import '../../core/db/pending_sync_badge.dart';
 import '../../l10n/app_localizations.dart';
 
 /// Personalized post-login landing: "Welcome, {name}" plus a role-appropriate line.
@@ -37,6 +38,8 @@ class WelcomeScreen extends ConsumerWidget {
                 onPressed: () => context.go('/vehicle'),
                 child: const Text('Continue'),
               ),
+              const SizedBox(height: 16),
+              const PendingSyncBadge(),
             ],
           ),
         ),

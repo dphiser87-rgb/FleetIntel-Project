@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>FleetIntel uses your camera to attach photos to defects found during vehicle inspections.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>FleetIntel records the vehicle's location when you complete an inspection.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
