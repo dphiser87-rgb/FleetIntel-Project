@@ -250,7 +250,7 @@ class VehicleIn(BaseModel):
     make: str
     model: str
     year: int
-    type: Literal["truck", "van", "car", "bus", "trailer"] = "truck"
+    type: Literal["truck", "van", "car", "bus", "trailer", "bakkie_suv"] = "truck"
     status: Literal["active", "maintenance", "idle"] = "active"
     odometer: float = 0
     fuel_cost_per_km: float = 0.35
@@ -301,6 +301,11 @@ class ChecklistSection(BaseModel):
     items: List[ChecklistItem] = []
     icon: Optional[str] = None  # emoji string, or a data: URL once a real image is uploaded
 
+class NodeCheckItem(BaseModel):
+    key: str
+    label: str
+    required: bool = True
+
 class TemplateIn(BaseModel):
     name: str
     description: Optional[str] = ""
@@ -311,8 +316,23 @@ class TemplateIn(BaseModel):
     group_id: Optional[str] = None
     target_ids: List[str] = []
     active: bool = True
+    # A template is a flat sections-based checklist unless both of these are set, in which case it's
+    # a 3D template for that vehicle class: node_checklist maps a glTF node name (e.g. "EXT_windscreen")
+    # to the checks for that component -- see mobile/lib/features/inspection_3d.
+    asset_class: Optional[Literal["passenger_car", "bakkie_suv", "van", "truck", "trailer"]] = None
+    node_checklist: Optional[Dict[str, List[NodeCheckItem]]] = None
 
 DEFECT_TYPES = {"tyres", "engine", "brakes", "electrical", "bodywork", "general"}  # mirrors maintenance.category
+
+# vehicles.type -> the 3D asset_class it maps to. "bus" has no 3D model (falls back to flat checklists
+# only); every other vehicle type maps 1:1 to one of the 5 real .glb asset packs.
+VEHICLE_TYPE_TO_ASSET_CLASS = {
+    "car": "passenger_car",
+    "bakkie_suv": "bakkie_suv",
+    "van": "van",
+    "truck": "truck",
+    "trailer": "trailer",
+}
 
 class InspectionAnswer(BaseModel):
     item_id: str
@@ -320,6 +340,10 @@ class InspectionAnswer(BaseModel):
     note: Optional[str] = ""
     photo: Optional[str] = None  # base64 data URL
     defect_type: Optional[str] = None  # required when value == "fail", see DEFECT_TYPES
+    # 3D inspection only: which model node this answer belongs to, and (when value == "fail") how
+    # severe it is -- amber vs. red on the model. Unset for ordinary flat-checklist answers.
+    component_node: Optional[str] = None
+    severity: Optional[Literal["warning", "critical"]] = None
 
 class PartIn(BaseModel):
     name: str
@@ -1721,6 +1745,22 @@ async def create_inspection(i: InspectionIn, user: dict = Depends(get_current_us
         latitude=i.latitude, longitude=i.longitude, address=address, location_status=location_status, signature=i.signature,
         client_submission_id=i.client_submission_id, template_snapshot=json_dumps(snapshot) if snapshot else None,
     )
+
+    # 3D inspection answers carry component_node; a failing one becomes a real, queryable defects row
+    # (tied back to this inspection and the vehicle) instead of staying trapped in the answers jsonb --
+    # this is what lets GET /vehicles/{id}/open-defects re-highlight the component next time.
+    if i.vehicle_id:
+        for a in i.answers:
+            if a.component_node and str(a.value).lower() == "fail":
+                await execute(
+                    "insert into defects (id, workspace_id, vehicle_id, category, severity, description, "
+                    "location, reported_by, status, inspection_id, component_node) values (:id, :ws, :vid, "
+                    ":cat, :sev, :desc, :loc, :rb, 'open', :iid, :node)",
+                    id=str(uuid.uuid4()), ws=ws, vid=i.vehicle_id, cat=a.defect_type or "general",
+                    sev=a.severity or "warning", desc=a.note or "", loc=a.component_node,
+                    rb=user["id"], iid=iid, node=a.component_node,
+                )
+
     return await fetch_one("select * from inspections where id = :id", id=iid)
 
 @api.get("/inspections/{iid}")
@@ -3555,8 +3595,13 @@ async def _templates_for_vehicle(vehicle: dict, workspace_id: str) -> list[dict]
         "select * from templates where workspace_id = :ws and active = true and type = 'vehicle'",
         ws=workspace_id,
     )
+    vehicle_asset_class = VEHICLE_TYPE_TO_ASSET_CLASS.get(vehicle.get("type"))
     templates = []
     for t in candidates:
+        # A 3D template only applies to a vehicle of the matching asset class -- otherwise a car
+        # would be offered the truck's 3D model. A flat (non-3D) template is unaffected by this check.
+        if t.get("asset_class") and t.get("asset_class") != vehicle_asset_class:
+            continue
         scope = t.get("assignment_scope", "all")
         if scope == "all":
             applies = True
@@ -4147,6 +4192,31 @@ async def _vehicle_events(vid: str, ws: str):
 @api.get("/vehicles/{vid}/timeline")
 async def vehicle_timeline(vid: str, user: dict = Depends(get_current_user)):
     return await _vehicle_events(vid, user["workspace_id"])
+
+_SEVERITY_RANK = {"critical": 2, "warning": 1}
+
+@api.get("/vehicles/{vid}/open-defects")
+async def vehicle_open_defects(vid: str, user: dict = Depends(get_current_user)):
+    """Open/acknowledged defects for this vehicle, collapsed to the worst severity per component_node
+    -- what the 3D inspection screen pre-colors the model with on load, and (later) what the web
+    defect-visualization view will read too. Defects with no component_node (e.g. from the standalone
+    manual defect-report flow) are returned separately since they have nowhere on the model to render."""
+    rows = await fetch_all(
+        "select * from defects where workspace_id = :ws and vehicle_id = :vid and status in ('open', 'acknowledged') "
+        "order by created_at desc",
+        ws=user["workspace_id"], vid=vid,
+    )
+    by_node: dict[str, dict] = {}
+    unmapped = []
+    for d in rows:
+        node = d.get("component_node")
+        if not node:
+            unmapped.append(d)
+            continue
+        current = by_node.get(node)
+        if not current or _SEVERITY_RANK.get(d.get("severity"), 0) > _SEVERITY_RANK.get(current.get("severity"), 0):
+            by_node[node] = d
+    return {"by_node": by_node, "unmapped": unmapped}
 
 @api.get("/vehicles/{vid}/investigation")
 async def vehicle_investigation(vid: str, period: Optional[str] = None, user: dict = Depends(get_current_user)):
