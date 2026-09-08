@@ -34,7 +34,7 @@ class TemplatePickerScreen extends StatelessWidget {
                     onTap: vehicle == null
                         ? null
                         : () {
-                            final is3D = template['asset_class'] != null && template['node_checklist'] != null;
+                            final is3D = template['asset_class'] != null;
                             Navigator.of(context).push(
                               MaterialPageRoute(
                                 builder: (context) => is3D

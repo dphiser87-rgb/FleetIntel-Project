@@ -28,6 +28,43 @@ class AppRadius {
   static final control = BorderRadius.circular(sharp);
 }
 
+/// Spacing/size/opacity scale, ported from the Primio-designed reference app's theme.dart --
+/// genuinely useful tokens this app didn't have formalized yet. Used first by the 3D inspection
+/// widgets (mobile/lib/features/inspection_3d/), safe to adopt elsewhere too.
+class AppMetrics {
+  AppMetrics._();
+
+  static const double spacingXs = 4.0;
+  static const double spacingSm = 8.0;
+  static const double spacingMd = 16.0;
+  static const double spacingLg = 24.0;
+  static const double spacingXl = 32.0;
+  static const double screenPadding = 20.0;
+
+  static const double radiusSharp = 2.0;
+  static const double radiusMedium = 6.0;
+  static const double radiusLarge = 8.0;
+
+  static const double buttonHeight = 48.0;
+  static const double inputHeight = 48.0;
+  static const double iconSm = 16.0;
+  static const double iconMd = 24.0;
+  static const double iconLg = 32.0;
+  static const double avatarMd = 48.0;
+  static const double hotspotSize = 30.0;
+  static const double canvasHeight = 260.0;
+
+  static const double opacityDisabled = 0.38;
+  static const double opacityHint = 0.6;
+  static const double opacityOverlay = 0.54;
+  static const double opacitySubtle = 0.12;
+  static const double opacityGlow = 0.22;
+  static const double opacityStrong = 0.35;
+
+  static const double borderDefault = 1.0;
+  static const double borderThick = 2.0;
+}
+
 class AppTheme {
   AppTheme._();
 
