@@ -250,7 +250,7 @@ class VehicleIn(BaseModel):
     make: str
     model: str
     year: int
-    type: Literal["truck", "van", "car", "bus", "trailer", "bakkie_suv"] = "truck"
+    type: Literal["truck", "van", "bus", "trailer", "tautliner", "sedan", "hatchback", "suv", "bakkie"] = "truck"
     status: Literal["active", "maintenance", "idle"] = "active"
     odometer: float = 0
     fuel_cost_per_km: float = 0.35
@@ -316,22 +316,28 @@ class TemplateIn(BaseModel):
     group_id: Optional[str] = None
     target_ids: List[str] = []
     active: bool = True
-    # A template is a flat sections-based checklist unless both of these are set, in which case it's
-    # a 3D template for that vehicle class: node_checklist maps a glTF node name (e.g. "EXT_windscreen")
-    # to the checks for that component -- see mobile/lib/features/inspection_3d.
-    asset_class: Optional[Literal["passenger_car", "bakkie_suv", "van", "truck", "trailer"]] = None
+    # A template is a flat sections-based checklist unless asset_class is set, in which case it's a
+    # 3D template for that vehicle body type: the driver app renders a tappable vehicle silhouette with
+    # a fixed set of zones per body type (defined in the app, not authored here) -- see
+    # mobile/lib/features/inspection_3d/zones_data.dart. node_checklist is a leftover from an earlier
+    # glTF-node-based design and is unused by the current (silhouette-based) 3D flow.
+    asset_class: Optional[Literal["truck", "van", "bus", "trailer", "tautliner", "sedan", "hatchback", "suv", "bakkie"]] = None
     node_checklist: Optional[Dict[str, List[NodeCheckItem]]] = None
 
 DEFECT_TYPES = {"tyres", "engine", "brakes", "electrical", "bodywork", "general"}  # mirrors maintenance.category
 
-# vehicles.type -> the 3D asset_class it maps to. "bus" has no 3D model (falls back to flat checklists
-# only); every other vehicle type maps 1:1 to one of the 5 real .glb asset packs.
+# vehicles.type -> the 3D asset_class it maps to. Identity mapping -- every vehicle type has a matching
+# vehicle silhouette (see mobile/lib/features/inspection_3d/zones_data.dart).
 VEHICLE_TYPE_TO_ASSET_CLASS = {
-    "car": "passenger_car",
-    "bakkie_suv": "bakkie_suv",
-    "van": "van",
     "truck": "truck",
+    "van": "van",
+    "bus": "bus",
     "trailer": "trailer",
+    "tautliner": "tautliner",
+    "sedan": "sedan",
+    "hatchback": "hatchback",
+    "suv": "suv",
+    "bakkie": "bakkie",
 }
 
 class InspectionAnswer(BaseModel):
