@@ -19,6 +19,12 @@ class ZoneAnswer {
 
   bool get needsEvidence => result == CheckResult.warning || result == CheckResult.fail;
   bool get hasRequiredEvidence => note.trim().isNotEmpty && photoDataUrl != null;
+
+  /// A zone only really counts as confirmed once any required evidence is actually there --
+  /// picking Critical then backing out of the sheet (device back, tapping the scrim) leaves
+  /// `result` set but shouldn't count toward "areas confirmed" or unblock submit, since the
+  /// backend rejects a fail/critical answer with no note+photo anyway.
+  bool get isComplete => result != CheckResult.none && (!needsEvidence || hasRequiredEvidence);
 }
 
 Future<void> showZoneActionSheet({

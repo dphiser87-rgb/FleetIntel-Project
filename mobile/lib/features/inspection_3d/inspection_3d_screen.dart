@@ -82,7 +82,7 @@ class _Inspection3DScreenState extends ConsumerState<Inspection3DScreen> {
     }
   }
 
-  int get _answeredCount => _answers.values.where((a) => a.result != CheckResult.none).length;
+  int get _answeredCount => _answers.values.where((a) => a.isComplete).length;
   int get _defectCount => _answers.values.where((a) => a.result == CheckResult.fail || a.result == CheckResult.warning).length;
   bool get _allAnswered => _answeredCount == _zones.length;
 
