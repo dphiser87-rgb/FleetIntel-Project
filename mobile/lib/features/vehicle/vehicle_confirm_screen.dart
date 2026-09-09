@@ -1,18 +1,23 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/fleet_button.dart';
+import '../../core/widgets/hero_banner.dart';
+import '../../core/widgets/vehicle_summary_card.dart';
 import '../../l10n/app_localizations.dart';
 
 /// Confirms the vehicle already assigned to this driver (GET /users/me/driver-context) as the
-/// default path, but also offers "not my vehicle today" -- a driver can be handed a swapped or
-/// borrowed unit, and the backend never actually required vehicle_id to match the driver's
-/// assignment (see server.py's _templates_for_vehicle), so this was purely a missing client
-/// affordance. Picking a different vehicle re-resolves its templates via
-/// GET /users/me/vehicle-templates/{id} rather than reusing the assigned vehicle's list.
+/// default path, but also offers "not my vehicle today" via a dedicated /vehicle-picker route --
+/// a driver can be handed a swapped or borrowed unit, and the backend never actually required
+/// vehicle_id to match the driver's assignment (see server.py's _templates_for_vehicle), so this
+/// was purely a missing client affordance. Picking a different vehicle re-resolves its templates
+/// via GET /users/me/vehicle-templates/{id} rather than reusing the assigned vehicle's list.
+///
+/// Visual layout ported from the Primio-designed reference app's vehicle_confirm_screen.dart.
 class VehicleConfirmScreen extends ConsumerStatefulWidget {
   const VehicleConfirmScreen({super.key});
 
@@ -54,15 +59,10 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
   }
 
   Future<void> _pickDifferentVehicle() async {
-    final dio = ref.read(apiClientProvider).dio;
-    final picked = await showModalBottomSheet<Map<String, dynamic>>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.background,
-      builder: (context) => _VehiclePickerSheet(dio: dio),
-    );
-    if (picked == null) return;
+    final picked = await context.push<Map<String, dynamic>>('/vehicle-picker');
+    if (picked == null || !mounted) return;
 
+    final dio = ref.read(apiClientProvider).dio;
     setState(() => _resolvingTemplates = true);
     try {
       final response = await dio.get('/users/me/vehicle-templates/${picked['id']}');
@@ -98,133 +98,99 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
     if (_error != null) {
       return Scaffold(body: Center(child: Text(_error!)));
     }
+
     final vehicle = _selectedVehicle;
+    final text = Theme.of(context).textTheme;
+    final colors = Theme.of(context).colorScheme;
+    final lastOdometer = (vehicle?['odometer'] as num?)?.toInt() ?? 0;
+    final canContinue = vehicle != null && (int.tryParse(_odometerController.text) ?? 0) > 0;
+
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.vehicleConfirmTitle)),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              vehicle == null ? 'No vehicle is currently assigned to you.' : l10n.vehicleConfirmSubtitle,
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            const SizedBox(height: 16),
-            if (vehicle != null)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''} — ${vehicle['plate'] ?? ''}',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      if (_isSubstituted) ...[
-                        const SizedBox(height: 4),
-                        const Text('Substituted for your usual vehicle',
-                            style: TextStyle(color: AppColors.primary, fontSize: 12)),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: _resolvingTemplates ? null : _pickDifferentVehicle,
-                child: Text(vehicle == null ? 'Choose a vehicle' : "Not my vehicle today"),
-              ),
-            ),
-            if (_resolvingTemplates)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 8),
-                child: LinearProgressIndicator(),
-              ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _odometerController,
-              decoration: InputDecoration(labelText: l10n.odometerLabel),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: vehicle == null
-                  ? null
-                  : () => context.go('/templates', extra: {'vehicle': vehicle, 'templates': _templates}),
-              child: Text(l10n.vehicleConfirmYes),
-            ),
-          ],
+      appBar: AppBar(
+        title: Text(l10n.vehicleConfirmTitle),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.go('/welcome'),
         ),
       ),
-    );
-  }
-}
-
-class _VehiclePickerSheet extends StatefulWidget {
-  const _VehiclePickerSheet({required this.dio});
-
-  final Dio dio;
-
-  @override
-  State<_VehiclePickerSheet> createState() => _VehiclePickerSheetState();
-}
-
-class _VehiclePickerSheetState extends State<_VehiclePickerSheet> {
-  List<dynamic>? _vehicles;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final response = await widget.dio.get('/users/me/available-vehicles');
-      setState(() => _vehicles = Map<String, dynamic>.from(response.data)['vehicles'] as List? ?? []);
-    } catch (e) {
-      setState(() => _error = 'Could not load vehicles.');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+      body: SafeArea(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Choose a vehicle', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            if (_error != null) Text(_error!, style: const TextStyle(color: AppColors.danger)),
-            if (_vehicles == null && _error == null)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: CircularProgressIndicator()),
-              ),
-            if (_vehicles != null)
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: _vehicles!.length,
-                  separatorBuilder: (context, index) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final v = Map<String, dynamic>.from(_vehicles![index]);
-                    return ListTile(
-                      title: Text('${v['make'] ?? ''} ${v['model'] ?? ''}'),
-                      subtitle: Text(v['plate'] as String? ?? ''),
-                      onTap: () => Navigator.of(context).pop(v),
-                    );
-                  },
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: AppMetrics.screenPadding),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: AppMetrics.spacingMd),
+                    HeroBanner(
+                      eyebrow: 'Step 1 of 2',
+                      title: 'Confirm your\nvehicle',
+                      subtitle: vehicle == null
+                          ? 'No vehicle is currently assigned to you.'
+                          : 'Check the details below and capture the odometer.',
+                      icon: Icons.local_shipping_rounded,
+                    ),
+                    const SizedBox(height: AppMetrics.spacingLg),
+                    if (vehicle != null) ...[
+                      VehicleSummaryCard(
+                        displayName: '${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'.trim(),
+                        typeLabel: (vehicle['type'] as String?) ?? '',
+                        plate: (vehicle['plate'] as String?) ?? '',
+                        groupLabel: _isSubstituted ? 'Substituted for your usual vehicle' : null,
+                        infoLabel: 'Note',
+                      ),
+                      const SizedBox(height: AppMetrics.spacingLg),
+                      Text('ODOMETER READING (KM)',
+                          style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1.2)),
+                      const SizedBox(height: AppMetrics.spacingSm),
+                      TextField(
+                        controller: _odometerController,
+                        keyboardType: TextInputType.number,
+                        style: text.bodyMedium,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        decoration: InputDecoration(
+                          hintText: 'e.g. ${lastOdometer + 120}',
+                          prefixIcon: Icon(Icons.speed_rounded, color: colors.primary, size: AppMetrics.iconMd),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      if (lastOdometer > 0) ...[
+                        const SizedBox(height: AppMetrics.spacingSm),
+                        Text('Last recorded: $lastOdometer km', style: text.bodySmall),
+                      ],
+                    ],
+                    const SizedBox(height: AppMetrics.spacingLg),
+                  ],
                 ),
               ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppMetrics.screenPadding,
+                0,
+                AppMetrics.screenPadding,
+                AppMetrics.spacingMd,
+              ),
+              child: Column(
+                children: [
+                  FleetButton(
+                    label: 'Not my vehicle today',
+                    icon: Icons.swap_horiz_rounded,
+                    isOutlined: true,
+                    onPressed: _resolvingTemplates ? null : _pickDifferentVehicle,
+                  ),
+                  const SizedBox(height: AppMetrics.spacingSm + 4),
+                  FleetButton(
+                    label: l10n.vehicleConfirmYes,
+                    isLoading: _resolvingTemplates,
+                    onPressed: canContinue
+                        ? () => context.go('/templates', extra: {'vehicle': vehicle, 'templates': _templates})
+                        : null,
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),

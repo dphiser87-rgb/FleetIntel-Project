@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 /// Design tokens ported 1:1 from the web app's production theme (NOT the marketing
 /// site's rounded/glassmorphism look) -- see design_guidelines discussion: dark ground,
@@ -79,17 +80,7 @@ class AppTheme {
         onPrimary: AppColors.primaryInk,
         error: AppColors.danger,
       ),
-      textTheme: base.textTheme.apply(
-        bodyColor: AppColors.ink,
-        displayColor: AppColors.ink,
-      ).copyWith(
-        displayLarge: const TextStyle(fontFamily: 'Outfit', fontWeight: FontWeight.w600),
-        displayMedium: const TextStyle(fontFamily: 'Outfit', fontWeight: FontWeight.w600),
-        headlineLarge: const TextStyle(fontFamily: 'Outfit', fontWeight: FontWeight.w600),
-        headlineMedium: const TextStyle(fontFamily: 'Outfit', fontWeight: FontWeight.w600),
-        headlineSmall: const TextStyle(fontFamily: 'Outfit', fontWeight: FontWeight.w600),
-        titleLarge: const TextStyle(fontFamily: 'Outfit', fontWeight: FontWeight.w600),
-      ),
+      textTheme: _textTheme(),
       appBarTheme: const AppBarTheme(
         backgroundColor: AppColors.background,
         foregroundColor: AppColors.ink,
@@ -131,10 +122,32 @@ class AppTheme {
           foregroundColor: AppColors.primaryInk,
           shape: RoundedRectangleBorder(borderRadius: AppRadius.control),
           padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-          textStyle: const TextStyle(fontFamily: 'Outfit', fontWeight: FontWeight.w600, fontSize: 16),
+          textStyle: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 16),
         ),
       ),
       dividerTheme: const DividerThemeData(color: AppColors.border, thickness: 1),
+    );
+  }
+
+  /// Inter throughout, matching the Primio-designed reference app's _buildTextTheme -- same
+  /// weights and letter-spacing per role, applied to our own AppColors instead of a second theme.
+  static TextTheme _textTheme() {
+    final base = GoogleFonts.interTextTheme(ThemeData.dark().textTheme);
+    return base.copyWith(
+      displayLarge: base.displayLarge?.copyWith(fontWeight: FontWeight.w700, color: AppColors.ink, letterSpacing: -0.5),
+      displayMedium: base.displayMedium?.copyWith(fontWeight: FontWeight.w600, color: AppColors.ink),
+      headlineLarge: base.headlineLarge?.copyWith(fontWeight: FontWeight.w700, color: AppColors.ink, letterSpacing: -0.5),
+      headlineMedium: base.headlineMedium?.copyWith(fontWeight: FontWeight.w600, color: AppColors.ink, letterSpacing: -0.3),
+      headlineSmall: base.headlineSmall?.copyWith(fontWeight: FontWeight.w600, color: AppColors.ink),
+      titleLarge: base.titleLarge?.copyWith(fontWeight: FontWeight.w600, color: AppColors.ink),
+      titleMedium: base.titleMedium?.copyWith(fontWeight: FontWeight.w500, color: AppColors.ink),
+      titleSmall: base.titleSmall?.copyWith(fontWeight: FontWeight.w500, color: AppColors.muted, letterSpacing: 0.8),
+      bodyLarge: base.bodyLarge?.copyWith(color: AppColors.ink),
+      bodyMedium: base.bodyMedium?.copyWith(color: AppColors.ink),
+      bodySmall: base.bodySmall?.copyWith(color: AppColors.muted),
+      labelLarge: base.labelLarge?.copyWith(fontWeight: FontWeight.w600, color: AppColors.ink),
+      labelMedium: base.labelMedium?.copyWith(color: AppColors.muted),
+      labelSmall: base.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1.0),
     );
   }
 }

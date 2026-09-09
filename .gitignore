@@ -100,3 +100,6 @@ credentials.json
 *.key
 .credentials
 .env*
+
+# Primio reference clone, used as a design/source reference only -- never part of our app
+primio-FleetHub-e0855714/

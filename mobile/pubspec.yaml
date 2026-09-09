@@ -67,6 +67,9 @@ dependencies:
   connectivity_plus: ^6.1.0
   speech_to_text: ^7.0.0
 
+  # Typeface (matches the Primio-designed reference app's theme.dart)
+  google_fonts: ^6.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

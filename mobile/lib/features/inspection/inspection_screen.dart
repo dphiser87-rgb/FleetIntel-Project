@@ -14,11 +14,19 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/check_item_tile.dart';
+import '../../core/widgets/fleet_button.dart';
+import '../../core/widgets/section_header.dart';
 
 /// Checklist item types and defect-capture rules mirror the backend contract (InspectionAnswer /
 /// InspectionIn in server.py) and the proven Expo prototype's InspectionScreen.js: a "fail" answer
 /// is not submittable without a defect_type, a photo, and a note -- ported here as-is rather than
 /// redesigned, since it already matches what the backend/web app expect.
+///
+/// Visual layout ported from the Primio-designed reference app's inspection_screen.dart
+/// (CheckItemTile chip row, InspectionSectionHeader, progress bar, submitted success screen) --
+/// this is a merge, not a straight port: Primio's version has no photo/signature/GPS/offline-outbox
+/// support, so every one of those real behaviors is preserved as-is under the new visual shell.
 const kDefectTypes = ['tyres', 'engine', 'brakes', 'electrical', 'bodywork', 'general'];
 
 class _Answer {
@@ -52,6 +60,10 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
   bool _submitting = false;
   bool _speechAvailable = false;
   final _picker = ImagePicker();
+
+  // Set once the submit call (or offline-queue fallback) succeeds; switches build() to the
+  // success screen. Not reset -- this screen is popped after, never reused for another inspection.
+  bool? _submittedOffline;
 
   List<Map<String, dynamic>> get _sections =>
       (widget.template['sections'] as List? ?? []).map((s) => Map<String, dynamic>.from(s)).toList();
@@ -92,6 +104,24 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
     return missing;
   }
 
+  bool _itemComplete(Map<String, dynamic> item) {
+    final a = _answerFor(item['id'] as String);
+    if ((a.value ?? '').isEmpty) return false;
+    if ((a.value ?? '').toLowerCase() == 'fail') return _missingForFail(item).isEmpty;
+    return true;
+  }
+
+  int get _totalItems => _sections.fold(0, (sum, s) => sum + (s['items'] as List? ?? []).length);
+
+  int get _completedItems => _sections.fold(
+        0,
+        (sum, s) => sum +
+            (s['items'] as List? ?? [])
+                .map((e) => Map<String, dynamic>.from(e))
+                .where(_itemComplete)
+                .length,
+      );
+
   bool get _hasUnresolvedFails {
     for (final section in _sections) {
       for (final item in (section['items'] as List? ?? [])) {
@@ -108,6 +138,10 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
     return v == null || v <= 0;
   }
 
+  // Deliberately not gated on _completedItems == _totalItems: unlike Primio's mocked flow, our
+  // real backend only ever required odometer + signature + resolved fails (see InspectionIn in
+  // server.py) -- items left blank are legitimately optional/not-applicable, so the progress
+  // count here is informational only, matching the original screen's real submit behavior.
   bool get _canSubmit => !_odometerMissing && _signatureDataUrl != null && !_hasUnresolvedFails;
 
   Future<void> _openSignaturePad() async {
@@ -193,7 +227,7 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
     final dio = ref.read(apiClientProvider).dio;
     try {
       await dio.post('/inspections', data: payload);
-      if (mounted) _showResultAndPop('Inspection complete', _failCount > 0 ? '$_failCount failed item(s) flagged.' : 'All items passed.');
+      if (mounted) setState(() => _submittedOffline = false);
     } on DioException catch (e) {
       // No response reaching back means a dropped connection, not a rejection -- queue for later,
       // matching the Expo prototype's offlineQueue.js semantics.
@@ -205,9 +239,7 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
               endpoint: '/inspections',
               payload: payload,
             );
-        if (mounted) {
-          _showResultAndPop('Saved offline', "This inspection will sync automatically once you're back online.");
-        }
+        if (mounted) setState(() => _submittedOffline = true);
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to submit. Please try again.')),
@@ -218,122 +250,166 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
     }
   }
 
-  int get _failCount =>
-      _answers.values.where((a) => (a.value ?? '').toLowerCase() == 'fail').length;
-
-  void _showResultAndPop(String title, String message) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop(); // close dialog
-              Navigator.of(context).pop(); // close inspection screen (pushed outside go_router)
-              context.go('/welcome');
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
+  int get _failCount => _answers.values.where((a) => (a.value ?? '').toLowerCase() == 'fail').length;
 
   @override
   Widget build(BuildContext context) {
+    if (_submittedOffline != null) {
+      return _SubmittedView(offline: _submittedOffline!, failCount: _failCount);
+    }
+
+    final text = Theme.of(context).textTheme;
+    final colors = Theme.of(context).colorScheme;
+    final total = _totalItems;
+    final completed = _completedItems;
+    final progress = total == 0 ? 0.0 : completed / total;
+
     return Scaffold(
-      appBar: AppBar(title: Text(widget.template['name'] as String? ?? 'Inspection')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
+      appBar: AppBar(
+        title: Text(widget.template['name'] as String? ?? 'Inspection'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: AppMetrics.screenPadding),
+            child: Center(
+              child: Text('$completed/$total', style: text.labelMedium?.copyWith(color: colors.primary)),
+            ),
+          ),
+        ],
+      ),
+      body: Column(
         children: [
-          Text('${widget.vehicle['make'] ?? ''} ${widget.vehicle['model'] ?? ''}',
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: TextField(
-                controller: _odometerController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Odometer (km) *'),
-              ),
-            ),
+          LinearProgressIndicator(
+            value: progress,
+            backgroundColor: AppColors.border,
+            color: _failCount > 0 ? AppColors.danger : colors.primary,
+            minHeight: 3,
           ),
-          const SizedBox(height: 12),
-          for (final section in _sections) _SectionCard(
-            section: section,
-            answerFor: _answerFor,
-            missingForFail: _missingForFail,
-            onCapturePhoto: _capturePhoto,
-            onChanged: () => setState(() {}),
-            speech: _speech,
-            speechAvailable: _speechAvailable,
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: TextField(
-                controller: _notesController,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  labelText: 'General notes',
-                  suffixIcon: _speechAvailable
-                      ? _VoiceMicButton(speech: _speech, controller: _notesController)
-                      : null,
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(AppMetrics.spacingMd),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        '${widget.vehicle['make'] ?? ''} ${widget.vehicle['model'] ?? ''}'.trim(),
+                        style: text.titleMedium,
+                      ),
+                      const SizedBox(height: AppMetrics.spacingSm + 4),
+                      TextField(
+                        controller: _odometerController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Odometer (km) *'),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+                for (int i = 0; i < _sections.length; i++)
+                  _SectionBlock(
+                    section: _sections[i],
+                    sectionIndex: i,
+                    answerFor: _answerFor,
+                    missingForFail: _missingForFail,
+                    itemComplete: _itemComplete,
+                    onCapturePhoto: _capturePhoto,
+                    onChanged: () => setState(() {}),
+                    speech: _speech,
+                    speechAvailable: _speechAvailable,
+                  ),
+                Padding(
+                  padding: const EdgeInsets.all(AppMetrics.spacingMd),
+                  child: TextField(
+                    controller: _notesController,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      labelText: 'General notes',
+                      suffixIcon:
+                          _speechAvailable ? _VoiceMicButton(speech: _speech, controller: _notesController) : null,
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: AppMetrics.spacingMd),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('Signature *', style: text.labelMedium),
+                      const SizedBox(height: AppMetrics.spacingSm),
+                      if (_signatureDataUrl != null)
+                        Container(
+                          height: 120,
+                          decoration: BoxDecoration(border: Border.all(color: AppColors.border)),
+                          child: Image.memory(
+                            base64Decode(_signatureDataUrl!.split(',').last),
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                      const SizedBox(height: AppMetrics.spacingSm),
+                      FleetButton(
+                        label: _signatureDataUrl != null ? 'Re-sign' : 'Sign',
+                        isOutlined: true,
+                        onPressed: _openSignaturePad,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppMetrics.spacingLg),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
+          Container(
+            padding: const EdgeInsets.fromLTRB(
+              AppMetrics.screenPadding,
+              AppMetrics.spacingSm + 4,
+              AppMetrics.screenPadding,
+              AppMetrics.spacingMd,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              border: Border(top: BorderSide(color: AppColors.border)),
+            ),
+            child: SafeArea(
+              top: false,
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Signature *'),
-                  const SizedBox(height: 8),
-                  if (_signatureDataUrl != null)
-                    Container(
-                      height: 120,
-                      decoration: BoxDecoration(border: Border.all(color: AppColors.border)),
-                      child: Image.memory(
-                        base64Decode(_signatureDataUrl!.split(',').last),
-                        fit: BoxFit.contain,
+                  if (_failCount > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: AppMetrics.spacingSm),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning_amber_rounded, color: AppColors.danger, size: AppMetrics.iconSm),
+                          const SizedBox(width: AppMetrics.spacingSm),
+                          Text(
+                            '$_failCount defect${_failCount > 1 ? 's' : ''} flagged',
+                            style: text.bodySmall?.copyWith(color: AppColors.danger),
+                          ),
+                        ],
                       ),
                     ),
-                  const SizedBox(height: 8),
-                  OutlinedButton(
-                    onPressed: _openSignaturePad,
-                    child: Text(_signatureDataUrl != null ? 'Re-sign' : 'Sign'),
+                  if (!_canSubmit)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: AppMetrics.spacingSm),
+                      child: Text(
+                        'Before you can submit: ${[
+                          if (_odometerMissing) 'odometer reading',
+                          if (_signatureDataUrl == null) 'signature',
+                          if (_hasUnresolvedFails) 'defect type/photo/note on every failed item',
+                        ].join(', ')}.',
+                        style: text.bodySmall?.copyWith(color: AppColors.danger),
+                      ),
+                    ),
+                  FleetButton(
+                    label: 'Submit inspection',
+                    isLoading: _submitting,
+                    onPressed: (_canSubmit && !_submitting) ? _submit : null,
                   ),
                 ],
               ),
             ),
           ),
-          if (!_canSubmit)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                'Before you can submit: ${[
-                  if (_odometerMissing) 'odometer reading',
-                  if (_signatureDataUrl == null) 'signature',
-                  if (_hasUnresolvedFails) 'defect type/photo/note on every failed item',
-                ].join(', ')}.',
-                style: const TextStyle(color: AppColors.danger, fontSize: 12),
-              ),
-            ),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: (_canSubmit && !_submitting) ? _submit : null,
-            child: _submitting
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : Text('Complete inspection${_failCount > 0 ? ' & flag defects' : ''}'),
-          ),
-          const SizedBox(height: 32),
         ],
       ),
     );
@@ -389,11 +465,13 @@ class _VoiceMicButtonState extends State<_VoiceMicButton> {
   }
 }
 
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({
+class _SectionBlock extends StatelessWidget {
+  const _SectionBlock({
     required this.section,
+    required this.sectionIndex,
     required this.answerFor,
     required this.missingForFail,
+    required this.itemComplete,
     required this.onCapturePhoto,
     required this.onChanged,
     required this.speech,
@@ -401,8 +479,10 @@ class _SectionCard extends StatelessWidget {
   });
 
   final Map<String, dynamic> section;
+  final int sectionIndex;
   final _Answer Function(String) answerFor;
   final List<String> Function(Map<String, dynamic>) missingForFail;
+  final bool Function(Map<String, dynamic>) itemComplete;
   final Future<void> Function(String) onCapturePhoto;
   final VoidCallback onChanged;
   final SpeechToText speech;
@@ -411,31 +491,157 @@ class _SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = (section['items'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(section['title'] as String? ?? '', style: Theme.of(context).textTheme.titleMedium),
-            for (final item in items) _ItemRow(
-              item: item,
-              answer: answerFor(item['id'] as String),
-              onCapturePhoto: onCapturePhoto,
-              onChanged: onChanged,
-              speech: speech,
-              speechAvailable: speechAvailable,
-            ),
-          ],
+    final completed = items.where(itemComplete).length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InspectionSectionHeader(
+          name: section['title'] as String? ?? '',
+          sectionIndex: sectionIndex,
+          completed: completed,
+          total: items.length,
         ),
-      ),
+        for (final item in items)
+          _ItemRow(
+            item: item,
+            answer: answerFor(item['id'] as String),
+            missingForFail: missingForFail,
+            onCapturePhoto: onCapturePhoto,
+            onChanged: onChanged,
+            speech: speech,
+            speechAvailable: speechAvailable,
+          ),
+      ],
     );
   }
 }
 
 class _ItemRow extends StatelessWidget {
   const _ItemRow({
+    required this.item,
+    required this.answer,
+    required this.missingForFail,
+    required this.onCapturePhoto,
+    required this.onChanged,
+    required this.speech,
+    required this.speechAvailable,
+  });
+
+  final Map<String, dynamic> item;
+  final _Answer answer;
+  final List<String> Function(Map<String, dynamic>) missingForFail;
+  final Future<void> Function(String) onCapturePhoto;
+  final VoidCallback onChanged;
+  final SpeechToText speech;
+  final bool speechAvailable;
+
+  @override
+  Widget build(BuildContext context) {
+    final type = item['type'] as String? ?? 'boolean';
+    final label = item['label'] as String? ?? '';
+    final required = item['required'] == true;
+    final isFail = (answer.value ?? '').toLowerCase() == 'fail';
+    final text = Theme.of(context).textTheme;
+    answer.noteController.text = answer.note;
+
+    if (type == 'boolean') {
+      return Container(
+        key: answer.key,
+        color: AppColors.surface,
+        child: Column(
+          children: [
+            CheckItemTile(
+              label: '$label${required ? ' *' : ''}',
+              selectedValue: switch (answer.value?.toLowerCase()) {
+                'pass' => 'pass',
+                'fail' => 'fail',
+                'na' => 'na',
+                _ => null,
+              },
+              onResultChanged: (result) {
+                answer.value = result;
+                onChanged();
+              },
+            ),
+            if (isFail)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(
+                  AppMetrics.spacingMd,
+                  0,
+                  AppMetrics.spacingMd,
+                  AppMetrics.spacingMd,
+                ),
+                decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.border))),
+                child: _FailDetails(
+                  item: item,
+                  answer: answer,
+                  onCapturePhoto: onCapturePhoto,
+                  onChanged: onChanged,
+                  speech: speech,
+                  speechAvailable: speechAvailable,
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      key: answer.key,
+      margin: const EdgeInsets.only(top: 1),
+      padding: const EdgeInsets.symmetric(horizontal: AppMetrics.spacingMd, vertical: AppMetrics.spacingSm + 4),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('$label${required ? ' *' : ''}', style: text.bodyMedium),
+          const SizedBox(height: AppMetrics.spacingSm + 2),
+          if (type == 'rating')
+            Wrap(
+              spacing: AppMetrics.spacingSm,
+              children: List.generate(5, (i) {
+                final n = (i + 1).toString();
+                return ChoiceChip(
+                  label: Text(n),
+                  selected: answer.value == n,
+                  onSelected: (_) {
+                    answer.value = n;
+                    onChanged();
+                  },
+                );
+              }),
+            ),
+          if (type == 'text' || type == 'number')
+            TextField(
+              keyboardType: type == 'number' ? TextInputType.number : TextInputType.text,
+              onChanged: (v) => answer.value = v,
+              decoration: const InputDecoration(isDense: true),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(top: AppMetrics.spacingSm),
+            child: TextField(
+              controller: answer.noteController,
+              onChanged: (v) => answer.note = v,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Note…',
+                suffixIcon: speechAvailable ? _VoiceMicButton(speech: speech, controller: answer.noteController) : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FailDetails extends StatelessWidget {
+  const _FailDetails({
     required this.item,
     required this.answer,
     required this.onCapturePhoto,
@@ -453,112 +659,59 @@ class _ItemRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final type = item['type'] as String? ?? 'boolean';
-    final label = item['label'] as String? ?? '';
-    final required = item['required'] == true;
-    final isFail = (answer.value ?? '').toLowerCase() == 'fail';
-    answer.noteController.text = answer.note;
-
-    return Container(
-      key: answer.key,
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.only(top: 12),
-      decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.border))),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('$label${required ? ' *' : ''}'),
-          const SizedBox(height: 8),
-          if (type == 'boolean')
-            Row(
-              children: [
-                ChoiceChip(
-                  label: const Text('Pass'),
-                  selected: answer.value == 'pass',
-                  onSelected: (_) { answer.value = 'pass'; onChanged(); },
-                ),
-                const SizedBox(width: 8),
-                ChoiceChip(
-                  label: const Text('Fail'),
-                  selected: isFail,
-                  selectedColor: AppColors.danger.withValues(alpha: 0.25),
-                  onSelected: (_) { answer.value = 'fail'; onChanged(); },
-                ),
-              ],
-            ),
-          if (type == 'rating')
-            Wrap(
-              spacing: 8,
-              children: List.generate(5, (i) {
-                final n = (i + 1).toString();
-                return ChoiceChip(
-                  label: Text(n),
-                  selected: answer.value == n,
-                  onSelected: (_) { answer.value = n; onChanged(); },
-                );
-              }),
-            ),
-          if (type == 'text' || type == 'number')
-            TextField(
-              keyboardType: type == 'number' ? TextInputType.number : TextInputType.text,
-              onChanged: (v) => answer.value = v,
-              decoration: const InputDecoration(isDense: true),
-            ),
-          if (!isFail)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: TextField(
-                controller: answer.noteController,
-                onChanged: (v) { answer.note = v; },
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: 'Note…',
-                  suffixIcon: speechAvailable
-                      ? _VoiceMicButton(speech: speech, controller: answer.noteController)
-                      : null,
-                ),
-              ),
-            ),
-          if (isFail) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              children: kDefectTypes.map((dt) => ChoiceChip(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: AppMetrics.spacingSm - 2,
+          children: kDefectTypes
+              .map((dt) => ChoiceChip(
                     label: Text(dt),
                     selected: answer.defectType == dt,
-                    onSelected: (_) { answer.defectType = dt; onChanged(); },
-                  )).toList(),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: answer.noteController,
-              onChanged: (v) { answer.note = v; onChanged(); },
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'Describe the defect… *',
-                suffixIcon: speechAvailable
-                    ? _VoiceMicButton(speech: speech, controller: answer.noteController)
-                    : null,
+                    onSelected: (_) {
+                      answer.defectType = dt;
+                      onChanged();
+                    },
+                  ))
+              .toList(),
+        ),
+        const SizedBox(height: AppMetrics.spacingSm),
+        TextField(
+          controller: answer.noteController,
+          onChanged: (v) {
+            answer.note = v;
+            onChanged();
+          },
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: 'Describe the defect… *',
+            suffixIcon: speechAvailable ? _VoiceMicButton(speech: speech, controller: answer.noteController) : null,
+          ),
+        ),
+        const SizedBox(height: AppMetrics.spacingSm),
+        FleetButton(
+          label: answer.photoDataUrl != null ? 'Photo captured' : '+ Photo (required)',
+          isOutlined: true,
+          icon: Icons.camera_alt_outlined,
+          onPressed: () async {
+            await onCapturePhoto(item['id'] as String);
+            onChanged();
+          },
+        ),
+        if (answer.photoDataUrl != null)
+          Padding(
+            padding: const EdgeInsets.only(top: AppMetrics.spacingSm),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppMetrics.radiusSharp),
+              child: Image.memory(
+                base64Decode(answer.photoDataUrl!.split(',').last),
+                width: 64,
+                height: 64,
+                fit: BoxFit.cover,
               ),
             ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: () async { await onCapturePhoto(item['id'] as String); onChanged(); },
-              child: Text(answer.photoDataUrl != null ? 'Photo captured' : '+ Photo (required)'),
-            ),
-            if (answer.photoDataUrl != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Image.memory(
-                  base64Decode(answer.photoDataUrl!.split(',').last),
-                  width: 64,
-                  height: 64,
-                  fit: BoxFit.cover,
-                ),
-              ),
-          ],
-        ],
-      ),
+          ),
+      ],
     );
   }
 }
@@ -572,18 +725,18 @@ class _SignaturePad extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppMetrics.spacingMd),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text('Sign below'),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppMetrics.spacingSm + 4),
             Container(
               height: 240,
               decoration: BoxDecoration(border: Border.all(color: AppColors.border)),
               child: Signature(controller: controller, backgroundColor: AppColors.surface),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppMetrics.spacingSm + 4),
             Row(
               children: [
                 Expanded(
@@ -592,14 +745,14 @@ class _SignaturePad extends StatelessWidget {
                     child: const Text('Cancel'),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppMetrics.spacingSm),
                 Expanded(
                   child: OutlinedButton(
                     onPressed: controller.clear,
                     child: const Text('Clear'),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppMetrics.spacingSm),
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () async {
@@ -613,6 +766,70 @@ class _SignaturePad extends StatelessWidget {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Success screen shown after a real submit succeeds (online or queued offline) -- ported from
+/// Primio's _SubmittedView, extended with the offline case our real submit flow can hit.
+class _SubmittedView extends StatelessWidget {
+  const _SubmittedView({required this.offline, required this.failCount});
+
+  final bool offline;
+  final int failCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final colors = Theme.of(context).colorScheme;
+
+    final String message;
+    if (offline) {
+      message = "This inspection will sync automatically once you're back online.";
+    } else if (failCount > 0) {
+      message = '$failCount defect${failCount > 1 ? 's' : ''} recorded. Your fleet manager has been notified.';
+    } else {
+      message = "All checks passed. You're clear to depart.";
+    }
+
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppMetrics.screenPadding),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Spacer(),
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: colors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(AppMetrics.radiusSharp),
+                ),
+                child: Icon(
+                  offline ? Icons.cloud_off_outlined : Icons.check_circle_outline,
+                  color: colors.primary,
+                  size: AppMetrics.iconLg + 8,
+                ),
+              ),
+              const SizedBox(height: AppMetrics.spacingLg),
+              Text(offline ? 'Saved offline' : 'Inspection submitted', style: text.headlineMedium),
+              const SizedBox(height: AppMetrics.spacingSm),
+              Text(message, style: text.bodyMedium?.copyWith(color: AppColors.muted), textAlign: TextAlign.center),
+              const Spacer(),
+              FleetButton(
+                label: 'Done',
+                onPressed: () {
+                  Navigator.of(context).pop(); // close inspection screen (pushed outside go_router)
+                  context.go('/welcome');
+                },
+              ),
+              const SizedBox(height: AppMetrics.spacingLg),
+            ],
+          ),
         ),
       ),
     );
