@@ -24,8 +24,6 @@ class VehicleCanvas extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-
     return Container(
       height: AppMetrics.canvasHeight,
       decoration: BoxDecoration(
@@ -38,15 +36,28 @@ class VehicleCanvas extends StatelessWidget {
           final size = Size(constraints.maxWidth, constraints.maxHeight);
           return Stack(
             children: [
+              // Soft radial vignette behind the silhouette, matching Primio's reference art --
+              // the painter itself stays flat-fill only (still true, still cheap to draw); this
+              // is a separate decorative layer, not something baked into VehicleSilhouettePainter.
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      colors: [Color(0xFF2A2A30), AppColors.surface],
+                      stops: const [0.0, 0.85],
+                      radius: 0.85,
+                    ),
+                  ),
+                ),
+              ),
               Positioned.fill(
                 child: CustomPaint(
                   painter: VehicleSilhouettePainter(
                     bodyType: bodyType,
                     view: view,
-                    outline: colors.primary
-                        .withValues(alpha: AppMetrics.opacityStrong),
-                    fill: AppColors.surfaceElevated,
-                    detail: AppColors.border,
+                    outline: AppColors.ink.withValues(alpha: 0.82),
+                    fill: Colors.transparent,
+                    detail: AppColors.ink.withValues(alpha: 0.5),
                   ),
                   isComplex: true,
                 ),

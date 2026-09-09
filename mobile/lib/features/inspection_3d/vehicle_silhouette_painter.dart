@@ -206,6 +206,19 @@ class VehicleSilhouettePainter extends CustomPainter {
             [Offset(0.82, 0.10), Offset(0.82, 0.68)],
           ];
         }
+        if (bodyType == VehicleBodyType.truck) {
+          return [
+            _sideWindow(),
+            // Side mirror -- a small flag jutting left off the cab, above the window.
+            const [Offset(0.11, 0.19), Offset(0.155, 0.185), Offset(0.155, 0.235), Offset(0.115, 0.24)],
+            // Door handle.
+            const [Offset(0.27, 0.435), Offset(0.32, 0.435), Offset(0.32, 0.45), Offset(0.27, 0.45)],
+            // Front bumper block.
+            const [Offset(0.04, 0.62), Offset(0.10, 0.62), Offset(0.10, 0.70), Offset(0.02, 0.70)],
+            // Fuel tank / chassis cylinder between the axle sets.
+            const [Offset(0.40, 0.63), Offset(0.53, 0.63), Offset(0.53, 0.71), Offset(0.40, 0.71)],
+          ];
+        }
         return [_sideWindow()];
       case ZoneView.front:
       case ZoneView.rear:

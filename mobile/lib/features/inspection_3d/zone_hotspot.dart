@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'check_result.dart';
 import '../../core/theme/app_theme.dart';
 
+/// A filled, glowing dot -- no ring, no icon glyph. Matches Primio's reference art
+/// (assets/images/preview_3d_*.jpg in their repo), which turned out to be a hand-designed
+/// preview rather than a literal screenshot of their shipped ring+icon marker widget.
 class ZoneHotspot extends StatelessWidget {
   final CheckResult result;
   final VoidCallback onTap;
@@ -10,43 +13,23 @@ class ZoneHotspot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-
-    late final Color background;
-    late final Color borderColor;
-    late final Color iconColor;
-    late final IconData icon;
+    late final Color color;
 
     switch (result) {
       case CheckResult.pass:
-        background = colors.primary;
-        borderColor = colors.primary;
-        iconColor = colors.onPrimary;
-        icon = Icons.check_rounded;
+        color = AppColors.primary;
         break;
       case CheckResult.fail:
-        background = AppColors.danger;
-        borderColor = AppColors.danger;
-        iconColor = colors.onError;
-        icon = Icons.priority_high_rounded;
+        color = AppColors.danger;
         break;
       case CheckResult.warning:
-        background = AppColors.warning;
-        borderColor = AppColors.warning;
-        iconColor = AppColors.background;
-        icon = Icons.warning_amber_rounded;
+        color = AppColors.warning;
         break;
       case CheckResult.na:
-        background = AppColors.surfaceElevated;
-        borderColor = AppColors.muted;
-        iconColor = AppColors.muted;
-        icon = Icons.remove_rounded;
+        color = AppColors.muted;
         break;
       case CheckResult.none:
-        background = AppColors.surfaceElevated;
-        borderColor = colors.primary.withValues(alpha: AppMetrics.opacityStrong);
-        iconColor = colors.primary;
-        icon = Icons.add_rounded;
+        color = AppColors.muted;
         break;
     }
 
@@ -55,14 +38,15 @@ class ZoneHotspot extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        width: AppMetrics.hotspotSize,
-        height: AppMetrics.hotspotSize,
+        width: AppMetrics.hotspotSize * 0.62,
+        height: AppMetrics.hotspotSize * 0.62,
         decoration: BoxDecoration(
-          color: background,
+          color: color,
           shape: BoxShape.circle,
-          border: Border.all(color: borderColor, width: AppMetrics.borderThick),
+          boxShadow: [
+            BoxShadow(color: color.withValues(alpha: 0.65), blurRadius: 10, spreadRadius: 1),
+          ],
         ),
-        child: Icon(icon, size: AppMetrics.iconSm, color: iconColor),
       ),
     );
   }
