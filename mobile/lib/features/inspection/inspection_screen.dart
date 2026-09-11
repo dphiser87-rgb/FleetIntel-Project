@@ -1,12 +1,10 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:signature/signature.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -14,27 +12,36 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/defect_fields.dart';
+import '../../core/widgets/fleet_button.dart';
+import '../../core/widgets/review_sheet.dart';
+import '../../core/widgets/section_header.dart';
+import '../../core/widgets/signature_pad.dart';
+import 'inspection_complete_screen.dart';
 
 /// Checklist item types and defect-capture rules mirror the backend contract (InspectionAnswer /
-/// InspectionIn in server.py) and the proven Expo prototype's InspectionScreen.js: a "fail" answer
-/// is not submittable without a defect_type, a photo, and a note -- ported here as-is rather than
-/// redesigned, since it already matches what the backend/web app expect.
-const kDefectTypes = ['tyres', 'engine', 'brakes', 'electrical', 'bodywork', 'general'];
-
+/// InspectionIn in server.py): a "fail" answer is not submittable without a defect_type, a photo,
+/// and a note.
+///
+/// Visual layout ported from the Fleet Hub reference app's inspection/flat.tsx: segmented Pass/Fail
+/// buttons (no N/A for the flat type, matching the reference), inline defect fields under a failing
+/// item, an inline (non-modal) signature pad, and a "Review & submit" step via a bottom sheet before
+/// the real submit fires -- every real behavior (GPS capture, offline outbox, idempotency, photo
+/// capture) is preserved as-is under the new shell.
 class _Answer {
   String? value;
   String note = '';
   String? photoDataUrl;
   String? defectType;
   final noteController = TextEditingController();
-  final key = GlobalKey();
 }
 
 class InspectionScreen extends ConsumerStatefulWidget {
-  const InspectionScreen({super.key, required this.template, required this.vehicle});
+  const InspectionScreen({super.key, required this.template, required this.vehicle, required this.odometer});
 
   final Map<String, dynamic> template;
   final Map<String, dynamic> vehicle;
+  final double odometer;
 
   @override
   ConsumerState<InspectionScreen> createState() => _InspectionScreenState();
@@ -44,17 +51,17 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
   final _clientSubmissionId = const Uuid().v4();
   final _startedAt = DateTime.now().toUtc().toIso8601String();
   final _answers = <String, _Answer>{};
-  final _notesController = TextEditingController();
-  final _odometerController = TextEditingController();
   final _signatureController = SignatureController(penColor: Colors.white, penStrokeWidth: 3);
   final _speech = SpeechToText();
-  String? _signatureDataUrl;
-  bool _submitting = false;
   bool _speechAvailable = false;
+  String? _validation;
   final _picker = ImagePicker();
 
   List<Map<String, dynamic>> get _sections =>
       (widget.template['sections'] as List? ?? []).map((s) => Map<String, dynamic>.from(s)).toList();
+
+  List<Map<String, dynamic>> get _allItems =>
+      _sections.expand((s) => (s['items'] as List? ?? []).map((e) => Map<String, dynamic>.from(e))).toList();
 
   @override
   void initState() {
@@ -64,8 +71,6 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
 
   @override
   void dispose() {
-    _notesController.dispose();
-    _odometerController.dispose();
     _signatureController.dispose();
     for (final a in _answers.values) {
       a.noteController.dispose();
@@ -83,44 +88,15 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
     setState(() => _answerFor(itemId).photoDataUrl = 'data:image/jpeg;base64,${base64Encode(bytes)}');
   }
 
-  List<String> _missingForFail(Map<String, dynamic> item) {
-    final a = _answerFor(item['id'] as String);
-    final missing = <String>[];
-    if (a.defectType == null) missing.add('defect type');
-    if (a.photoDataUrl == null) missing.add('photo');
-    if (a.note.trim().isEmpty) missing.add('note');
-    return missing;
-  }
+  int get _answeredCount => _allItems.where((i) => (_answerFor(i['id'] as String).value ?? '').isNotEmpty).length;
 
-  bool get _hasUnresolvedFails {
-    for (final section in _sections) {
-      for (final item in (section['items'] as List? ?? [])) {
-        final map = Map<String, dynamic>.from(item);
-        final a = _answerFor(map['id'] as String);
-        if ((a.value ?? '').toLowerCase() == 'fail' && _missingForFail(map).isNotEmpty) return true;
-      }
-    }
-    return false;
-  }
+  int get _failCount => _answers.values.where((a) => (a.value ?? '').toLowerCase() == 'fail').length;
 
-  bool get _odometerMissing {
-    final v = double.tryParse(_odometerController.text);
-    return v == null || v <= 0;
-  }
-
-  bool get _canSubmit => !_odometerMissing && _signatureDataUrl != null && !_hasUnresolvedFails;
-
-  Future<void> _openSignaturePad() async {
-    _signatureController.clear();
-    final result = await showModalBottomSheet<Uint8List?>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.background,
-      builder: (context) => _SignaturePad(controller: _signatureController),
-    );
-    if (result != null) {
-      setState(() => _signatureDataUrl = 'data:image/png;base64,${base64Encode(result)}');
-    }
+  void _setStatus(String itemId, String status) {
+    setState(() {
+      _answerFor(itemId).value = status;
+      _validation = null;
+    });
   }
 
   Future<({double? lat, double? lng, String status, String? address})> _captureLocation() async {
@@ -161,16 +137,50 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
     }
   }
 
-  Future<void> _submit() async {
-    if (!_canSubmit) return;
-    setState(() => _submitting = true);
+  void _onReview() {
+    if (_answeredCount < _allItems.length) {
+      setState(() => _validation = 'Answer every item before submitting.');
+      return;
+    }
+    for (final item in _allItems) {
+      final a = _answerFor(item['id'] as String);
+      if ((a.value ?? '').toLowerCase() == 'fail' && (a.defectType == null || a.note.trim().isEmpty)) {
+        setState(() => _validation = 'Every failed item needs a category and note.');
+        return;
+      }
+    }
+    if (_signatureController.isEmpty) {
+      setState(() => _validation = 'Please sign to confirm your inspection.');
+      return;
+    }
+    setState(() => _validation = null);
 
+    final flagged = _allItems
+        .where((i) => (_answerFor(i['id'] as String).value ?? '').toLowerCase() == 'fail')
+        .map((i) {
+      final a = _answerFor(i['id'] as String);
+      return FlaggedReviewItem(
+        label: i['label'] as String? ?? '',
+        status: 'fail',
+        category: a.defectType ?? '',
+        note: a.note,
+        hasPhoto: a.photoDataUrl != null,
+      );
+    }).toList();
+
+    showReviewSheet(context, flagged: flagged, totalCount: _allItems.length, onConfirm: _submit);
+  }
+
+  Future<void> _submit() async {
+    final signatureBytes = await _signatureController.toPngBytes();
+    final signatureDataUrl =
+        signatureBytes != null ? 'data:image/png;base64,${base64Encode(signatureBytes)}' : null;
     final location = await _captureLocation();
     final payload = {
       'template_id': widget.template['id'],
       'vehicle_id': widget.vehicle['id'],
-      'odometer': double.tryParse(_odometerController.text),
-      'notes': _notesController.text,
+      'odometer': widget.odometer,
+      'notes': '',
       'answers': _answers.entries
           .map((e) => {
                 'item_id': e.key,
@@ -186,17 +196,16 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
       'longitude': location.lng,
       'address': location.address,
       'location_status': location.status,
-      'signature': _signatureDataUrl,
+      'signature': signatureDataUrl,
       'client_submission_id': _clientSubmissionId,
     };
 
     final dio = ref.read(apiClientProvider).dio;
+    var queued = false;
     try {
       await dio.post('/inspections', data: payload);
-      if (mounted) _showResultAndPop('Inspection complete', _failCount > 0 ? '$_failCount failed item(s) flagged.' : 'All items passed.');
     } on DioException catch (e) {
-      // No response reaching back means a dropped connection, not a rejection -- queue for later,
-      // matching the Expo prototype's offlineQueue.js semantics.
+      // No response reaching back means a dropped connection, not a rejection -- queue for later.
       if (e.response == null) {
         await ref.read(outboxRepositoryProvider).enqueue(
               id: _clientSubmissionId,
@@ -205,145 +214,261 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
               endpoint: '/inspections',
               payload: payload,
             );
+        queued = true;
+      } else {
         if (mounted) {
-          _showResultAndPop('Saved offline', "This inspection will sync automatically once you're back online.");
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to submit. Please try again.')),
+          );
         }
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to submit. Please try again.')),
-        );
+        return;
       }
-    } finally {
-      if (mounted) setState(() => _submitting = false);
     }
-  }
 
-  int get _failCount =>
-      _answers.values.where((a) => (a.value ?? '').toLowerCase() == 'fail').length;
-
-  void _showResultAndPop(String title, String message) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop(); // close dialog
-              Navigator.of(context).pop(); // close inspection screen (pushed outside go_router)
-              context.go('/welcome');
-            },
-            child: const Text('OK'),
-          ),
-        ],
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => InspectionCompleteScreen(
+          overallStatus: _failCount > 0 ? 'critical' : 'pass',
+          defectCount: _failCount,
+          queued: queued,
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final colors = Theme.of(context).colorScheme;
+    final total = _allItems.length;
+    final answered = _answeredCount;
+
     return Scaffold(
-      appBar: AppBar(title: Text(widget.template['name'] as String? ?? 'Inspection')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
+      appBar: AppBar(
+        title: Text(widget.template['name'] as String? ?? 'Inspection'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(3),
+          child: LinearProgressIndicator(
+            value: total == 0 ? 0.0 : answered / total,
+            backgroundColor: AppColors.border,
+            color: _failCount > 0 ? AppColors.danger : colors.primary,
+            minHeight: 3,
+          ),
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: AppMetrics.screenPadding),
+            child: Center(
+              child: Text('$answered/$total', style: text.labelMedium?.copyWith(color: colors.primary)),
+            ),
+          ),
+        ],
+      ),
+      body: Column(
         children: [
-          Text('${widget.vehicle['make'] ?? ''} ${widget.vehicle['model'] ?? ''}',
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: TextField(
-                controller: _odometerController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Odometer (km) *'),
-              ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(AppMetrics.spacingLg),
+              children: [
+                for (int i = 0; i < _sections.length; i++) ...[
+                  InspectionSectionHeader(
+                    name: _sections[i]['title'] as String? ?? '',
+                    sectionIndex: i,
+                    completed: (_sections[i]['items'] as List? ?? [])
+                        .map((e) => Map<String, dynamic>.from(e))
+                        .where((it) => (_answerFor(it['id'] as String).value ?? '').isNotEmpty)
+                        .length,
+                    total: (_sections[i]['items'] as List? ?? []).length,
+                  ),
+                  const SizedBox(height: AppMetrics.spacingMd),
+                  for (final item in (_sections[i]['items'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)))
+                    _ItemCard(
+                      item: item,
+                      answer: _answerFor(item['id'] as String),
+                      onSetStatus: (status) => _setStatus(item['id'] as String, status),
+                      onCapturePhoto: () async {
+                        await _capturePhoto(item['id'] as String);
+                        setState(() {});
+                      },
+                      onDefectTypeChanged: (dt) => setState(() => _answerFor(item['id'] as String).defectType = dt),
+                      onNoteChanged: (v) => _answerFor(item['id'] as String).note = v,
+                      speech: _speech,
+                      speechAvailable: _speechAvailable,
+                    ),
+                  const SizedBox(height: AppMetrics.spacingLg),
+                ],
+                Text('DRIVER SIGNATURE', style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1.2)),
+                const SizedBox(height: AppMetrics.spacingSm),
+                SignaturePad(controller: _signatureController),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          for (final section in _sections) _SectionCard(
-            section: section,
-            answerFor: _answerFor,
-            missingForFail: _missingForFail,
-            onCapturePhoto: _capturePhoto,
-            onChanged: () => setState(() {}),
-            speech: _speech,
-            speechAvailable: _speechAvailable,
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: TextField(
-                controller: _notesController,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  labelText: 'General notes',
-                  suffixIcon: _speechAvailable
-                      ? _VoiceMicButton(speech: _speech, controller: _notesController)
-                      : null,
-                ),
-              ),
+          Container(
+            padding: const EdgeInsets.fromLTRB(
+              AppMetrics.screenPadding,
+              AppMetrics.spacingSm + 4,
+              AppMetrics.screenPadding,
+              AppMetrics.spacingMd,
             ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              border: Border(top: BorderSide(color: AppColors.border)),
+            ),
+            child: SafeArea(
+              top: false,
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Signature *'),
-                  const SizedBox(height: 8),
-                  if (_signatureDataUrl != null)
-                    Container(
-                      height: 120,
-                      decoration: BoxDecoration(border: Border.all(color: AppColors.border)),
-                      child: Image.memory(
-                        base64Decode(_signatureDataUrl!.split(',').last),
-                        fit: BoxFit.contain,
+                  if (_validation != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: AppMetrics.spacingSm),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: AppMetrics.iconSm),
+                          const SizedBox(width: AppMetrics.spacingSm),
+                          Expanded(child: Text(_validation!, style: text.bodySmall?.copyWith(color: AppColors.warning))),
+                        ],
                       ),
                     ),
-                  const SizedBox(height: 8),
-                  OutlinedButton(
-                    onPressed: _openSignaturePad,
-                    child: Text(_signatureDataUrl != null ? 'Re-sign' : 'Sign'),
-                  ),
+                  FleetButton(label: 'Review & submit', onPressed: _onReview),
                 ],
               ),
             ),
           ),
-          if (!_canSubmit)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                'Before you can submit: ${[
-                  if (_odometerMissing) 'odometer reading',
-                  if (_signatureDataUrl == null) 'signature',
-                  if (_hasUnresolvedFails) 'defect type/photo/note on every failed item',
-                ].join(', ')}.',
-                style: const TextStyle(color: AppColors.danger, fontSize: 12),
-              ),
-            ),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: (_canSubmit && !_submitting) ? _submit : null,
-            child: _submitting
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : Text('Complete inspection${_failCount > 0 ? ' & flag defects' : ''}'),
-          ),
-          const SizedBox(height: 32),
         ],
       ),
     );
   }
 }
 
+class _ItemCard extends StatelessWidget {
+  const _ItemCard({
+    required this.item,
+    required this.answer,
+    required this.onSetStatus,
+    required this.onCapturePhoto,
+    required this.onDefectTypeChanged,
+    required this.onNoteChanged,
+    required this.speech,
+    required this.speechAvailable,
+  });
+
+  final Map<String, dynamic> item;
+  final _Answer answer;
+  final ValueChanged<String> onSetStatus;
+  final VoidCallback onCapturePhoto;
+  final ValueChanged<String> onDefectTypeChanged;
+  final ValueChanged<String> onNoteChanged;
+  final SpeechToText speech;
+  final bool speechAvailable;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final isFail = (answer.value ?? '').toLowerCase() == 'fail';
+    answer.noteController.text = answer.note;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppMetrics.spacingMd),
+      padding: const EdgeInsets.all(AppMetrics.spacingMd),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(AppMetrics.radiusMedium),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(item['label'] as String? ?? '', style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+          const SizedBox(height: AppMetrics.spacingMd),
+          Row(
+            children: [
+              Expanded(
+                child: _SegButton(
+                  label: 'Pass',
+                  icon: Icons.check,
+                  active: answer.value?.toLowerCase() == 'pass',
+                  activeColor: AppColors.primary,
+                  activeInk: AppColors.primaryInk,
+                  onTap: () => onSetStatus('pass'),
+                ),
+              ),
+              const SizedBox(width: AppMetrics.spacingSm),
+              Expanded(
+                child: _SegButton(
+                  label: 'Fail',
+                  icon: Icons.close,
+                  active: isFail,
+                  activeColor: AppColors.danger,
+                  activeInk: Colors.white,
+                  onTap: () => onSetStatus('fail'),
+                ),
+              ),
+            ],
+          ),
+          if (isFail) ...[
+            const SizedBox(height: AppMetrics.spacingMd),
+            DefectFields(
+              defectType: answer.defectType,
+              noteController: answer.noteController,
+              photoDataUrl: answer.photoDataUrl,
+              onDefectTypeChanged: onDefectTypeChanged,
+              onNoteChanged: onNoteChanged,
+              onCapturePhoto: onCapturePhoto,
+              noteSuffix: speechAvailable ? _VoiceMicButton(speech: speech, controller: answer.noteController) : null,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SegButton extends StatelessWidget {
+  const _SegButton({
+    required this.label,
+    required this.icon,
+    required this.active,
+    required this.activeColor,
+    required this.activeInk,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool active;
+  final Color activeColor;
+  final Color activeInk;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 44,
+        decoration: BoxDecoration(
+          color: active ? activeColor : AppColors.surface,
+          border: Border.all(color: active ? activeColor : AppColors.border),
+          borderRadius: BorderRadius.circular(AppMetrics.radiusMedium),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 16, color: active ? activeInk : AppColors.muted),
+            const SizedBox(width: AppMetrics.spacingSm),
+            Text(label, style: text.bodyMedium?.copyWith(color: active ? activeInk : AppColors.muted, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Toggles on-device speech recognition and appends whatever it hears to [controller]'s text --
-/// shared by every note/description field in this screen so a driver never has to type with
-/// gloves on. Best-effort: if speech isn't available on the device this just doesn't render
-/// (see _speechAvailable), it's never a blocker.
+/// best-effort: if speech isn't available on the device this just doesn't render, never a blocker.
 class _VoiceMicButton extends StatefulWidget {
   const _VoiceMicButton({required this.speech, required this.controller});
 
@@ -385,236 +510,6 @@ class _VoiceMicButtonState extends State<_VoiceMicButton> {
       icon: Icon(_listening ? Icons.mic : Icons.mic_none, color: _listening ? AppColors.primary : AppColors.muted),
       onPressed: _toggle,
       tooltip: 'Dictate',
-    );
-  }
-}
-
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({
-    required this.section,
-    required this.answerFor,
-    required this.missingForFail,
-    required this.onCapturePhoto,
-    required this.onChanged,
-    required this.speech,
-    required this.speechAvailable,
-  });
-
-  final Map<String, dynamic> section;
-  final _Answer Function(String) answerFor;
-  final List<String> Function(Map<String, dynamic>) missingForFail;
-  final Future<void> Function(String) onCapturePhoto;
-  final VoidCallback onChanged;
-  final SpeechToText speech;
-  final bool speechAvailable;
-
-  @override
-  Widget build(BuildContext context) {
-    final items = (section['items'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(section['title'] as String? ?? '', style: Theme.of(context).textTheme.titleMedium),
-            for (final item in items) _ItemRow(
-              item: item,
-              answer: answerFor(item['id'] as String),
-              onCapturePhoto: onCapturePhoto,
-              onChanged: onChanged,
-              speech: speech,
-              speechAvailable: speechAvailable,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ItemRow extends StatelessWidget {
-  const _ItemRow({
-    required this.item,
-    required this.answer,
-    required this.onCapturePhoto,
-    required this.onChanged,
-    required this.speech,
-    required this.speechAvailable,
-  });
-
-  final Map<String, dynamic> item;
-  final _Answer answer;
-  final Future<void> Function(String) onCapturePhoto;
-  final VoidCallback onChanged;
-  final SpeechToText speech;
-  final bool speechAvailable;
-
-  @override
-  Widget build(BuildContext context) {
-    final type = item['type'] as String? ?? 'boolean';
-    final label = item['label'] as String? ?? '';
-    final required = item['required'] == true;
-    final isFail = (answer.value ?? '').toLowerCase() == 'fail';
-    answer.noteController.text = answer.note;
-
-    return Container(
-      key: answer.key,
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.only(top: 12),
-      decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.border))),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('$label${required ? ' *' : ''}'),
-          const SizedBox(height: 8),
-          if (type == 'boolean')
-            Row(
-              children: [
-                ChoiceChip(
-                  label: const Text('Pass'),
-                  selected: answer.value == 'pass',
-                  onSelected: (_) { answer.value = 'pass'; onChanged(); },
-                ),
-                const SizedBox(width: 8),
-                ChoiceChip(
-                  label: const Text('Fail'),
-                  selected: isFail,
-                  selectedColor: AppColors.danger.withValues(alpha: 0.25),
-                  onSelected: (_) { answer.value = 'fail'; onChanged(); },
-                ),
-              ],
-            ),
-          if (type == 'rating')
-            Wrap(
-              spacing: 8,
-              children: List.generate(5, (i) {
-                final n = (i + 1).toString();
-                return ChoiceChip(
-                  label: Text(n),
-                  selected: answer.value == n,
-                  onSelected: (_) { answer.value = n; onChanged(); },
-                );
-              }),
-            ),
-          if (type == 'text' || type == 'number')
-            TextField(
-              keyboardType: type == 'number' ? TextInputType.number : TextInputType.text,
-              onChanged: (v) => answer.value = v,
-              decoration: const InputDecoration(isDense: true),
-            ),
-          if (!isFail)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: TextField(
-                controller: answer.noteController,
-                onChanged: (v) { answer.note = v; },
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: 'Note…',
-                  suffixIcon: speechAvailable
-                      ? _VoiceMicButton(speech: speech, controller: answer.noteController)
-                      : null,
-                ),
-              ),
-            ),
-          if (isFail) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              children: kDefectTypes.map((dt) => ChoiceChip(
-                    label: Text(dt),
-                    selected: answer.defectType == dt,
-                    onSelected: (_) { answer.defectType = dt; onChanged(); },
-                  )).toList(),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: answer.noteController,
-              onChanged: (v) { answer.note = v; onChanged(); },
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'Describe the defect… *',
-                suffixIcon: speechAvailable
-                    ? _VoiceMicButton(speech: speech, controller: answer.noteController)
-                    : null,
-              ),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: () async { await onCapturePhoto(item['id'] as String); onChanged(); },
-              child: Text(answer.photoDataUrl != null ? 'Photo captured' : '+ Photo (required)'),
-            ),
-            if (answer.photoDataUrl != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Image.memory(
-                  base64Decode(answer.photoDataUrl!.split(',').last),
-                  width: 64,
-                  height: 64,
-                  fit: BoxFit.cover,
-                ),
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _SignaturePad extends StatelessWidget {
-  const _SignaturePad({required this.controller});
-
-  final SignatureController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Sign below'),
-            const SizedBox(height: 12),
-            Container(
-              height: 240,
-              decoration: BoxDecoration(border: Border.all(color: AppColors.border)),
-              child: Signature(controller: controller, backgroundColor: AppColors.surface),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: controller.clear,
-                    child: const Text('Clear'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      if (controller.isEmpty) return;
-                      final bytes = await controller.toPngBytes();
-                      if (context.mounted) Navigator.of(context).pop(bytes);
-                    },
-                    child: const Text('Confirm'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

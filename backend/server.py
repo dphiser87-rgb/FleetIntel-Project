@@ -22,7 +22,7 @@ from typing import List, Optional, Literal, Dict
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, ValidationError
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -306,6 +306,18 @@ class NodeCheckItem(BaseModel):
     label: str
     required: bool = True
 
+class VisualPartCheck(BaseModel):
+    id: str
+    label: str
+
+class VisualPart(BaseModel):
+    id: str
+    label: str
+    view: Literal["side", "front", "rear", "top"]
+    x: float  # 0..1, percentage position on the diagram for that view
+    y: float
+    checks: List[VisualPartCheck] = []
+
 class TemplateIn(BaseModel):
     name: str
     description: Optional[str] = ""
@@ -323,6 +335,11 @@ class TemplateIn(BaseModel):
     # glTF-node-based design and is unused by the current (silhouette-based) 3D flow.
     asset_class: Optional[Literal["truck", "van", "bus", "trailer", "tautliner", "sedan", "hatchback", "suv", "bakkie"]] = None
     node_checklist: Optional[Dict[str, List[NodeCheckItem]]] = None
+    # The live asset_class-flagged flow: a 2D line-art vehicle diagram (side/front/rear/top) with
+    # tappable parts positioned by x/y. Like asset_class/node_checklist above, not yet wired into
+    # create/patch (authored directly, same as the parked 3D templates were) -- a template-builder UI
+    # for this is future work.
+    visual_parts: Optional[List[VisualPart]] = None
 
 DEFECT_TYPES = {"tyres", "engine", "brakes", "electrical", "bodywork", "general"}  # mirrors maintenance.category
 
@@ -380,6 +397,8 @@ class WorkspaceRename(BaseModel):
     lockout_threshold: Optional[int] = None
     report_logo: Optional[str] = None
     costing_approver_role: Optional[str] = None
+    shift_start_hour: Optional[int] = None
+    overdue_alert_email: Optional[str] = None
 
 class ReportDefinitionIn(BaseModel):
     name: str
@@ -419,8 +438,8 @@ class DriverIn(BaseModel):
     name: str
     email: Optional[EmailStr] = None
     phone: Optional[str] = ""
-    license_number: str
-    license_expiry: str  # YYYY-MM-DD
+    license_number: Optional[str] = None
+    license_expiry: Optional[str] = None  # YYYY-MM-DD
     hire_date: Optional[str] = ""
     assigned_vehicle_id: Optional[str] = None
     status: Literal["active", "inactive", "on_leave"] = "active"
@@ -1661,6 +1680,12 @@ async def list_inspections(vehicle_id: Optional[str] = None, asset_id: Optional[
     else:
         rows = await fetch_all("select * from inspections where workspace_id = :ws order by created_at desc", ws=ws)
 
+    # A driver's whole job in the app is their own vehicle's checklist (see PROFILE_PRESETS) -- the
+    # mobile History screen must only ever show inspections they personally submitted, not the whole
+    # workspace's. Every other role keeps the existing unrestricted (data-scoped) view below.
+    if user.get("role") == "driver":
+        rows = [r for r in rows if r.get("inspector_id") == user["id"]]
+
     vids = list({r["vehicle_id"] for r in rows if r.get("vehicle_id")})
     aids = list({r["asset_id"] for r in rows if r.get("asset_id")})
     tids = list({r["template_id"] for r in rows if r.get("template_id")})
@@ -1712,7 +1737,10 @@ async def create_inspection(i: InspectionIn, user: dict = Depends(get_current_us
     if not i.signature:
         raise HTTPException(status_code=400, detail="Signature is required")
     for a in i.answers:
-        if str(a.value).lower() == "fail":
+        # "fail" is the flat checklist's defect value; "warning"/"critical" are the visual-diagram
+        # template type's equivalents (see templates.visual_parts) -- all three need the same
+        # evidence before they're accepted.
+        if str(a.value).lower() in ("fail", "warning", "critical"):
             missing = [f for f, ok in (("note", bool(a.note and a.note.strip())), ("photo", bool(a.photo)), ("defect_type", bool(a.defect_type))) if not ok]
             if missing:
                 raise HTTPException(status_code=400, detail=f"Item {a.item_id} is marked as a defect but is missing: {', '.join(missing)}")
@@ -1773,7 +1801,79 @@ async def create_inspection(i: InspectionIn, user: dict = Depends(get_current_us
 async def get_inspection(iid: str, user: dict = Depends(get_current_user)):
     x = await fetch_one("select * from inspections where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
     if not x: raise HTTPException(status_code=404, detail="Not found")
+    if user.get("role") == "driver" and x.get("inspector_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Not found")
     return x
+
+class EscalationIn(BaseModel):
+    reason: Optional[str] = None
+
+def _today_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+async def _notify_overdue_inspection(user: dict, vehicle: Optional[dict], ws_name: str, to: str) -> None:
+    """Best-effort email to the configured depot/ops address; never blocks the request. Mirrors
+    _send_password_reset_email's guarded-content shape (send_email already runs _assert_safe_email)."""
+    reg = (vehicle or {}).get("plate") or (vehicle or {}).get("name") or "their assigned vehicle"
+    when = datetime.now(timezone.utc).strftime("%H:%M UTC on %d %b %Y")
+    html = (
+        '<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:3px solid #0EA5E9">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape(ws_name)}</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:22px">Start-of-shift inspection overdue</h1></td></tr>'
+        f'<tr><td style="padding:24px">'
+        f'<p style="margin:0 0 8px 0">Driver <strong>{escape(user["name"])}</strong> has not completed the '
+        f'pre-trip inspection for <strong>{escape(reg)}</strong>.</p>'
+        f'<p style="margin:0 0 20px 0">Flagged at {escape(when)}.</p>'
+        f'<p style="margin:0;font-size:13px;color:#64748b">Sent by FleetIntel. This is an automated fleet-compliance alert.</p>'
+        f'</td></tr></table>'
+    )
+    try:
+        await send_email(to=to, subject=f"Overdue pre-trip inspection — {user['name']}", html=html)
+    except Exception as e:
+        logger.error(f"overdue escalation email failed: {e}")
+
+@api.post("/escalations")
+async def create_escalation(req: EscalationIn, user: dict = Depends(get_current_user)):
+    if user.get("role") != "driver" or not user.get("driver_id"):
+        raise HTTPException(status_code=400, detail="Not a driver account")
+    ws = user["workspace_id"]
+    today = _today_str()
+    existing = await fetch_one(
+        "select * from escalations where driver_id = :did and date = :d", did=user["id"], d=today,
+    )
+    if existing:
+        return {"flagged": True, "created_at": existing["created_at"], "reason": existing["reason"], "date": today}
+
+    driver = await fetch_one("select assigned_vehicle_id from drivers where id = :id and workspace_id = :ws", id=user["driver_id"], ws=ws)
+    vehicle_id = (driver or {}).get("assigned_vehicle_id")
+    eid = str(uuid.uuid4())
+    reason = req.reason or "Start-of-shift inspection overdue"
+    await execute(
+        "insert into escalations (id, workspace_id, driver_id, vehicle_id, date, reason) "
+        "values (:id, :ws, :did, :vid, :d, :reason)",
+        id=eid, ws=ws, did=user["id"], vid=vehicle_id, d=today, reason=reason,
+    )
+    row = await fetch_one("select * from escalations where id = :id", id=eid)
+
+    workspace = await fetch_one("select name, overdue_alert_email from workspaces where id = :id", id=ws)
+    alert_email = (workspace or {}).get("overdue_alert_email")
+    if alert_email:
+        vehicle = await fetch_one("select plate, name from vehicles where id = :id", id=vehicle_id) if vehicle_id else None
+        await _notify_overdue_inspection(user, vehicle, (workspace or {}).get("name") or "Fleet", alert_email)
+
+    return {"flagged": True, "created_at": row["created_at"], "reason": row["reason"], "date": today}
+
+@api.get("/escalations/today")
+async def escalation_today(user: dict = Depends(get_current_user)):
+    if user.get("role") != "driver":
+        raise HTTPException(status_code=400, detail="Not a driver account")
+    row = await fetch_one(
+        "select * from escalations where driver_id = :did and date = :d", did=user["id"], d=_today_str(),
+    )
+    if not row:
+        return {"flagged": False}
+    return {"flagged": True, "created_at": row["created_at"], "reason": row["reason"], "date": str(row["date"])}
 
 MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downtime_hours",
                      "assigned_to", "notes", "completed_at", "started_at", "category",
@@ -3520,7 +3620,15 @@ async def create_driver(d: dict, user: dict = Depends(get_current_user)):
     # Coerce empty-string email to None before Pydantic validation
     if isinstance(d.get("email"), str) and not d["email"].strip():
         d["email"] = None
-    driver = DriverIn(**d)
+    try:
+        driver = DriverIn(**d)
+    except ValidationError as e:
+        # Manually constructing the model here (rather than typing the param as DriverIn) is what
+        # lets us coerce the empty-email case above before validation runs -- but it also means
+        # FastAPI's automatic RequestValidationError handling never sees this: a raw
+        # pydantic.ValidationError is a plain unhandled exception, so without this it was crashing
+        # to a bare 500 with no detail instead of the usual 422 body every other endpoint returns.
+        raise HTTPException(status_code=422, detail=e.errors())
     _validate_driver_app_access(driver.email, driver.app_access)
     did = str(uuid.uuid4())
     fields = driver.model_dump()
@@ -5617,6 +5725,12 @@ async def get_workspace(user: dict = Depends(get_current_user)):
     ws = await fetch_one("select * from workspaces where id = :id", id=user["workspace_id"])
     if not ws:
         ws = {"id": user["workspace_id"], "name": "FleetCost Workspace"}
+    # Team roster and invite codes are staff-only -- a driver has no legitimate need to see them, and
+    # invites.code is a bearer secret POST /auth/register accepts on its own for email-less invites,
+    # so leaking it to the lowest-privileged role would let a driver self-register into a
+    # higher-privileged role.
+    if user.get("role") == "driver":
+        return {"workspace": ws, "members": [], "invites": []}
     users = await fetch_all(
         f"select {SAFE_USER_COLS} from user_profiles where workspace_id = :ws",
         ws=user["workspace_id"],
@@ -5626,9 +5740,16 @@ async def get_workspace(user: dict = Depends(get_current_user)):
     )
     return {"workspace": ws, "members": users, "invites": invites}
 
+@api.get("/workspace/shift-settings")
+async def get_shift_settings(user: dict = Depends(get_current_user)):
+    """Narrow, no-team-data endpoint for the mobile driver app's shift-reminder banner -- avoids
+    routing a driver through GET /workspace just to read one field."""
+    ws = await fetch_one("select shift_start_hour from workspaces where id = :id", id=user["workspace_id"])
+    return {"shift_start_hour": (ws or {}).get("shift_start_hour") or 9}
+
 @api.patch("/workspace")
 async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_current_user)):
-    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role)
+    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role, req.shift_start_hour, req.overdue_alert_email)
     if any(v is not None for v in guarded) and user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Only admins/managers can change workspace-wide settings")
     if req.name is not None:
@@ -5669,6 +5790,16 @@ async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_curren
                 "where workspace_id = :ws and role = :role",
                 ws=user["workspace_id"], role=req.costing_approver_role,
             )
+    if req.shift_start_hour is not None:
+        await execute(
+            "update workspaces set shift_start_hour = :h where id = :id",
+            h=max(0, min(23, req.shift_start_hour)), id=user["workspace_id"],
+        )
+    if req.overdue_alert_email is not None:
+        await execute(
+            "update workspaces set overdue_alert_email = :e where id = :id",
+            e=req.overdue_alert_email.strip() or None, id=user["workspace_id"],
+        )
     return await fetch_one("select * from workspaces where id = :id", id=user["workspace_id"])
 
 

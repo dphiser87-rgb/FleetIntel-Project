@@ -2,9 +2,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/history/history_detail_screen.dart';
+import '../../features/history/history_screen.dart';
 import '../../features/login/login_screen.dart';
 import '../../features/templates/template_picker_screen.dart';
 import '../../features/vehicle/vehicle_confirm_screen.dart';
+import '../../features/vehicle/vehicle_picker_screen.dart';
 import '../../features/welcome/welcome_screen.dart';
 import '../auth/auth_state.dart';
 
@@ -25,11 +28,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(path: '/welcome', builder: (context, state) => const WelcomeScreen()),
       GoRoute(path: '/vehicle', builder: (context, state) => const VehicleConfirmScreen()),
+      GoRoute(path: '/vehicle-picker', builder: (context, state) => const VehiclePickerScreen()),
       GoRoute(
         path: '/templates',
         builder: (context, state) => TemplatePickerScreen(
           driverContext: state.extra as Map<String, dynamic>?,
         ),
+      ),
+      GoRoute(path: '/history', builder: (context, state) => const HistoryScreen()),
+      GoRoute(
+        path: '/history/:id',
+        builder: (context, state) => HistoryDetailScreen(inspectionId: state.pathParameters['id']!),
       ),
     ],
   );
