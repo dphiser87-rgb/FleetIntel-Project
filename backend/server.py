@@ -1808,8 +1808,10 @@ async def get_inspection(iid: str, user: dict = Depends(get_current_user)):
 class EscalationIn(BaseModel):
     reason: Optional[str] = None
 
-def _today_str() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+def _today_date() -> date_cls:
+    # asyncpg needs a native date object for a `date` column, not a string -- see _parse_date's
+    # docstring above for why a ::date SQL-side cast doesn't help.
+    return datetime.now(timezone.utc).date()
 
 async def _notify_overdue_inspection(user: dict, vehicle: Optional[dict], ws_name: str, to: str) -> None:
     """Best-effort email to the configured depot/ops address; never blocks the request. Mirrors
@@ -1838,7 +1840,7 @@ async def create_escalation(req: EscalationIn, user: dict = Depends(get_current_
     if user.get("role") != "driver" or not user.get("driver_id"):
         raise HTTPException(status_code=400, detail="Not a driver account")
     ws = user["workspace_id"]
-    today = _today_str()
+    today = _today_date()
     existing = await fetch_one(
         "select * from escalations where driver_id = :did and date = :d", did=user["id"], d=today,
     )
@@ -1869,7 +1871,7 @@ async def escalation_today(user: dict = Depends(get_current_user)):
     if user.get("role") != "driver":
         raise HTTPException(status_code=400, detail="Not a driver account")
     row = await fetch_one(
-        "select * from escalations where driver_id = :did and date = :d", did=user["id"], d=_today_str(),
+        "select * from escalations where driver_id = :did and date = :d", did=user["id"], d=_today_date(),
     )
     if not row:
         return {"flagged": False}
