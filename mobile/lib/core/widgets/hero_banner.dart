@@ -68,7 +68,7 @@ class HeroBanner extends StatelessWidget {
                         ),
                       ),
                     ),
-                    if (trailing != null) trailing!,
+                    ?trailing,
                   ],
                 ),
                 const SizedBox(height: AppMetrics.spacingSm),

@@ -32,12 +32,24 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
   List<dynamic> _templates = [];
   bool _isSubstituted = false;
   bool _resolvingTemplates = false;
+  String? _odometerError;
+  int _syncedCount = 0;
   final _odometerController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _load();
+    _flushOutbox();
+  }
+
+  Future<void> _flushOutbox() async {
+    final outbox = ref.read(outboxRepositoryProvider);
+    final before = await outbox.pendingCount();
+    if (before == 0) return;
+    await outbox.flush();
+    final after = await outbox.pendingCount();
+    if (mounted && before > after) setState(() => _syncedCount = before - after);
   }
 
   Future<void> _load() async {
@@ -103,7 +115,8 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
     final text = Theme.of(context).textTheme;
     final colors = Theme.of(context).colorScheme;
     final lastOdometer = (vehicle?['odometer'] as num?)?.toInt() ?? 0;
-    final canContinue = vehicle != null && (int.tryParse(_odometerController.text) ?? 0) > 0;
+    final enteredOdometer = int.tryParse(_odometerController.text) ?? 0;
+    final canContinue = vehicle != null && enteredOdometer > 0 && _odometerError == null;
 
     return Scaffold(
       appBar: AppBar(
@@ -112,6 +125,12 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.go('/welcome'),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            onPressed: () => context.push('/history'),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -123,6 +142,29 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const SizedBox(height: AppMetrics.spacingMd),
+                    if (_syncedCount > 0) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(AppMetrics.spacingMd),
+                        decoration: BoxDecoration(
+                          color: colors.primary.withValues(alpha: AppMetrics.opacitySubtle),
+                          borderRadius: BorderRadius.circular(AppMetrics.radiusMedium),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.refresh, size: 16, color: colors.primary),
+                            const SizedBox(width: AppMetrics.spacingSm),
+                            Expanded(
+                              child: Text(
+                                '$_syncedCount offline inspection${_syncedCount > 1 ? 's' : ''} synced.',
+                                style: text.bodySmall?.copyWith(color: colors.primary, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: AppMetrics.spacingMd),
+                    ],
                     HeroBanner(
                       eyebrow: 'Step 1 of 2',
                       title: 'Confirm your\nvehicle',
@@ -152,8 +194,16 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
                         decoration: InputDecoration(
                           hintText: 'e.g. ${lastOdometer + 120}',
                           prefixIcon: Icon(Icons.speed_rounded, color: colors.primary, size: AppMetrics.iconMd),
+                          errorText: _odometerError,
                         ),
-                        onChanged: (_) => setState(() {}),
+                        onChanged: (v) {
+                          final value = int.tryParse(v);
+                          setState(() {
+                            _odometerError = (value != null && value < lastOdometer)
+                                ? "Reading can't be below the last logged $lastOdometer km."
+                                : null;
+                          });
+                        },
                       ),
                       if (lastOdometer > 0) ...[
                         const SizedBox(height: AppMetrics.spacingSm),
@@ -185,7 +235,11 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
                     label: l10n.vehicleConfirmYes,
                     isLoading: _resolvingTemplates,
                     onPressed: canContinue
-                        ? () => context.go('/templates', extra: {'vehicle': vehicle, 'templates': _templates})
+                        ? () => context.go('/templates', extra: {
+                              'vehicle': vehicle,
+                              'templates': _templates,
+                              'odometer': enteredOdometer,
+                            })
                         : null,
                   ),
                 ],

@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/history/history_detail_screen.dart';
+import '../../features/history/history_screen.dart';
 import '../../features/login/login_screen.dart';
 import '../../features/templates/template_picker_screen.dart';
 import '../../features/vehicle/vehicle_confirm_screen.dart';
@@ -32,6 +34,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => TemplatePickerScreen(
           driverContext: state.extra as Map<String, dynamic>?,
         ),
+      ),
+      GoRoute(path: '/history', builder: (context, state) => const HistoryScreen()),
+      GoRoute(
+        path: '/history/:id',
+        builder: (context, state) => HistoryDetailScreen(inspectionId: state.pathParameters['id']!),
       ),
     ],
   );

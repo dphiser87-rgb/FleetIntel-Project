@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api, formatApiErrorDetail } from "@/lib/api";
 import { toast } from "sonner";
-import { UserCircle, CurrencyCircleDollar, BellSimple, EnvelopeSimple, SpeakerHigh, IdentificationCard, Image as ImageIcon, Trash, Wrench } from "@phosphor-icons/react";
+import { UserCircle, CurrencyCircleDollar, BellSimple, EnvelopeSimple, SpeakerHigh, IdentificationCard, Image as ImageIcon, Trash, Wrench, Clock } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { CURRENCIES } from "@/lib/currency";
@@ -33,6 +33,8 @@ export default function Settings() {
   const [reportLogo, setReportLogo] = useState(null);
   const [logoSaving, setLogoSaving] = useState(false);
   const [costingApproverRole, setCostingApproverRole] = useState("");
+  const [shiftStartHour, setShiftStartHour] = useState(null);
+  const [overdueAlertEmail, setOverdueAlertEmail] = useState("");
 
   useEffect(() => {
     if (user) { setName(user.name || ""); setEmail(user.email || ""); setSoundEnabled(user.prefs?.alert_sound_enabled !== false); }
@@ -44,6 +46,8 @@ export default function Settings() {
       setLicenseWarningDays(r.data.workspace.license_warning_days ?? 30);
       setReportLogo(r.data.workspace.report_logo || null);
       setCostingApproverRole(r.data.workspace.costing_approver_role || "");
+      setShiftStartHour(r.data.workspace.shift_start_hour ?? 9);
+      setOverdueAlertEmail(r.data.workspace.overdue_alert_email || "");
     }).catch(() => {});
   }, []);
 
@@ -55,6 +59,20 @@ export default function Settings() {
     setLicenseWarningDays(days);
     try {
       await api.patch("/workspace", { license_warning_days: days });
+    } catch (e) { toast.error("Failed to save"); }
+  };
+
+  const saveShiftStartHour = async (hour) => {
+    setShiftStartHour(hour);
+    try {
+      await api.patch("/workspace", { shift_start_hour: hour });
+    } catch (e) { toast.error("Failed to save"); }
+  };
+
+  const saveOverdueAlertEmail = async () => {
+    try {
+      await api.patch("/workspace", { overdue_alert_email: overdueAlertEmail });
+      toast.success("Alert email updated");
     } catch (e) { toast.error("Failed to save"); }
   };
 
@@ -253,6 +271,42 @@ export default function Settings() {
                   className="w-20 bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm mono focus:border-primary focus:outline-none disabled:opacity-50"
                 />
                 <span className="text-sm text-muted-foreground">days</span>
+              </div>
+            </div>
+
+            <div className="bg-[#121214] border border-border p-6" data-testid="shift-cutoff-card">
+              <div className="flex items-center gap-3 mb-1">
+                <Clock size={22} className="text-primary" />
+                <div className="overline">Mobile driver app</div>
+              </div>
+              <h3 className="font-display text-2xl font-bold tracking-tight">Shift check cutoff</h3>
+              <div className="mt-2 text-sm text-muted-foreground">
+                A driver's pre-trip check is flagged overdue in the mobile app if it isn't done by this
+                time, and the address below is emailed when that happens.
+                {!canManage && " Only admins and managers can change it."}
+              </div>
+              <div className="mt-4 flex items-center gap-2">
+                <input
+                  type="number" min="0" max="23"
+                  value={shiftStartHour ?? ""}
+                  disabled={!canManage || shiftStartHour === null}
+                  data-testid="shift-start-hour-input"
+                  onChange={(e) => saveShiftStartHour(Math.max(0, Math.min(23, Number(e.target.value) || 0)))}
+                  className="w-20 bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm mono focus:border-primary focus:outline-none disabled:opacity-50"
+                />
+                <span className="text-sm text-muted-foreground">:00 (24h)</span>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  type="email"
+                  placeholder="ops@fleetintel.africa"
+                  value={overdueAlertEmail}
+                  disabled={!canManage}
+                  data-testid="overdue-alert-email-input"
+                  onChange={(e) => setOverdueAlertEmail(e.target.value)}
+                  onBlur={saveOverdueAlertEmail}
+                  className="flex-1 bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none disabled:opacity-50"
+                />
               </div>
             </div>
 

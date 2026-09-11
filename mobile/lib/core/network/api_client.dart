@@ -12,7 +12,7 @@ typedef LogoutCallback = Future<void> Function();
 /// request, and on a 401 tries exactly one refresh-then-retry before giving up and
 /// signing the user out. Mirrors the web app's axios interceptor behavior.
 class ApiClient {
-  ApiClient(this._tokenStore, {required LogoutCallback onLogout}) : _onLogout = onLogout {
+  ApiClient(this._tokenStore, {required this._onLogout}) {
     dio = Dio(BaseOptions(baseUrl: kApiBaseUrl, connectTimeout: const Duration(seconds: 15)));
     dio.interceptors.add(
       InterceptorsWrapper(

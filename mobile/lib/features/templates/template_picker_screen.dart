@@ -6,14 +6,15 @@ import '../../core/widgets/hero_banner.dart';
 import '../../core/widgets/template_card.dart';
 import '../../l10n/app_localizations.dart';
 import '../inspection/inspection_screen.dart';
+import '../inspection_visual/inspection_visual_screen.dart';
 
 /// Lists the checklist templates resolved for the confirmed vehicle (from the same
 /// driver-context payload the vehicle-confirm screen already fetched).
 ///
-/// Visual layout ported from the Primio-designed reference app's template_picker_screen.dart.
-/// 3D is parked for now: templates with asset_class set are excluded from this list entirely
-/// (trivial to remove once 3D resumes -- nothing about Inspection3DScreen or its routing is
-/// touched).
+/// Visual layout ported from the Fleet Hub reference app's templates.tsx. Templates with
+/// `asset_class` set (the slot the parked 3D concept used to occupy) now route to the new
+/// InspectionVisualScreen instead of being filtered out -- inspection_3d/ stays untouched, just
+/// unreachable from here.
 class TemplatePickerScreen extends StatelessWidget {
   const TemplatePickerScreen({super.key, this.driverContext});
 
@@ -24,11 +25,9 @@ class TemplatePickerScreen extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final text = Theme.of(context).textTheme;
     final allTemplates = (driverContext?['templates'] as List?) ?? [];
-    final templates = allTemplates
-        .map((t) => Map<String, dynamic>.from(t as Map))
-        .where((t) => t['asset_class'] == null)
-        .toList();
+    final templates = allTemplates.map((t) => Map<String, dynamic>.from(t as Map)).toList();
     final vehicle = driverContext?['vehicle'] as Map?;
+    final odometer = (driverContext?['odometer'] as num?)?.toDouble() ?? 0;
     final vehicleName = vehicle == null ? null : '${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'.trim();
 
     return Scaffold(
@@ -61,24 +60,13 @@ class TemplatePickerScreen extends StatelessWidget {
                   ),
                 )
               else ...[
-                Text('STANDARD CHECKLISTS', style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1.2)),
+                Text('ASSIGNED TEMPLATES', style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1.2)),
                 const SizedBox(height: AppMetrics.spacingMd),
                 for (final template in templates) ...[
-                  TemplateCard(
-                    name: (template['name'] as String?) ?? 'Untitled',
-                    subtitle: 'Standard checklist',
-                    onTap: vehicle == null
-                        ? () {}
-                        : () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (context) => InspectionScreen(
-                                  template: template,
-                                  vehicle: Map<String, dynamic>.from(vehicle),
-                                ),
-                              ),
-                            ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: AppMetrics.spacingSm + 4),
+                    child: _templateCard(context, template, vehicle, odometer),
                   ),
-                  const SizedBox(height: AppMetrics.spacingSm + 4),
                 ],
               ],
               const SizedBox(height: AppMetrics.spacingLg),
@@ -86,6 +74,40 @@ class TemplatePickerScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _templateCard(BuildContext context, Map<String, dynamic> template, Map? vehicle, double odometer) {
+    final isVisual = template['asset_class'] != null;
+    final itemCount = isVisual
+        ? (template['visual_parts'] as List?)?.length ?? 0
+        : ((template['sections'] as List?) ?? [])
+            .map((s) => Map<String, dynamic>.from(s))
+            .fold<int>(0, (sum, s) => sum + ((s['items'] as List?)?.length ?? 0));
+    final unit = isVisual ? 'parts' : 'items';
+
+    return TemplateCard(
+      name: (template['name'] as String?) ?? 'Untitled',
+      description: (template['description'] as String?) ?? '',
+      meta: '$itemCount $unit',
+      isVisual: isVisual,
+      onTap: vehicle == null
+          ? () {}
+          : () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => isVisual
+                      ? InspectionVisualScreen(
+                          template: template,
+                          vehicle: Map<String, dynamic>.from(vehicle),
+                          odometer: odometer,
+                        )
+                      : InspectionScreen(
+                          template: template,
+                          vehicle: Map<String, dynamic>.from(vehicle),
+                          odometer: odometer,
+                        ),
+                ),
+              ),
     );
   }
 }

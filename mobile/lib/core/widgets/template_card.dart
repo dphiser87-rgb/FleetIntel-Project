@@ -1,19 +1,22 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
-/// Ported from the Primio-designed reference app's widgets/templates/template_card.dart,
-/// decoupled from their InspectionTemplate model and stripped of the is3D branch -- 3D templates
-/// are excluded from the picker for now, so this card only needs the standard-checklist look.
+/// Ported from the Fleet Hub reference app's templates.tsx TemplateCard -- a type tag
+/// (CHECKLIST / VISUAL DIAGRAM), description, and an item/part-count + estimate footer row.
 class TemplateCard extends StatelessWidget {
   final String name;
-  final String subtitle;
+  final String description;
+  final String meta; // e.g. "12 items · ~6 min" or "16 parts · ~8 min"
+  final bool isVisual;
   final VoidCallback onTap;
 
   const TemplateCard({
     super.key,
     required this.name,
-    required this.subtitle,
+    required this.description,
+    required this.meta,
     required this.onTap,
+    this.isVisual = false,
   });
 
   @override
@@ -25,44 +28,63 @@ class TemplateCard extends StatelessWidget {
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: Container(
-        padding: const EdgeInsets.all(AppMetrics.spacingMd),
+        padding: const EdgeInsets.all(AppMetrics.spacingLg),
         decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppMetrics.radiusSharp),
+          color: AppColors.surfaceElevated,
+          borderRadius: BorderRadius.circular(AppMetrics.radiusMedium),
           border: Border.all(color: AppColors.border, width: AppMetrics.borderDefault),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: AppMetrics.avatarMd,
-              height: AppMetrics.avatarMd,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    colors.primary.withValues(alpha: AppMetrics.opacityGlow),
-                    colors.primary.withValues(alpha: AppMetrics.opacitySubtle),
-                  ],
-                  stops: const [0.0, 1.0],
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  width: AppMetrics.avatarMd - 4,
+                  height: AppMetrics.avatarMd - 4,
+                  decoration: BoxDecoration(
+                    color: isVisual ? colors.primary.withValues(alpha: AppMetrics.opacitySubtle) : AppColors.surface,
+                    borderRadius: BorderRadius.circular(AppMetrics.radiusSharp),
+                  ),
+                  child: Icon(
+                    isVisual ? Icons.grid_view_rounded : Icons.checklist_rounded,
+                    color: isVisual ? colors.primary : AppColors.ink,
+                    size: AppMetrics.iconMd,
+                  ),
                 ),
-                borderRadius: BorderRadius.circular(AppMetrics.radiusSharp),
-              ),
-              child: Icon(Icons.checklist_rounded, color: colors.primary, size: AppMetrics.iconMd),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: AppMetrics.spacingSm, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    border: Border.all(color: AppColors.border),
+                    borderRadius: BorderRadius.circular(AppMetrics.radiusSharp),
+                  ),
+                  child: Text(
+                    isVisual ? 'VISUAL DIAGRAM' : 'CHECKLIST',
+                    style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: AppMetrics.spacingSm + 4),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(height: AppMetrics.spacingSm + 4),
+            Text(name, style: text.titleLarge),
+            if (description.isNotEmpty) ...[
+              const SizedBox(height: AppMetrics.spacingXs),
+              Text(description, style: text.bodySmall?.copyWith(color: AppColors.muted)),
+            ],
+            const SizedBox(height: AppMetrics.spacingSm),
+            Container(
+              padding: const EdgeInsets.only(top: AppMetrics.spacingSm),
+              decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.border))),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(name, style: text.titleMedium, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: AppMetrics.spacingXs),
-                  Text(subtitle, style: text.bodySmall),
+                  Text(meta, style: text.bodySmall?.copyWith(color: AppColors.ink, fontWeight: FontWeight.w600)),
+                  Icon(Icons.chevron_right, color: colors.primary, size: AppMetrics.iconMd),
                 ],
               ),
             ),
-            const SizedBox(width: AppMetrics.spacingSm),
-            Icon(Icons.chevron_right, color: AppColors.muted, size: AppMetrics.iconMd),
           ],
         ),
       ),

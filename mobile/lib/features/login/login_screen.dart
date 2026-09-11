@@ -56,7 +56,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: AppMetrics.screenPadding),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -95,7 +95,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   children: [
                     Text(l10n.loginTitle, style: text.headlineLarge),
                     const SizedBox(height: AppMetrics.spacingSm),
-                    Text('Enter your credentials to continue', style: text.bodyMedium?.copyWith(color: AppColors.muted)),
+                    Text('Log a pre-trip inspection for your assigned vehicle.',
+                        style: text.bodyMedium?.copyWith(color: AppColors.muted)),
                     const SizedBox(height: AppMetrics.spacingLg),
                     Text(l10n.loginIdentifierLabel, style: text.labelMedium),
                     const SizedBox(height: AppMetrics.spacingSm),
