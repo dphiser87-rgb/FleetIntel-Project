@@ -10,12 +10,10 @@ import '../../l10n/app_localizations.dart';
 
 enum _ReminderMode { done, overdue, due }
 
-/// Ported directly from the Fleet Hub reference app's welcome.tsx: a top row with the small
-/// wordmark + logout icon (not the earlier Primio-derived big HeroBanner gradient card), then a
-/// typographic greeting -- "WELCOME BACK" eyebrow, a big "Hello, {name}." headline, role, and copy
-/// -- followed by the shift-reminder banner. The reference's own hero treatment there is a real
-/// photo image we don't have an asset for, so this goes straight to that typographic block, which
-/// is the reference's actual fallback-capable content, not an invented substitute.
+/// The driver home screen -- a task-oriented UX pass on top of the Fleet Hub reference's
+/// welcome.tsx layout: the screen leads with "ready to inspect" rather than a marketing headline,
+/// the primary CTA is unambiguous, and "View inspection history" is visually subordinate to it.
+/// Real state (auth, escalation/shift-reminder logic, sync status) unchanged.
 class WelcomeScreen extends ConsumerStatefulWidget {
   const WelcomeScreen({super.key});
 
@@ -89,6 +87,23 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
     }
   }
 
+  /// No draft/resume state is persisted for an in-progress inspection today -- answers live only
+  /// in InspectionScreen's in-memory state and are discarded if the driver backs out -- so this
+  /// always reports false for now. Kept as its own method (not inlined as a literal) so a future
+  /// real draft-tracking feature has one obvious place to wire in, instead of a hard-coded string.
+  bool _hasUnfinishedInspection() => false;
+
+  void _openAccountSheet(Map<String, dynamic>? user) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surfaceElevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppMetrics.radiusLarge)),
+      ),
+      builder: (context) => _AccountSheet(user: user),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -98,12 +113,24 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
     final text = Theme.of(context).textTheme;
     final colors = Theme.of(context).colorScheme;
 
+    // No draft/resume state is persisted for an in-progress inspection today (answers live only
+    // in the InspectionScreen's in-memory state and are discarded if the driver backs out), so
+    // this is always "Start" for now -- wired as a variable, not a hard-coded string, so a future
+    // real draft-tracking feature only needs to flip this.
+    final hasUnfinishedInspection = _hasUnfinishedInspection();
+    final ctaLabel = hasUnfinishedInspection ? 'Continue inspection' : 'Start inspection';
+
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppMetrics.spacingLg, vertical: AppMetrics.spacingSm),
+              padding: const EdgeInsets.fromLTRB(
+                AppMetrics.spacingLg,
+                AppMetrics.spacingSm,
+                AppMetrics.spacingSm,
+                AppMetrics.spacingSm,
+              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -122,12 +149,22 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                       Text(l10n.appName, style: text.titleSmall?.copyWith(color: AppColors.ink, fontWeight: FontWeight.w800)),
                     ],
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.logout, color: AppColors.muted),
-                    onPressed: () {
-                      ref.read(authControllerProvider.notifier).logout();
-                      context.go('/login');
-                    },
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.settings_outlined, color: AppColors.muted),
+                        tooltip: 'Account',
+                        onPressed: () => _openAccountSheet(user),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.logout_outlined, color: AppColors.muted),
+                        tooltip: 'Log out',
+                        onPressed: () {
+                          ref.read(authControllerProvider.notifier).logout();
+                          context.go('/login');
+                        },
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -138,6 +175,9 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    const SizedBox(height: AppMetrics.spacingSm),
+                    // Hero: reduced height (was 190) so the task content below isn't pushed off
+                    // the first screen -- the image supports the message, it doesn't lead it.
                     Container(
                       decoration: BoxDecoration(
                         color: AppColors.surfaceElevated,
@@ -148,20 +188,30 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Image.asset('assets/images/welcome_hero.png', width: double.infinity, height: 190, fit: BoxFit.cover),
+                          Semantics(
+                            label: 'A driver reviewing a vehicle inspection on a tablet',
+                            image: true,
+                            child: Image.asset(
+                              'assets/images/welcome_hero.png',
+                              width: double.infinity,
+                              height: 130,
+                              fit: BoxFit.cover,
+                              alignment: Alignment.topCenter,
+                            ),
+                          ),
                           Padding(
                             padding: const EdgeInsets.all(AppMetrics.spacingMd),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('FLEETINTEL AFRICA',
-                                    style: text.labelSmall?.copyWith(color: colors.primary, letterSpacing: 2, fontWeight: FontWeight.w800)),
+                                Text('FLEETINTEL AFRICA · FLEET HUB',
+                                    style: text.labelSmall?.copyWith(color: colors.primary, letterSpacing: 1.4, fontWeight: FontWeight.w800)),
                                 const SizedBox(height: AppMetrics.spacingXs),
-                                Text('More than a checklist.',
-                                    style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.4)),
+                                Text('Ready for an inspection?',
+                                    style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.3)),
                                 const SizedBox(height: AppMetrics.spacingXs),
                                 Text(
-                                  'Intelligent fleet costing, vehicle health checks and compliance — working together in one app.',
+                                  'Vehicle checks, costing and compliance — all in one place.',
                                   style: text.bodySmall?.copyWith(color: AppColors.muted, height: 1.4),
                                 ),
                               ],
@@ -170,24 +220,20 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: AppMetrics.spacingLg),
-                    Text('WELCOME BACK',
-                        style: text.labelMedium?.copyWith(color: colors.primary, letterSpacing: 2, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: AppMetrics.spacingSm),
-                    Text(
-                      'Hello,\n$name.',
-                      style: text.displayLarge?.copyWith(fontSize: 36, height: 1.1),
-                    ),
-                    const SizedBox(height: AppMetrics.spacingXs),
-                    Text(role, style: text.titleMedium?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w700)),
                     const SizedBox(height: AppMetrics.spacingMd),
-                    Text(
-                      "Let's run today's pre-trip inspection. It takes a few minutes and keeps your vehicle compliant and safe.",
-                      style: text.bodyMedium?.copyWith(color: AppColors.ink, height: 1.5),
+                    Text.rich(
+                      TextSpan(
+                        style: text.bodyMedium?.copyWith(color: AppColors.ink),
+                        children: [
+                          const TextSpan(text: 'Hi '),
+                          TextSpan(text: name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                          TextSpan(text: ' · $role', style: const TextStyle(color: AppColors.muted)),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: AppMetrics.spacingLg),
+                    const SizedBox(height: AppMetrics.spacingMd),
                     if (_loaded) _ReminderBanner(mode: _mode),
-                    const SizedBox(height: AppMetrics.spacingLg),
+                    const SizedBox(height: AppMetrics.spacingMd),
                     const PendingSyncBadge(),
                     const SizedBox(height: AppMetrics.spacingLg),
                   ],
@@ -204,16 +250,34 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
               child: Column(
                 children: [
                   FleetButton(
-                    label: 'Continue to inspection',
-                    icon: Icons.chevron_right,
+                    label: ctaLabel,
+                    icon: Icons.arrow_forward_rounded,
+                    iconAfter: true,
                     onPressed: () => context.go('/vehicle'),
                   ),
-                  const SizedBox(height: AppMetrics.spacingMd),
-                  GestureDetector(
-                    onTap: () => context.push('/history'),
-                    child: Text(
-                      'View inspection history',
-                      style: text.bodyMedium?.copyWith(color: colors.primary, fontWeight: FontWeight.w700),
+                  const SizedBox(height: AppMetrics.spacingSm + 4),
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(AppMetrics.radiusMedium),
+                      onTap: () => context.push('/history'),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppMetrics.spacingMd,
+                          vertical: AppMetrics.spacingSm + 4,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.history, size: AppMetrics.iconSm, color: AppColors.muted),
+                            const SizedBox(width: AppMetrics.spacingXs + 2),
+                            Text(
+                              'View inspection history',
+                              style: text.labelLarge?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -287,6 +351,71 @@ class _ReminderBanner extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Read-only account info, reached via the header's settings icon. Deliberately not a real
+/// settings/config screen: shift-cutoff hour and the overdue alert email are admin/manager-only,
+/// set on the web Settings page -- a driver has nothing to configure here, only to see.
+class _AccountSheet extends StatelessWidget {
+  const _AccountSheet({required this.user});
+
+  final Map<String, dynamic>? user;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final name = (user?['name'] as String?) ?? '—';
+    final email = (user?['email'] as String?) ?? '—';
+    final role = (user?['role'] as String?) ?? 'driver';
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppMetrics.spacingLg,
+          AppMetrics.spacingLg,
+          AppMetrics.spacingLg,
+          AppMetrics.spacingXl,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Account', style: text.headlineSmall),
+            const SizedBox(height: AppMetrics.spacingLg),
+            _AccountRow(label: 'Name', value: name),
+            const SizedBox(height: AppMetrics.spacingMd),
+            _AccountRow(label: 'Email', value: email),
+            const SizedBox(height: AppMetrics.spacingMd),
+            _AccountRow(label: 'Role', value: role),
+            const SizedBox(height: AppMetrics.spacingLg),
+            Container(height: 1, color: AppColors.border),
+            const SizedBox(height: AppMetrics.spacingMd),
+            Text('FleetIntel Africa · Fleet Hub', style: text.bodySmall?.copyWith(color: AppColors.muted)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AccountRow extends StatelessWidget {
+  const _AccountRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label.toUpperCase(), style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1)),
+        const SizedBox(height: 2),
+        Text(value, style: text.bodyLarge?.copyWith(color: AppColors.ink, fontWeight: FontWeight.w600)),
+      ],
     );
   }
 }
