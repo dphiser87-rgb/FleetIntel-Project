@@ -2,19 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
-import '../../core/widgets/hero_banner.dart';
 import '../../core/widgets/template_card.dart';
-import '../../l10n/app_localizations.dart';
 import '../inspection/inspection_screen.dart';
 import '../inspection_visual/inspection_visual_screen.dart';
 
 /// Lists the checklist templates resolved for the confirmed vehicle (from the same
 /// driver-context payload the vehicle-confirm screen already fetched).
 ///
-/// Visual layout ported from the Fleet Hub reference app's templates.tsx. Templates with
-/// `asset_class` set (the slot the parked 3D concept used to occupy) now route to the new
-/// InspectionVisualScreen instead of being filtered out -- inspection_3d/ stays untouched, just
-/// unreachable from here.
+/// Ported directly from the Fleet Hub reference app's templates.tsx: a plain header with a fixed
+/// subtitle (not the earlier Primio-derived "Step 2 of 2" hero card, and not vehicle-dependent --
+/// the reference's subtitle is static). Templates with `asset_class` set (the slot the parked 3D
+/// concept used to occupy) route to the new InspectionVisualScreen instead of being filtered out
+/// -- inspection_3d/ stays untouched, just unreachable from here.
 class TemplatePickerScreen extends StatelessWidget {
   const TemplatePickerScreen({super.key, this.driverContext});
 
@@ -22,17 +21,23 @@ class TemplatePickerScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
     final text = Theme.of(context).textTheme;
     final allTemplates = (driverContext?['templates'] as List?) ?? [];
     final templates = allTemplates.map((t) => Map<String, dynamic>.from(t as Map)).toList();
     final vehicle = driverContext?['vehicle'] as Map?;
     final odometer = (driverContext?['odometer'] as num?)?.toDouble() ?? 0;
-    final vehicleName = vehicle == null ? null : '${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'.trim();
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(l10n.templatePickerTitle),
+        centerTitle: true,
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Choose Inspection'),
+            Text('Select a checklist to begin',
+                style: text.labelSmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w600)),
+          ],
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.go('/vehicle'),
@@ -40,18 +45,10 @@ class TemplatePickerScreen extends StatelessWidget {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: AppMetrics.screenPadding),
+          padding: const EdgeInsets.all(AppMetrics.spacingLg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: AppMetrics.spacingMd),
-              HeroBanner(
-                eyebrow: 'Step 2 of 2',
-                title: 'Choose your\nchecklist',
-                subtitle: vehicleName == null ? 'Select the inspection type to begin.' : 'For $vehicleName',
-                icon: Icons.fact_check_rounded,
-              ),
-              const SizedBox(height: AppMetrics.spacingLg),
               if (templates.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: AppMetrics.spacingXl),

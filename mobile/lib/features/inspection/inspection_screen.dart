@@ -15,7 +15,6 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/defect_fields.dart';
 import '../../core/widgets/fleet_button.dart';
 import '../../core/widgets/review_sheet.dart';
-import '../../core/widgets/section_header.dart';
 import '../../core/widgets/signature_pad.dart';
 import 'inspection_complete_screen.dart';
 
@@ -272,14 +271,10 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
               padding: const EdgeInsets.all(AppMetrics.spacingLg),
               children: [
                 for (int i = 0; i < _sections.length; i++) ...[
-                  InspectionSectionHeader(
-                    name: _sections[i]['title'] as String? ?? '',
-                    sectionIndex: i,
-                    completed: (_sections[i]['items'] as List? ?? [])
-                        .map((e) => Map<String, dynamic>.from(e))
-                        .where((it) => (_answerFor(it['id'] as String).value ?? '').isNotEmpty)
-                        .length,
-                    total: (_sections[i]['items'] as List? ?? []).length,
+                  if (i > 0) const SizedBox(height: AppMetrics.spacingLg),
+                  Text(
+                    (_sections[i]['title'] as String? ?? '').toUpperCase(),
+                    style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1.2, fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: AppMetrics.spacingMd),
                   for (final item in (_sections[i]['items'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)))
