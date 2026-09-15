@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -34,6 +35,7 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
   List<dynamic> _templates = [];
   bool _isSubstituted = false;
   bool _resolvingTemplates = false;
+  bool _assigningVehicle = false;
   String? _odometerError;
   int _syncedCount = 0;
   final _odometerController = TextEditingController();
@@ -94,6 +96,44 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
           const SnackBar(content: Text('Could not load that vehicle. Please try again.')),
         );
       }
+    }
+  }
+
+  /// Persists the currently-substituted vehicle as this driver's real assigned_vehicle_id --
+  /// distinct from _pickDifferentVehicle above, which only ever affects this one inspection.
+  /// A separate action (not folded into picking) so a driver can't reassign by accident while
+  /// just moving quickly through this screen.
+  Future<void> _assignVehicle() async {
+    final vehicle = _selectedVehicle;
+    if (vehicle == null || _assigningVehicle) return;
+    setState(() => _assigningVehicle = true);
+    try {
+      final dio = ref.read(apiClientProvider).dio;
+      await dio.post('/users/me/vehicle-assignment', data: {'vehicle_id': vehicle['id']});
+      if (!mounted) return;
+      setState(() => _isSubstituted = false);
+      final vehicleName = '${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'.trim();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$vehicleName is now your assigned vehicle')),
+      );
+    } on DioException catch (e) {
+      // A 409 here means the vehicle already belongs to another driver -- surface the backend's
+      // own message verbatim (it names them and points at contacting an admin) rather than a
+      // generic failure, since that's the one error case this action is actually expected to hit.
+      final detail = e.response?.data is Map ? (e.response?.data as Map)['detail'] as String? : null;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(detail ?? 'Could not reassign the vehicle. Please try again.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not reassign the vehicle. Please try again.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _assigningVehicle = false);
     }
   }
 
@@ -214,6 +254,31 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
                           ),
                         ),
                       ),
+                      if (_isSubstituted)
+                        GestureDetector(
+                          onTap: _assigningVehicle ? null : _assignVehicle,
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: AppMetrics.spacingSm),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_assigningVehicle)
+                                  SizedBox(
+                                    width: 15,
+                                    height: 15,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: colors.primary),
+                                  )
+                                else
+                                  Icon(Icons.push_pin_outlined, size: 15, color: colors.primary),
+                                const SizedBox(width: AppMetrics.spacingSm),
+                                Text(
+                                  'Make this my vehicle',
+                                  style: text.bodyMedium?.copyWith(color: colors.primary, fontWeight: FontWeight.w700),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       const SizedBox(height: AppMetrics.spacingSm),
                       Text('CURRENT ODOMETER',
                           style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1.2)),

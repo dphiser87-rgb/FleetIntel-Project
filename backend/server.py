@@ -3849,6 +3849,42 @@ async def vehicle_templates(vehicle_id: str, user: dict = Depends(get_current_us
     templates = await _templates_for_vehicle(vehicle, user["workspace_id"])
     return {"vehicle": vehicle, "templates": templates}
 
+class VehicleAssignmentReq(BaseModel):
+    vehicle_id: str
+
+@api.post("/users/me/vehicle-assignment")
+async def assign_my_vehicle(req: VehicleAssignmentReq, user: dict = Depends(get_current_user)):
+    """Lets a driver persist a vehicle picked via available-vehicles as their real assigned_vehicle_id,
+    instead of it only ever being a one-inspection swap (see available_vehicles' docstring above).
+    Self-scoped the same way update_my_profile is -- driver_id/workspace_id come from the token, never
+    a client-supplied id, so a driver can only ever reassign themselves, not another driver."""
+    if user.get("role") != "driver" or not user.get("driver_id"):
+        raise HTTPException(status_code=400, detail="Not a driver account")
+    vehicle = await fetch_one(
+        "select id, make, model, plate, name from vehicles where id = :id and workspace_id = :ws",
+        id=req.vehicle_id, ws=user["workspace_id"],
+    )
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+
+    # Strict one-driver-per-vehicle: a driver may only self-assign a vehicle nobody else currently
+    # holds. No exclusivity constraint exists anywhere else on assigned_vehicle_id (not even on the
+    # admin PATCH /drivers/{did} path) -- but for this driver-initiated path specifically, taking a
+    # vehicle away from another driver is an ops decision, not something a driver can do to
+    # themselves; that has to go through an admin/manager via the existing web Driver panel.
+    prior = await fetch_one(
+        "select name from drivers where assigned_vehicle_id = :vid and workspace_id = :ws and id != :mine",
+        vid=req.vehicle_id, ws=user["workspace_id"], mine=user["driver_id"],
+    )
+    if prior:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This vehicle is already assigned to {prior['name']}. Contact your ops manager or admin to reassign it.",
+        )
+    await update_row("drivers", user["driver_id"], user["workspace_id"], {"assigned_vehicle_id": req.vehicle_id}, DRIVER_COLS)
+    await log_event(user, "driver.self_assigned_vehicle", "vehicle", req.vehicle_id)
+    return {"assigned_vehicle_id": req.vehicle_id}
+
 def _d10(v) -> str:
     """Format a datetime (or None) as YYYY-MM-DD, matching the old ISO-string[:10] slicing."""
     return v.strftime("%Y-%m-%d") if v else ""
