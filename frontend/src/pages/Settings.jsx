@@ -35,6 +35,7 @@ export default function Settings() {
   const [costingApproverRole, setCostingApproverRole] = useState("");
   const [shiftStartHour, setShiftStartHour] = useState(null);
   const [overdueAlertEmail, setOverdueAlertEmail] = useState("");
+  const [defaultDowntimeRate, setDefaultDowntimeRate] = useState(null);
 
   useEffect(() => {
     if (user) { setName(user.name || ""); setEmail(user.email || ""); setSoundEnabled(user.prefs?.alert_sound_enabled !== false); }
@@ -48,6 +49,7 @@ export default function Settings() {
       setCostingApproverRole(r.data.workspace.costing_approver_role || "");
       setShiftStartHour(r.data.workspace.shift_start_hour ?? 9);
       setOverdueAlertEmail(r.data.workspace.overdue_alert_email || "");
+      setDefaultDowntimeRate(r.data.workspace.default_downtime_cost_per_hour ?? 0);
     }).catch(() => {});
   }, []);
 
@@ -66,6 +68,13 @@ export default function Settings() {
     setShiftStartHour(hour);
     try {
       await api.patch("/workspace", { shift_start_hour: hour });
+    } catch (e) { toast.error("Failed to save"); }
+  };
+
+  const saveDefaultDowntimeRate = async (rate) => {
+    setDefaultDowntimeRate(rate);
+    try {
+      await api.patch("/workspace", { default_downtime_cost_per_hour: rate });
     } catch (e) { toast.error("Failed to save"); }
   };
 
@@ -249,6 +258,30 @@ export default function Settings() {
                   <option key={code} value={code}>{code} — {c.label} ({c.symbol})</option>
                 ))}
               </select>
+            </div>
+
+            <div className="bg-[#121214] border border-border p-6" data-testid="default-downtime-rate-card">
+              <div className="flex items-center gap-3 mb-1">
+                <CurrencyCircleDollar size={22} className="text-primary" />
+                <div className="overline">Costing</div>
+              </div>
+              <h3 className="font-display text-2xl font-bold tracking-tight">Default downtime cost / hour</h3>
+              <div className="mt-2 text-sm text-muted-foreground">
+                Used for any vehicle that doesn't have its own downtime cost set (Fleet → vehicle →
+                Downtime cost/hour) — so fleet cost and downtime-cost figures aren't $0 by default.
+                {!canManage && " Only admins and managers can change it."}
+              </div>
+              <div className="mt-4 flex items-center gap-2">
+                <input
+                  type="number" min="0" step="0.01"
+                  value={defaultDowntimeRate ?? ""}
+                  disabled={!canManage || defaultDowntimeRate === null}
+                  data-testid="default-downtime-rate-input"
+                  onChange={(e) => saveDefaultDowntimeRate(Math.max(0, Number(e.target.value) || 0))}
+                  className="w-28 bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm mono focus:border-primary focus:outline-none disabled:opacity-50"
+                />
+                <span className="text-sm text-muted-foreground">per hour</span>
+              </div>
             </div>
 
             <div className="bg-[#121214] border border-border p-6" data-testid="license-warning-card">

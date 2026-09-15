@@ -399,6 +399,7 @@ class WorkspaceRename(BaseModel):
     costing_approver_role: Optional[str] = None
     shift_start_hour: Optional[int] = None
     overdue_alert_email: Optional[str] = None
+    default_downtime_cost_per_hour: Optional[float] = None
 
 class ReportDefinitionIn(BaseModel):
     name: str
@@ -2876,11 +2877,22 @@ async def mark_all_notifications_read(user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --- KPIs / Analytics ---
+def _downtime_rate(vehicle: dict, ws_default: float) -> float:
+    """A vehicle's own downtime_cost_per_hour if it's been configured, else the workspace's default
+    rate. Both columns are `not null default 0`, so there's no way to distinguish "explicitly zero"
+    from "never configured" -- treating any 0 as unconfigured is the right read here since nobody
+    sets downtime cost to a deliberate exact zero, and it's the whole point of the workspace default:
+    a vehicle nobody's touched shouldn't silently cost $0/hour of downtime."""
+    return vehicle.get("downtime_cost_per_hour") or ws_default or 0
+
 @api.get("/analytics/kpi")
 async def analytics_kpi(user: dict = Depends(get_current_user)):
     ws = user["workspace_id"]
     vehicles = await fetch_all("select * from vehicles where workspace_id = :ws", ws=ws)
     maint = await fetch_all("select * from maintenance where workspace_id = :ws", ws=ws)
+    ws_downtime_default = (await fetch_one(
+        "select default_downtime_cost_per_hour from workspaces where id = :id", id=ws,
+    ) or {}).get("default_downtime_cost_per_hour") or 0
     fuel_logs = await fetch_all("select * from fuel_logs where workspace_id = :ws", ws=ws)
     parts = await fetch_all("select * from parts where workspace_id = :ws", ws=ws)
     inspections = await fetch_all("select answers, fail_count, vehicle_id, asset_id from inspections where workspace_id = :ws", ws=ws)
@@ -2903,7 +2915,7 @@ async def analytics_kpi(user: dict = Depends(get_current_user)):
     total_parts = sum(m.get("parts_cost", 0) or 0 for m in completed_jobs)
     total_downtime = sum(m.get("downtime_hours", 0) or 0 for m in completed_jobs)
     total_downtime_cost = sum(
-        (m.get("downtime_hours", 0) or 0) * (vmap.get(m.get("vehicle_id"), {}).get("downtime_cost_per_hour", 0) or 0)
+        (m.get("downtime_hours", 0) or 0) * _downtime_rate(vmap.get(m.get("vehicle_id"), {}), ws_downtime_default)
         for m in completed_jobs
     )
     total_odo = sum(v.get("odometer", 0) or 0 for v in vehicles)
@@ -2921,7 +2933,7 @@ async def analytics_kpi(user: dict = Depends(get_current_user)):
     monthly_jobs = [m for m in completed_jobs if (_dt(m.get("completed_at") or m.get("created_at")) or now) >= month_start]
     monthly_maint = sum(m.get("actual_cost", 0) or 0 for m in monthly_jobs)
     monthly_downtime_cost = sum(
-        (m.get("downtime_hours", 0) or 0) * (vmap.get(m.get("vehicle_id"), {}).get("downtime_cost_per_hour", 0) or 0)
+        (m.get("downtime_hours", 0) or 0) * _downtime_rate(vmap.get(m.get("vehicle_id"), {}), ws_downtime_default)
         for m in monthly_jobs
     )
     monthly_fuel = sum(l.get("cost", 0) or 0 for l in fuel_logs if (_dt(l.get("occurred_at")) or now) >= month_start)
@@ -3976,8 +3988,11 @@ async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Opti
     completed = [m for m in maint if m.get("status") == "completed"]
     completed_prior = [m for m in maint_prior if m.get("status") == "completed"]
 
+    ws_downtime_default = (await fetch_one(
+        "select default_downtime_cost_per_hour from workspaces where id = :id", id=user["workspace_id"],
+    ) or {}).get("default_downtime_cost_per_hour") or 0
     def downtime_cost_fn(m):
-        return (m.get("downtime_hours", 0) or 0) * (vmap.get(m.get("vehicle_id"), {}).get("downtime_cost_per_hour", 0) or 0)
+        return (m.get("downtime_hours", 0) or 0) * _downtime_rate(vmap.get(m.get("vehicle_id"), {}), ws_downtime_default)
 
     def fleet_cost_fn(m):
         return (m.get("actual_cost", 0) or 0) + downtime_cost_fn(m)
@@ -4458,7 +4473,10 @@ async def vehicle_investigation(vid: str, period: Optional[str] = None, user: di
 
     completed_cur = [m for m in maint_cur if m.get("status") == "completed"]
     completed_prior = [m for m in maint_prior if m.get("status") == "completed"]
-    dt_rate = v.get("downtime_cost_per_hour", 0) or 0
+    ws_downtime_default = (await fetch_one(
+        "select default_downtime_cost_per_hour from workspaces where id = :id", id=ws,
+    ) or {}).get("default_downtime_cost_per_hour") or 0
+    dt_rate = _downtime_rate(v, ws_downtime_default)
 
     def summary_for(completed, fuel):
         maint_cost = sum(m.get("actual_cost", 0) or 0 for m in completed)
@@ -5849,7 +5867,7 @@ async def get_shift_settings(user: dict = Depends(get_current_user)):
 
 @api.patch("/workspace")
 async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_current_user)):
-    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role, req.shift_start_hour, req.overdue_alert_email)
+    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role, req.shift_start_hour, req.overdue_alert_email, req.default_downtime_cost_per_hour)
     if any(v is not None for v in guarded) and user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Only admins/managers can change workspace-wide settings")
     if req.name is not None:
@@ -5899,6 +5917,11 @@ async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_curren
         await execute(
             "update workspaces set overdue_alert_email = :e where id = :id",
             e=req.overdue_alert_email.strip() or None, id=user["workspace_id"],
+        )
+    if req.default_downtime_cost_per_hour is not None:
+        await execute(
+            "update workspaces set default_downtime_cost_per_hour = :r where id = :id",
+            r=max(0, req.default_downtime_cost_per_hour), id=user["workspace_id"],
         )
     return await fetch_one("select * from workspaces where id = :id", id=user["workspace_id"])
 
@@ -6506,6 +6529,9 @@ async def _fetch_report_rows(report_type: str, user: dict, filters: dict) -> lis
         maint = [m for m in maint if _in_date_range(m.get("completed_at"), start, end)]
         vehicles = await fetch_all("select id, name, plate, downtime_cost_per_hour from vehicles where workspace_id = :ws", ws=ws)
         vmap = {v["id"]: v for v in vehicles}
+        ws_downtime_default = (await fetch_one(
+            "select default_downtime_cost_per_hour from workspaces where id = :id", id=ws,
+        ) or {}).get("default_downtime_cost_per_hour") or 0
         if report_type == "maintenance_costing":
             return [{
                 "vehicle": vmap.get(m.get("vehicle_id"), {}).get("name", "—"),
@@ -6521,7 +6547,7 @@ async def _fetch_report_rows(report_type: str, user: dict, filters: dict) -> lis
             "vehicle": vmap.get(m.get("vehicle_id"), {}).get("name", "—"),
             "plate": vmap.get(m.get("vehicle_id"), {}).get("plate", ""),
             "title": m.get("title", ""), "downtime_hours": float(m.get("downtime_hours") or 0),
-            "downtime_cost": round(float(m.get("downtime_hours") or 0) * float(vmap.get(m.get("vehicle_id"), {}).get("downtime_cost_per_hour") or 0), 2),
+            "downtime_cost": round(float(m.get("downtime_hours") or 0) * _downtime_rate(vmap.get(m.get("vehicle_id"), {}), ws_downtime_default), 2),
             "completed_at": _d10(m.get("completed_at")),
         } for m in maint]
 
