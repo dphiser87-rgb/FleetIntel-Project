@@ -10,7 +10,7 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
-  String get appName => 'FleetIntel';
+  String get appName => 'FleetHub';
 
   @override
   String get loginTitle => 'Log in';

@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/fleet_button.dart';
-import '../../core/widgets/hero_banner.dart';
 import '../../core/widgets/vehicle_summary_card.dart';
 import '../../l10n/app_localizations.dart';
 
@@ -17,7 +16,10 @@ import '../../l10n/app_localizations.dart';
 /// was purely a missing client affordance. Picking a different vehicle re-resolves its templates
 /// via GET /users/me/vehicle-templates/{id} rather than reusing the assigned vehicle's list.
 ///
-/// Visual layout ported from the Primio-designed reference app's vehicle_confirm_screen.dart.
+/// Ported directly from the Fleet Hub reference app's vehicle-confirm.tsx: a plain header (no
+/// decorative hero card -- that "Step 1 of 2" banner was left over from the earlier Primio-based
+/// port and isn't part of this reference), a SectionLabel + vehicle Card, "Not my vehicle today"
+/// as an inline text link (not a footer button), and a single Continue button in the footer.
 class VehicleConfirmScreen extends ConsumerStatefulWidget {
   const VehicleConfirmScreen({super.key});
 
@@ -121,6 +123,7 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.vehicleConfirmTitle),
+        centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.go('/welcome'),
@@ -137,11 +140,10 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
           children: [
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: AppMetrics.screenPadding),
+                padding: const EdgeInsets.all(AppMetrics.spacingLg),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(height: AppMetrics.spacingMd),
                     if (_syncedCount > 0) ...[
                       Container(
                         width: double.infinity,
@@ -165,16 +167,28 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
                       ),
                       const SizedBox(height: AppMetrics.spacingMd),
                     ],
-                    HeroBanner(
-                      eyebrow: 'Step 1 of 2',
-                      title: 'Confirm your\nvehicle',
-                      subtitle: vehicle == null
-                          ? 'No vehicle is currently assigned to you.'
-                          : 'Check the details below and capture the odometer.',
-                      icon: Icons.local_shipping_rounded,
-                    ),
-                    const SizedBox(height: AppMetrics.spacingLg),
-                    if (vehicle != null) ...[
+                    if (vehicle == null)
+                      Container(
+                        padding: const EdgeInsets.all(AppMetrics.spacingLg),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceElevated,
+                          border: Border.all(color: AppColors.border),
+                          borderRadius: BorderRadius.circular(AppMetrics.radiusMedium),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("Couldn't load your vehicle", style: text.titleMedium),
+                            const SizedBox(height: AppMetrics.spacingXs),
+                            Text('No vehicle is currently assigned to you.',
+                                style: text.bodyMedium?.copyWith(color: AppColors.muted)),
+                          ],
+                        ),
+                      )
+                    else ...[
+                      Text('ASSIGNED TO YOU',
+                          style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1.2)),
+                      const SizedBox(height: AppMetrics.spacingSm),
                       VehicleSummaryCard(
                         displayName: '${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'.trim(),
                         typeLabel: (vehicle['type'] as String?) ?? '',
@@ -182,69 +196,88 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
                         groupLabel: _isSubstituted ? 'Substituted for your usual vehicle' : null,
                         infoLabel: 'Note',
                       ),
-                      const SizedBox(height: AppMetrics.spacingLg),
-                      Text('ODOMETER READING (KM)',
+                      const SizedBox(height: AppMetrics.spacingSm),
+                      GestureDetector(
+                        onTap: _resolvingTemplates ? null : _pickDifferentVehicle,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: AppMetrics.spacingSm),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.refresh, size: 15, color: colors.primary),
+                              const SizedBox(width: AppMetrics.spacingSm),
+                              Text(
+                                _isSubstituted ? 'Change vehicle' : 'Not my vehicle today?',
+                                style: text.bodyMedium?.copyWith(color: colors.primary, fontWeight: FontWeight.w700),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: AppMetrics.spacingSm),
+                      Text('CURRENT ODOMETER',
                           style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1.2)),
                       const SizedBox(height: AppMetrics.spacingSm),
-                      TextField(
-                        controller: _odometerController,
-                        keyboardType: TextInputType.number,
-                        style: text.bodyMedium,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        decoration: InputDecoration(
-                          hintText: 'e.g. ${lastOdometer + 120}',
-                          prefixIcon: Icon(Icons.speed_rounded, color: colors.primary, size: AppMetrics.iconMd),
-                          errorText: _odometerError,
-                        ),
-                        onChanged: (v) {
-                          final value = int.tryParse(v);
-                          setState(() {
-                            _odometerError = (value != null && value < lastOdometer)
-                                ? "Reading can't be below the last logged $lastOdometer km."
-                                : null;
-                          });
-                        },
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _odometerController,
+                              keyboardType: TextInputType.number,
+                              style: text.bodyMedium,
+                              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                              decoration: InputDecoration(
+                                hintText: lastOdometer > 0 ? '$lastOdometer' : null,
+                                errorText: _odometerError,
+                              ),
+                              onChanged: (v) {
+                                final value = int.tryParse(v);
+                                setState(() {
+                                  _odometerError = (value != null && value < lastOdometer)
+                                      ? "Reading can't be below the last logged $lastOdometer km."
+                                      : null;
+                                });
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: AppMetrics.spacingMd),
+                          Padding(
+                            padding: const EdgeInsets.only(top: AppMetrics.spacingMd),
+                            child: Text('km', style: text.headlineSmall?.copyWith(color: AppColors.muted)),
+                          ),
+                        ],
                       ),
-                      if (lastOdometer > 0) ...[
-                        const SizedBox(height: AppMetrics.spacingSm),
-                        Text('Last recorded: $lastOdometer km', style: text.bodySmall),
-                      ],
                     ],
-                    const SizedBox(height: AppMetrics.spacingLg),
                   ],
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppMetrics.screenPadding,
-                0,
-                AppMetrics.screenPadding,
-                AppMetrics.spacingMd,
+            if (vehicle != null)
+              Container(
+                padding: const EdgeInsets.fromLTRB(
+                  AppMetrics.screenPadding,
+                  AppMetrics.spacingMd,
+                  AppMetrics.screenPadding,
+                  AppMetrics.spacingMd,
+                ),
+                decoration: const BoxDecoration(
+                  color: AppColors.surface,
+                  border: Border(top: BorderSide(color: AppColors.border)),
+                ),
+                child: FleetButton(
+                  label: 'Continue',
+                  icon: Icons.chevron_right,
+                  isLoading: _resolvingTemplates,
+                  onPressed: canContinue
+                      ? () => context.go('/templates', extra: {
+                            'vehicle': vehicle,
+                            'templates': _templates,
+                            'odometer': enteredOdometer,
+                          })
+                      : null,
+                ),
               ),
-              child: Column(
-                children: [
-                  FleetButton(
-                    label: 'Not my vehicle today',
-                    icon: Icons.swap_horiz_rounded,
-                    isOutlined: true,
-                    onPressed: _resolvingTemplates ? null : _pickDifferentVehicle,
-                  ),
-                  const SizedBox(height: AppMetrics.spacingSm + 4),
-                  FleetButton(
-                    label: l10n.vehicleConfirmYes,
-                    isLoading: _resolvingTemplates,
-                    onPressed: canContinue
-                        ? () => context.go('/templates', extra: {
-                              'vehicle': vehicle,
-                              'templates': _templates,
-                              'odometer': enteredOdometer,
-                            })
-                        : null,
-                  ),
-                ],
-              ),
-            ),
           ],
         ),
       ),

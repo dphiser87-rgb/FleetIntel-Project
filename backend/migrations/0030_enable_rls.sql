@@ -24,6 +24,7 @@ alter table fuel_logs enable row level security;
 alter table incidents enable row level security;
 alter table inspections enable row level security;
 alter table invites enable row level security;
+alter table login_otps enable row level security;
 alter table maintenance enable row level security;
 alter table maintenance_schedules enable row level security;
 alter table maintenance_template_items enable row level security;

@@ -800,6 +800,44 @@ async def provision_workspace(req: ProvisionWorkspaceReq, _owner: dict = Depends
 
 LOCKOUT_COOLDOWN_MINUTES = 15
 
+LOGIN_OTP_TTL_MINUTES = 10
+LOGIN_OTP_RESEND_COOLDOWN_SECONDS = 60
+LOGIN_OTP_MAX_ATTEMPTS = 5
+
+async def _recent_login_otp_sent(user_id: str) -> bool:
+    row = await fetch_one(
+        "select 1 from login_otps where user_id = :uid and created_at > :since",
+        uid=user_id, since=datetime.now(timezone.utc) - timedelta(seconds=LOGIN_OTP_RESEND_COOLDOWN_SECONDS),
+    )
+    return row is not None
+
+async def _send_login_otp(user: dict) -> None:
+    """Mandatory second factor for driver accounts (a separate mechanism from the opt-in TOTP flow
+    below, which drivers have no UI to set up). A fresh code invalidates any still-unconsumed one --
+    only the most recently sent code is ever valid."""
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    await execute("delete from login_otps where user_id = :uid and consumed = false", uid=user["id"])
+    await execute(
+        "insert into login_otps (user_id, code, expires_at) values (:uid, :code, :exp)",
+        uid=user["id"], code=code,
+        exp=datetime.now(timezone.utc) + timedelta(minutes=LOGIN_OTP_TTL_MINUTES),
+    )
+    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
+    html = (
+        f'<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:3px solid #0EA5E9">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape(from_name)}</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:22px">Your sign-in code</h1></td></tr>'
+        f'<tr><td style="padding:24px">'
+        f'<p style="margin:0 0 16px 0">Enter this code to finish signing in to {escape(from_name)}:</p>'
+        f'<p style="margin:0 0 20px 0;font-size:32px;font-weight:700;letter-spacing:0.3em;text-align:center">{code}</p>'
+        f'<p style="margin:0;font-size:13px;color:#64748b">This code expires in {LOGIN_OTP_TTL_MINUTES} minutes and can only be used once. '
+        f'If you didn\'t try to sign in, you can ignore this email.</p>'
+        f'<p style="margin:16px 0 0 0;font-size:12px;color:#888">Sent by {escape(from_name)}. We never ask for your password or card details by email.</p>'
+        f'</td></tr></table>'
+    )
+    await send_email(to=user["email"], subject=f"Your {from_name} sign-in code", html=html)
+
 @api.post("/auth/login")
 async def login(req: LoginReq2FA):
     identifier = req.email.strip()
@@ -849,6 +887,30 @@ async def login(req: LoginReq2FA):
 
     if pre and (pre.get("failed_login_attempts") or 0) > 0:
         await execute("update user_profiles set failed_login_attempts = 0, locked_until = null where id = :id", id=user["id"])
+
+    # Mandatory second factor for drivers (separate from the opt-in TOTP flow below, which the
+    # mobile app has no UI for) -- checked first so it takes priority for any driver account.
+    if user["role"] == "driver":
+        if not req.code:
+            if not await _recent_login_otp_sent(user["id"]):
+                await _send_login_otp(user)
+            return {"requires_2fa": True, "method": "email_otp", "email": email}
+        code = req.code.strip()
+        otp = await fetch_one(
+            "select id, code, attempts from login_otps where user_id = :uid and consumed = false "
+            "and expires_at > now() order by created_at desc limit 1",
+            uid=user["id"],
+        )
+        if not otp:
+            raise HTTPException(status_code=401, detail="Code expired, request a new one")
+        if (otp["attempts"] or 0) >= LOGIN_OTP_MAX_ATTEMPTS:
+            raise HTTPException(status_code=401, detail="Too many attempts, request a new code")
+        if code != otp["code"]:
+            await execute("update login_otps set attempts = attempts + 1 where id = :id", id=otp["id"])
+            raise HTTPException(status_code=401, detail="Invalid code")
+        await execute("update login_otps set consumed = true where id = :id", id=otp["id"])
+        user.pop("totp_secret", None)
+        return {"user": user, "token": session["access_token"], "refresh_token": session["refresh_token"]}
 
     if user["totp_enabled"]:
         if not req.code:
