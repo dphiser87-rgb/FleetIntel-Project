@@ -268,10 +268,11 @@ export default function Settings() {
               <h3 className="font-display text-2xl font-bold tracking-tight">Default downtime cost / hour</h3>
               <div className="mt-2 text-sm text-muted-foreground">
                 Used for any vehicle that doesn't have its own downtime cost set (Fleet → vehicle →
-                Downtime cost/hour) — so fleet cost and downtime-cost figures aren't $0 by default.
+                Downtime cost/hour) — so fleet cost and downtime-cost figures aren't {CURRENCIES[currency]?.symbol ?? "$"}0 by default.
                 {!canManage && " Only admins and managers can change it."}
               </div>
               <div className="mt-4 flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">{CURRENCIES[currency]?.symbol ?? "$"}</span>
                 <input
                   type="number" min="0" step="0.01"
                   value={defaultDowntimeRate ?? ""}
