@@ -44,3 +44,4 @@ app.*.map.json
 # Secrets
 .env
 .env.local
+/secrets/

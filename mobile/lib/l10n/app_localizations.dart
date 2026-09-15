@@ -97,7 +97,7 @@ abstract class AppLocalizations {
   /// No description provided for @appName.
   ///
   /// In en, this message translates to:
-  /// **'FleetIntel'**
+  /// **'FleetHub'**
   String get appName;
 
   /// No description provided for @loginTitle.

@@ -233,54 +233,50 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                     ),
                     const SizedBox(height: AppMetrics.spacingMd),
                     if (_loaded) _ReminderBanner(mode: _mode),
+                    // Alert -> primary action: ~24px, tight enough to read as one task block.
+                    const SizedBox(height: AppMetrics.spacingLg),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FleetButton(
+                        label: ctaLabel,
+                        icon: Icons.arrow_forward_rounded,
+                        iconAfter: true,
+                        onPressed: () => context.go('/vehicle'),
+                      ),
+                    ),
+                    // Primary action -> secondary link: ~16px, visually subordinate to the button above it.
+                    const SizedBox(height: AppMetrics.spacingMd),
+                    Center(
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(AppMetrics.radiusMedium),
+                          onTap: () => context.push('/history'),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppMetrics.spacingMd,
+                              vertical: AppMetrics.spacingSm + 4,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.history, size: AppMetrics.iconSm, color: AppColors.muted),
+                                const SizedBox(width: AppMetrics.spacingXs + 2),
+                                Text(
+                                  'View inspection history',
+                                  style: text.labelLarge?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: AppMetrics.spacingMd),
                     const PendingSyncBadge(),
                     const SizedBox(height: AppMetrics.spacingLg),
                   ],
                 ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppMetrics.spacingLg,
-                0,
-                AppMetrics.spacingLg,
-                AppMetrics.spacingLg,
-              ),
-              child: Column(
-                children: [
-                  FleetButton(
-                    label: ctaLabel,
-                    icon: Icons.arrow_forward_rounded,
-                    iconAfter: true,
-                    onPressed: () => context.go('/vehicle'),
-                  ),
-                  const SizedBox(height: AppMetrics.spacingSm + 4),
-                  Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(AppMetrics.radiusMedium),
-                      onTap: () => context.push('/history'),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppMetrics.spacingMd,
-                          vertical: AppMetrics.spacingSm + 4,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.history, size: AppMetrics.iconSm, color: AppColors.muted),
-                            const SizedBox(width: AppMetrics.spacingXs + 2),
-                            Text(
-                              'View inspection history',
-                              style: text.labelLarge?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w600),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
               ),
             ),
           ],
