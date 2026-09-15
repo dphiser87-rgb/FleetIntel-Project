@@ -3,6 +3,8 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Camera } from "@phosphor-icons/react";
+import { useCurrency } from "@/lib/CurrencyContext";
+import { CURRENCIES } from "@/lib/currency";
 
 const SECTIONS = [
   { key: "vehicle", label: "Vehicle" },
@@ -16,6 +18,8 @@ const emptyForm = {
 };
 
 export default function VehiclePanel({ vehicle, groups, onClose, onSaved }) {
+  const { currency } = useCurrency();
+  const currencySymbol = CURRENCIES[currency]?.symbol ?? "$";
   const isNew = vehicle === "new";
   const isOpen = !!vehicle;
   const [section, setSection] = useState("vehicle");
@@ -147,8 +151,8 @@ export default function VehiclePanel({ vehicle, groups, onClose, onSaved }) {
                     </label>
                   </div>
                 </div>
-                <Field label="Fuel $/km" type="number" value={form.fuel_cost_per_km} onChange={(v) => setForm({ ...form, fuel_cost_per_km: v })} testid="v-fuel_cost_per_km" />
-                <Field label="Downtime cost/hour" type="number" value={form.downtime_cost_per_hour} onChange={(v) => setForm({ ...form, downtime_cost_per_hour: v })} testid="v-downtime_cost_per_hour" />
+                <Field label={`Fuel ${currencySymbol}/km`} type="number" value={form.fuel_cost_per_km} onChange={(v) => setForm({ ...form, fuel_cost_per_km: v })} testid="v-fuel_cost_per_km" />
+                <Field label={`Downtime cost/hour (${currencySymbol})`} type="number" value={form.downtime_cost_per_hour} onChange={(v) => setForm({ ...form, downtime_cost_per_hour: v })} testid="v-downtime_cost_per_hour" />
               </>
             )}
 
