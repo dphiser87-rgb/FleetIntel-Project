@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Truck, ClipboardText, UploadSimple, Heartbeat, FolderSimple, PencilSimple } from "@phosphor-icons/react";
+import { Plus, Truck, ClipboardText, UploadSimple, Heartbeat, FolderSimple, PencilSimple, SquaresFour, ListBullets } from "@phosphor-icons/react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import GroupManager from "@/components/GroupManager";
 import VehiclePanel from "@/components/VehiclePanel";
@@ -35,6 +35,7 @@ export default function Fleet() {
   const [showGroups, setShowGroups] = useState(false);
   const [panelVehicle, setPanelVehicle] = useState(null); // vehicle object | "new" | null
   const [sortBy, setSortBy] = useState("health");
+  const [viewMode, setViewMode] = useState("grid"); // "grid" | "list"
 
   const loadGroups = () => api.get("/vehicle-groups").then(r => setGroups(r.data || []));
   const load = async () => {
@@ -76,6 +77,16 @@ export default function Fleet() {
           <option value="all">All groups</option>
           {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
         </select>
+        <div className="flex border border-border" data-testid="fleet-view-toggle">
+          <button onClick={() => setViewMode("grid")} data-testid="fleet-view-grid" title="Grid view"
+            className={`p-2 ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-primary"}`}>
+            <SquaresFour size={16} />
+          </button>
+          <button onClick={() => setViewMode("list")} data-testid="fleet-view-list" title="List view"
+            className={`p-2 border-l border-border ${viewMode === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-primary"}`}>
+            <ListBullets size={16} />
+          </button>
+        </div>
         <button onClick={() => setShowGroups(true)} data-testid="manage-vehicle-groups-btn" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
           <FolderSimple size={14} /> Manage groups
         </button>
@@ -103,6 +114,62 @@ export default function Fleet() {
       </header>
 
       <div className="p-8">
+        {viewMode === "list" ? (
+        <div className="overflow-x-auto border border-border" data-testid="vehicle-list">
+          <table className="w-full text-sm">
+            <thead className="border-b border-border bg-[#121214]">
+              <tr className="text-left overline">
+                <th className="p-3">Vehicle</th>
+                <th className="p-3">Type</th>
+                <th className="p-3">Status</th>
+                <th className="p-3">Health</th>
+                <th className="p-3">Odometer</th>
+                <th className="p-3">Group</th>
+                <th className="p-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedVehicles.map(v => {
+                const h = healthMap[v.id];
+                return (
+                  <tr key={v.id} className="border-b border-border/50 hover:bg-[#121214]" data-testid={`vehicle-row-${v.plate}`}>
+                    <td className="p-3">
+                      <div className="font-display font-bold tracking-tight">{v.name}</div>
+                      <div className="text-xs text-muted-foreground">{v.plate} · {v.year} {v.make} {v.model}</div>
+                    </td>
+                    <td className="p-3 overline">{v.type}</td>
+                    <td className="p-3"><StatusBadge status={v.status} /></td>
+                    <td className="p-3">{h ? <HealthPill score={h.score} status={h.status} /> : <span className="text-muted-foreground">—</span>}</td>
+                    <td className="p-3 mono">{(v.odometer || 0).toLocaleString()} km</td>
+                    <td className="p-3">
+                      {groupMap[v.group_id] ? (
+                        <span className="flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-sm shrink-0" style={{ background: groupMap[v.group_id].color || "#3B82F6" }} />
+                          <span className="text-[10px] mono uppercase tracking-widest" style={{ color: groupMap[v.group_id].color || "#3B82F6" }}>{groupMap[v.group_id].name}</span>
+                        </span>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="p-3">
+                      <div className="flex gap-2">
+                        <Link to={`/fleet/${v.id}`} className="border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors" data-testid={`view-${v.plate}`}>View</Link>
+                        <Link to={`/inspection/${v.id}`} className="flex items-center gap-1 bg-primary/10 border border-primary/40 text-primary px-2 py-1.5 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground transition-colors" data-testid={`inspect-${v.plate}`}>
+                          <ClipboardText size={12} /> Inspect
+                        </Link>
+                        <button onClick={() => setPanelVehicle(v)} data-testid={`edit-vehicle-${v.plate}`} className="border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors" title="Edit vehicle">
+                          <PencilSimple size={12} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {sortedVehicles.length === 0 && (
+                <tr><td colSpan={7} className="p-12 text-center text-muted-foreground">No vehicles{groupFilter !== "all" ? " in this group" : ""}. Add one to get started.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6" data-testid="vehicle-grid">
           {sortedVehicles.map(v => {
             const h = healthMap[v.id];
@@ -163,7 +230,8 @@ export default function Fleet() {
             </div>
           )})}
         </div>
-        {sortedVehicles.length === 0 && <div className="text-center text-muted-foreground py-24">No vehicles{groupFilter !== "all" ? " in this group" : ""}. Add one to get started.</div>}
+        )}
+        {viewMode === "grid" && sortedVehicles.length === 0 && <div className="text-center text-muted-foreground py-24">No vehicles{groupFilter !== "all" ? " in this group" : ""}. Add one to get started.</div>}
       </div>
 
       <Sheet open={showGroups} onOpenChange={setShowGroups}>
