@@ -1787,6 +1787,19 @@ async def create_inspection(i: InspectionIn, user: dict = Depends(get_current_us
         raise HTTPException(status_code=400, detail="Provide exactly one of vehicle_id or asset_id")
     ws = user["workspace_id"]
 
+    if i.vehicle_id and user.get("role") == "driver":
+        # The mobile app's "not my vehicle today" swap only ever affects the client's own screen
+        # state (see available_vehicles' docstring) -- this is the actual enforcement point. A
+        # driver may only submit against their own on-file assignment; substituting into someone
+        # else's vehicle requires actually claiming it first via POST /users/me/vehicle-assignment
+        # (which has its own exclusivity check), not just picking it in the app.
+        driver = await fetch_one(
+            "select assigned_vehicle_id from drivers where id = :id and workspace_id = :ws",
+            id=user.get("driver_id"), ws=ws,
+        )
+        if not driver or driver["assigned_vehicle_id"] != i.vehicle_id:
+            raise HTTPException(status_code=403, detail="You can only submit an inspection for your assigned vehicle.")
+
     if i.client_submission_id:
         existing = await fetch_one(
             "select * from inspections where workspace_id = :ws and client_submission_id = :cid",
@@ -3741,6 +3754,10 @@ async def get_driver(did: str, user: dict = Depends(get_current_user)):
 async def update_driver(did: str, patch: dict, user: dict = Depends(get_current_user)):
     current = await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
     if not current: raise HTTPException(status_code=404, detail="Not found")
+    if "assigned_vehicle_id" in patch and user.get("role") not in (
+        "admin", "manager", "operations_manager", "workshop_head", "mechanic",
+    ):
+        raise HTTPException(status_code=403, detail="Only an ops manager, workshop manager, or technician can reassign a vehicle")
     if "app_access" in patch or "email" in patch:
         email = patch.get("email", current.get("email"))
         app_access = patch.get("app_access", current.get("app_access") or {})

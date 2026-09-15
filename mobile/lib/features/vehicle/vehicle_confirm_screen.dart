@@ -158,7 +158,10 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
     final colors = Theme.of(context).colorScheme;
     final lastOdometer = (vehicle?['odometer'] as num?)?.toInt() ?? 0;
     final enteredOdometer = int.tryParse(_odometerController.text) ?? 0;
-    final canContinue = vehicle != null && enteredOdometer > 0 && _odometerError == null;
+    // A substituted vehicle can't be inspected until it's actually claimed via "Make this my
+    // vehicle" -- the backend enforces this too (POST /inspections checks the submission against
+    // drivers.assigned_vehicle_id), this just keeps a driver from hitting that rejection blind.
+    final canContinue = vehicle != null && enteredOdometer > 0 && _odometerError == null && !_isSubstituted;
 
     return Scaffold(
       appBar: AppBar(
@@ -330,17 +333,31 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
                   color: AppColors.surface,
                   border: Border(top: BorderSide(color: AppColors.border)),
                 ),
-                child: FleetButton(
-                  label: 'Continue',
-                  icon: Icons.chevron_right,
-                  isLoading: _resolvingTemplates,
-                  onPressed: canContinue
-                      ? () => context.go('/templates', extra: {
-                            'vehicle': vehicle,
-                            'templates': _templates,
-                            'odometer': enteredOdometer,
-                          })
-                      : null,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_isSubstituted)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: AppMetrics.spacingSm),
+                        child: Text(
+                          "Tap Make this my vehicle above to continue with this vehicle.",
+                          style: text.bodySmall?.copyWith(color: AppColors.muted),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    FleetButton(
+                      label: 'Continue',
+                      icon: Icons.chevron_right,
+                      isLoading: _resolvingTemplates,
+                      onPressed: canContinue
+                          ? () => context.go('/templates', extra: {
+                                'vehicle': vehicle,
+                                'templates': _templates,
+                                'odometer': enteredOdometer,
+                              })
+                          : null,
+                    ),
+                  ],
                 ),
               ),
           ],
