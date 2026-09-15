@@ -77,16 +77,6 @@ export default function Fleet() {
           <option value="all">All groups</option>
           {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
         </select>
-        <div className="flex border border-border" data-testid="fleet-view-toggle">
-          <button onClick={() => setViewMode("grid")} data-testid="fleet-view-grid" title="Grid view"
-            className={`p-2 ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-primary"}`}>
-            <SquaresFour size={16} />
-          </button>
-          <button onClick={() => setViewMode("list")} data-testid="fleet-view-list" title="List view"
-            className={`p-2 border-l border-border ${viewMode === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-primary"}`}>
-            <ListBullets size={16} />
-          </button>
-        </div>
         <button onClick={() => setShowGroups(true)} data-testid="manage-vehicle-groups-btn" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
           <FolderSimple size={14} /> Manage groups
         </button>
@@ -114,6 +104,18 @@ export default function Fleet() {
       </header>
 
       <div className="p-8">
+        <div className="flex justify-end mb-4">
+          <div className="flex border border-border" data-testid="fleet-view-toggle">
+            <button onClick={() => setViewMode("grid")} data-testid="fleet-view-grid" title="Grid view"
+              className={`p-2 ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-primary"}`}>
+              <SquaresFour size={16} />
+            </button>
+            <button onClick={() => setViewMode("list")} data-testid="fleet-view-list" title="List view"
+              className={`p-2 border-l border-border ${viewMode === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-primary"}`}>
+              <ListBullets size={16} />
+            </button>
+          </div>
+        </div>
         {viewMode === "list" ? (
         <div className="overflow-x-auto border border-border" data-testid="vehicle-list">
           <table className="w-full text-sm">
