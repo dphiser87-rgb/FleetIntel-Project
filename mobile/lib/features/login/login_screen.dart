@@ -5,6 +5,7 @@ import '../../core/auth/auth_state.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/fleet_button.dart';
 import '../../l10n/app_localizations.dart';
+import 'otp_screen.dart';
 
 /// FleetHub's login screen -- left-aligned wordmark, a plain "Log in" heading (no hero card), and
 /// form fields sitting directly on the background with generous vertical gaps. Refined per a
@@ -41,11 +42,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _isSubmitting = true;
       _error = null;
     });
+    final identifier = _identifierController.text.trim();
+    final password = _passwordController.text;
     try {
-      await ref.read(authControllerProvider.notifier).login(
-            _identifierController.text.trim(),
-            _passwordController.text,
-          );
+      await ref.read(authControllerProvider.notifier).login(identifier, password);
+    } on Requires2FAException catch (e) {
+      if (mounted) {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => OtpScreen(identifier: identifier, password: password, email: e.email),
+          ),
+        );
+      }
     } catch (_) {
       if (mounted) setState(() => _error = l10n.loginError);
     } finally {
