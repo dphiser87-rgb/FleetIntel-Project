@@ -132,7 +132,7 @@ class _ExecutiveWelcomeScreenState extends ConsumerState<ExecutiveWelcomeScreen>
                         children: [
                           const TextSpan(text: 'Hi '),
                           TextSpan(text: firstName, style: const TextStyle(fontWeight: FontWeight.w700)),
-                          TextSpan(text: ' · $role', style: const TextStyle(color: AppColors.muted)),
+                          TextSpan(text: ' · ${roleDisplayName(role)}', style: const TextStyle(color: AppColors.muted)),
                         ],
                       ),
                     ),
