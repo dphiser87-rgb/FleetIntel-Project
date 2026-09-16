@@ -77,7 +77,6 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
   @override
   Widget build(BuildContext context) {
     final userName = ref.watch(authControllerProvider).user?['name'] as String?;
-    final role = ref.watch(authControllerProvider).user?['role'] as String? ?? '';
     final text = Theme.of(context).textTheme;
     final colors = Theme.of(context).colorScheme;
     final d = _data;
@@ -97,7 +96,7 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                       children: [
                         Text('Executive', style: text.displayLarge?.copyWith(fontSize: 28)),
                         if (userName != null)
-                          Text(role, style: text.labelMedium?.copyWith(color: colors.primary, fontWeight: FontWeight.w700)),
+                          Text(userName, style: text.labelMedium?.copyWith(color: colors.primary, fontWeight: FontWeight.w700)),
                       ],
                     ),
                   ),
