@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/executive/executive_dashboard_screen.dart';
 import '../../features/executive/executive_supplier_screen.dart';
 import '../../features/executive/executive_vehicle_screen.dart';
+import '../../features/executive/executive_welcome_screen.dart';
 import '../../features/history/history_detail_screen.dart';
 import '../../features/history/history_screen.dart';
 import '../../features/login/login_screen.dart';
@@ -18,6 +19,7 @@ import '../../features/workshop/workshop_job_detail_screen.dart';
 import '../../features/workshop/workshop_pos_screen.dart';
 import '../../features/workshop/workshop_queue_screen.dart';
 import '../../features/workshop/workshop_requisition_screen.dart';
+import '../../features/workshop/workshop_welcome_screen.dart';
 import '../auth/auth_state.dart';
 
 /// Roles that land on the Workshop area instead of the driver flow -- matches the FleetHub-Workshop
@@ -44,8 +46,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (!auth.isAuthenticated) return loggingIn ? null : '/login';
       if (auth.isAuthenticated && loggingIn) {
         final role = auth.user?['role'] as String?;
-        if (_kWorkshopRoles.contains(role)) return '/workshop';
-        if (_kExecutiveRoles.contains(role)) return '/executive';
+        if (_kWorkshopRoles.contains(role)) return '/workshop/welcome';
+        if (_kExecutiveRoles.contains(role)) return '/executive/welcome';
         return '/welcome';
       }
       return null;
@@ -53,6 +55,7 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(path: '/welcome', builder: (context, state) => const WelcomeScreen()),
+      GoRoute(path: '/workshop/welcome', builder: (context, state) => const WorkshopWelcomeScreen()),
       GoRoute(path: '/workshop', builder: (context, state) => const WorkshopBoardScreen()),
       GoRoute(
         path: '/workshop/job/:id',
@@ -65,6 +68,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/workshop/pos', builder: (context, state) => const WorkshopPosScreen()),
       GoRoute(path: '/workshop/queue', builder: (context, state) => const WorkshopQueueScreen()),
       GoRoute(path: '/workshop/cost-rollup', builder: (context, state) => const WorkshopCostRollupScreen()),
+      GoRoute(path: '/executive/welcome', builder: (context, state) => const ExecutiveWelcomeScreen()),
       GoRoute(path: '/executive', builder: (context, state) => const ExecutiveDashboardScreen()),
       GoRoute(
         path: '/executive/vehicle/:id',
