@@ -3722,9 +3722,9 @@ async def send_exec_summary(user: dict = Depends(require_module("executive_dashb
         f'<p style="margin:0;font-size:13px;color:#64748b">Full breakdown available in the Executive Dashboard.</p>'
         f'</td></tr></table>'
     )
-    err = await send_email(to=to, subject=f"{(ws or {}).get('name') or 'FleetIntel'} — {month_name} fleet cost summary", html=html)
-    if err:
-        raise HTTPException(status_code=502, detail=f"Email failed to send: {err}")
+    msg_id = await send_email(to=to, subject=f"{(ws or {}).get('name') or 'FleetIntel'} — {month_name} fleet cost summary", html=html)
+    if not msg_id:
+        raise HTTPException(status_code=502, detail="Email failed to send")
     return {"sent": True, "to": to, "month": month_name}
 
 # --- Parts inventory ---
