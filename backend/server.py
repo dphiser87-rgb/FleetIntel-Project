@@ -400,6 +400,7 @@ class WorkspaceRename(BaseModel):
     shift_start_hour: Optional[int] = None
     overdue_alert_email: Optional[str] = None
     default_downtime_cost_per_hour: Optional[float] = None
+    finance_email: Optional[str] = None
 
 class ReportDefinitionIn(BaseModel):
     name: str
@@ -2635,6 +2636,31 @@ async def create_quote(mid: str, q: QuoteIn, user: dict = Depends(require_module
     await log_event(user, "quote.submitted", "quote", mid, {"quote_id": qid, "total": total})
     return await fetch_one("select * from quotes where id = :id", id=qid)
 
+async def _notify_po_issued(workspace_id: str, po_number: str, amount: float, job: dict) -> None:
+    """Best-effort email to Finance when a PO is issued -- mirrors the other notification sends in
+    this file (never raises; a failed email must not break the approval request itself)."""
+    ws = await fetch_one("select name, finance_email, currency from workspaces where id = :id", id=workspace_id)
+    to = (ws or {}).get("finance_email")
+    if not to:
+        return
+    sym = CURRENCY_SYMBOLS.get((ws or {}).get("currency") or "USD", "$")
+    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
+    html = (
+        f'<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:3px solid #0EA5E9">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape((ws or {}).get("name") or from_name)}</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:22px">Purchase order awaiting payment</h1></td></tr>'
+        f'<tr><td style="padding:24px">'
+        f'<p style="margin:0 0 16px 0">{escape(po_number)} was issued for <strong>{escape(job.get("title") or "a maintenance job")}</strong>, '
+        f'amount <strong>{sym}{amount:,.2f}</strong>.</p>'
+        f'<p style="margin:0;font-size:13px;color:#64748b">Mark it paid with proof of payment once settled.</p>'
+        f'</td></tr></table>'
+    )
+    try:
+        await send_email(to=to, subject=f"Purchase order awaiting payment — {po_number}", html=html)
+    except Exception as e:
+        logger.error(f"PO issued email failed: {e}")
+
 @api.post("/quotes/{qid}/decide")
 async def decide_quote(qid: str, body: QuoteDecision, user: dict = Depends(get_current_user)):
     quote = await fetch_one("select * from quotes where id = :id and workspace_id = :ws", id=qid, ws=user["workspace_id"])
@@ -2688,6 +2714,7 @@ async def decide_quote(qid: str, body: QuoteDecision, user: dict = Depends(get_c
                     id=str(uuid.uuid4()), ws=user["workspace_id"], uid=quote["submitted_by"],
                     message=f"Quote for {job['title']} approved by Finance — {po_number} issued", mid=quote["maintenance_id"],
                 )
+            await _notify_po_issued(user["workspace_id"], po_number, quote["total"], job)
         else:
             await execute("update quotes set stage = 'rejected' where id = :id", id=qid)
             if quote.get("submitted_by"):
@@ -2871,6 +2898,141 @@ async def mark_purchase_order_paid(poid: str, body: POMarkPaid, user: dict = Dep
     )
     await log_event(user, "purchase_order.paid", "purchase_order", poid, {"po_number": po["po_number"]})
     return await fetch_one("select * from purchase_orders where id = :id", id=poid)
+
+# --- Workshop (mobile: role-scoped queue + per-vehicle cost rollup) ---
+@api.get("/workshop/queue")
+async def workshop_queue(user: dict = Depends(get_current_user)):
+    """Cross-entity 'what's waiting on me' for the mobile Workshop app -- role-scoped the same way
+    the individual requisition/quote/PO endpoints already gate writes, just read-only and merged into
+    one list. Mirrors the FleetHub-Workshop reference design 1:1, reading our real tables instead of
+    its Mongo collections."""
+    ws = user["workspace_id"]
+    role = user.get("role")
+    items = []
+
+    if role in ("workshop_head", "admin"):
+        rows = await fetch_all(
+            "select r.maintenance_id, r.items, r.requested_by_name, m.title as job_title "
+            "from parts_requisitions r join maintenance m on m.id = r.maintenance_id "
+            "where r.workspace_id = :ws and r.status = 'pending_approval' order by r.created_at",
+            ws=ws,
+        )
+        for r in rows:
+            its = r["items"] or []
+            amount = sum((i.get("qty_requested", 0) or 0) * (i.get("unit_cost", 0) or 0) for i in its)
+            items.append({
+                "type": "requisition", "job_id": str(r["maintenance_id"]), "job_title": r["job_title"],
+                "label": "Requisition to approve",
+                "subtitle": f"{len(its)} item(s) · from {r['requested_by_name'] or 'a technician'}",
+                "amount": round(amount, 2), "route": "job",
+            })
+
+    if role in ("operations_manager", "admin"):
+        rows = await fetch_all(
+            "select q.maintenance_id, q.items, q.total, m.title as job_title "
+            "from quotes q join maintenance m on m.id = q.maintenance_id "
+            "where q.workspace_id = :ws and q.stage = 'pending_ops' order by q.submitted_at",
+            ws=ws,
+        )
+        for q in rows:
+            items.append({
+                "type": "quote", "job_id": str(q["maintenance_id"]), "job_title": q["job_title"],
+                "label": "Quote — Operations approval",
+                "subtitle": f"{len(q['items'] or [])} shortfall item(s)",
+                "amount": round(q["total"] or 0, 2), "route": "job",
+            })
+
+    if role in ("finance", "admin"):
+        rows = await fetch_all(
+            "select q.maintenance_id, q.items, q.total, m.title as job_title "
+            "from quotes q join maintenance m on m.id = q.maintenance_id "
+            "where q.workspace_id = :ws and q.stage = 'pending_finance' order by q.submitted_at",
+            ws=ws,
+        )
+        for q in rows:
+            items.append({
+                "type": "quote", "job_id": str(q["maintenance_id"]), "job_title": q["job_title"],
+                "label": "Quote — Finance approval",
+                "subtitle": f"{len(q['items'] or [])} shortfall item(s)",
+                "amount": round(q["total"] or 0, 2), "route": "job",
+            })
+        po_rows = await fetch_all(
+            "select po.po_number, po.amount, po.maintenance_id, m.title as job_title "
+            "from purchase_orders po left join maintenance m on m.id = po.maintenance_id "
+            "where po.workspace_id = :ws and po.status = 'po_issued' order by po.created_at",
+            ws=ws,
+        )
+        for po in po_rows:
+            items.append({
+                "type": "po", "job_id": str(po["maintenance_id"]) if po["maintenance_id"] else None,
+                "job_title": po["job_title"],
+                "label": f"{po['po_number']} — awaiting payment",
+                "subtitle": "Mark paid + attach proof",
+                "amount": round(po["amount"] or 0, 2), "route": "pos",
+            })
+
+    if role in ("mechanic", "admin"):
+        params = {"ws": ws}
+        filter_sql = ""
+        if role == "mechanic":
+            filter_sql = "and r.requested_by = :uid"
+            params["uid"] = user["id"]
+        rows = await fetch_all(
+            f"select r.maintenance_id, r.decision, m.title as job_title "
+            f"from parts_requisitions r join maintenance m on m.id = r.maintenance_id "
+            f"where r.workspace_id = :ws and r.status = 'rejected' {filter_sql} order by r.created_at desc",
+            **params,
+        )
+        for r in rows:
+            reason = (r.get("decision") or {}).get("reason") or "Rejected"
+            items.append({
+                "type": "requisition", "job_id": str(r["maintenance_id"]), "job_title": r["job_title"],
+                "label": "Requisition rejected — revise", "subtitle": reason,
+                "amount": None, "route": "job",
+            })
+
+    items.sort(key=lambda x: x["job_title"] or "")
+    return {"count": len(items), "items": items, "role": role}
+
+@api.get("/workshop/cost-rollup")
+async def workshop_cost_rollup(user: dict = Depends(get_current_user)):
+    """Per-vehicle parts spend: stock-deducted cost already attributed to jobs (maintenance.parts_cost)
+    plus paid purchase orders, joined in SQL (not the N+1 Python-loop the reference prototype used)."""
+    ws = user["workspace_id"]
+    rows = await fetch_all(
+        """
+        select v.id as vehicle_id, v.name, v.plate as registration, v.type as vehicle_class,
+               coalesce(m.job_count, 0) as job_count,
+               coalesce(m.parts_cost, 0) as parts_cost,
+               coalesce(p.po_paid, 0) as po_paid
+        from vehicles v
+        left join (
+            select vehicle_id, count(*) as job_count, sum(coalesce(parts_cost, 0)) as parts_cost
+            from maintenance where workspace_id = :ws and vehicle_id is not null
+            group by vehicle_id
+        ) m on m.vehicle_id = v.id
+        left join (
+            select mnt.vehicle_id, sum(po.amount) as po_paid
+            from purchase_orders po join maintenance mnt on mnt.id = po.maintenance_id
+            where po.workspace_id = :ws and po.status = 'paid'
+            group by mnt.vehicle_id
+        ) p on p.vehicle_id = v.id
+        where v.workspace_id = :ws and (coalesce(m.job_count, 0) > 0 or coalesce(p.po_paid, 0) > 0)
+        """,
+        ws=ws,
+    )
+    vehicles = sorted(
+        (
+            {**dict(r), "vehicle_id": str(r["vehicle_id"]),
+             "parts_cost": round(r["parts_cost"] or 0, 2), "po_paid": round(r["po_paid"] or 0, 2),
+             "total": round((r["parts_cost"] or 0) + (r["po_paid"] or 0), 2)}
+            for r in rows
+        ),
+        key=lambda x: x["total"], reverse=True,
+    )
+    grand_total = round(sum(v["total"] for v in vehicles), 2)
+    return {"currency": (await fetch_one("select currency from workspaces where id = :id", id=ws) or {}).get("currency") or "USD",
+            "vehicles": vehicles, "grand_total": grand_total}
 
 # --- Notifications ---
 @api.get("/notifications")
@@ -5884,7 +6046,7 @@ async def get_shift_settings(user: dict = Depends(get_current_user)):
 
 @api.patch("/workspace")
 async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_current_user)):
-    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role, req.shift_start_hour, req.overdue_alert_email, req.default_downtime_cost_per_hour)
+    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role, req.shift_start_hour, req.overdue_alert_email, req.default_downtime_cost_per_hour, req.finance_email)
     if any(v is not None for v in guarded) and user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Only admins/managers can change workspace-wide settings")
     if req.name is not None:
@@ -5939,6 +6101,11 @@ async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_curren
         await execute(
             "update workspaces set default_downtime_cost_per_hour = :r where id = :id",
             r=max(0, req.default_downtime_cost_per_hour), id=user["workspace_id"],
+        )
+    if req.finance_email is not None:
+        await execute(
+            "update workspaces set finance_email = :e where id = :id",
+            e=req.finance_email.strip() or None, id=user["workspace_id"],
         )
     return await fetch_one("select * from workspaces where id = :id", id=user["workspace_id"])
 
