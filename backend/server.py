@@ -3682,10 +3682,22 @@ async def set_exec_email(body: ExecEmailIn, user: dict = Depends(require_module(
 
 @api.post("/analytics/executive-dashboard/email-summary")
 async def send_exec_summary(user: dict = Depends(require_module("executive_dashboard", "read"))):
-    ws = await fetch_one("select name, exec_email, finance_email, currency from workspaces where id = :id", id=user["workspace_id"])
+    result = await _send_board_email(user["workspace_id"])
+    if result is None:
+        raise HTTPException(status_code=400, detail="Set a board email address first")
+    to, month_name, msg_id = result
+    if not msg_id:
+        raise HTTPException(status_code=502, detail="Email failed to send")
+    return {"sent": True, "to": to, "month": month_name}
+
+async def _send_board_email(workspace_id: str) -> Optional[tuple]:
+    """Builds and sends the month-end board email (last full calendar month's cost summary + top
+    insights) to exec_email (falling back to finance_email). Returns (to, month_name, msg_id) --
+    msg_id is None if the send itself failed -- or None outright if no recipient is configured."""
+    ws = await fetch_one("select name, exec_email, finance_email, currency from workspaces where id = :id", id=workspace_id)
     to = (ws or {}).get("exec_email") or (ws or {}).get("finance_email")
     if not to:
-        raise HTTPException(status_code=400, detail="Set a board email address first")
+        return None
 
     now = datetime.now(timezone.utc)
     last_full_end = now.replace(day=1) - timedelta(seconds=1)
@@ -3693,7 +3705,7 @@ async def send_exec_summary(user: dict = Depends(require_module("executive_dashb
     month_name = last_full_start.strftime("%B %Y")
 
     maint = await fetch_all(
-        "select * from maintenance where workspace_id = :ws and status = 'completed'", ws=user["workspace_id"],
+        "select * from maintenance where workspace_id = :ws and status = 'completed'", ws=workspace_id,
     )
     def _f(x): return float(x) if x is not None else 0.0
     def _dt(m):
@@ -3706,6 +3718,33 @@ async def send_exec_summary(user: dict = Depends(require_module("executive_dashb
     total = m_maint + m_tyres + m_parts
 
     sym = CURRENCY_SYMBOLS.get((ws or {}).get("currency") or "USD", "$")
+
+    # --- Top insights: highest-cost category, and the single highest-cost vehicle, for the month ---
+    insights_html = ""
+    cat_totals = {"Maintenance": m_maint, "Tyres": m_tyres, "Parts": m_parts}
+    top_cat, top_cat_val = max(cat_totals.items(), key=lambda kv: kv[1]) if total else (None, 0)
+    if top_cat and top_cat_val > 0:
+        insights_html += (
+            f'<div style="padding:12px;background:#fffbeb;border-left:3px solid #d97706;margin-bottom:8px">'
+            f'<strong>{escape(top_cat)}</strong> was the largest cost category this month '
+            f'({round(top_cat_val / total * 100)}% of spend, {sym}{top_cat_val:,.2f}).</div>'
+        )
+    vehicles = {v["id"]: v for v in await fetch_all("select id, name from vehicles where workspace_id = :ws", ws=workspace_id)}
+    vcost: dict = {}
+    for m in month_jobs:
+        vid = m.get("vehicle_id")
+        if vid: vcost[vid] = vcost.get(vid, 0) + _f(m.get("actual_cost"))
+    if vcost:
+        top_vid, top_vval = max(vcost.items(), key=lambda kv: kv[1])
+        vname = vehicles.get(top_vid, {}).get("name", "A vehicle")
+        insights_html += (
+            f'<div style="padding:12px;background:#fef2f2;border-left:3px solid #dc2626">'
+            f'<strong>{escape(vname)}</strong> was the highest-cost vehicle this month '
+            f'({sym}{top_vval:,.2f}).</div>'
+        )
+    if not insights_html:
+        insights_html = '<div style="padding:12px;color:#64748b">No notable cost patterns this month.</div>'
+
     from_name = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
     html = (
         f'<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
@@ -3719,13 +3758,26 @@ async def send_exec_summary(user: dict = Depends(require_module("executive_dashb
         f'<li>Tyres: {sym}{m_tyres:,.2f}</li>'
         f'<li>Parts: {sym}{m_parts:,.2f}</li>'
         f'</ul>'
-        f'<p style="margin:0;font-size:13px;color:#64748b">Full breakdown available in the Executive Dashboard.</p>'
+        f'<div style="margin:0 0 16px 0;font-size:12px;letter-spacing:0.1em;color:#64748b;text-transform:uppercase">Top insights</div>'
+        f'{insights_html}'
+        f'<p style="margin:16px 0 0 0;font-size:13px;color:#64748b">Full breakdown available in the Executive Dashboard.</p>'
         f'</td></tr></table>'
     )
     msg_id = await send_email(to=to, subject=f"{(ws or {}).get('name') or 'FleetIntel'} — {month_name} fleet cost summary", html=html)
-    if not msg_id:
-        raise HTTPException(status_code=502, detail="Email failed to send")
-    return {"sent": True, "to": to, "month": month_name}
+    return (to, month_name, msg_id)
+
+async def _run_board_email_due_check():
+    """Sends the month-end board email to every workspace for which it's currently due (per-workspace
+    configurable frequency, default monthly), called from the daily tick."""
+    workspaces = await fetch_all("select id, notification_prefs from workspaces")
+    for ws in workspaces:
+        if not _digest_due(ws.get("notification_prefs"), "monthly_board_email", "monthly"):
+            continue
+        try:
+            await _send_board_email(ws["id"])
+            await _mark_digest_evaluated(ws["id"], "monthly_board_email")
+        except Exception as e:
+            logger.error(f"board email for {ws.get('id')} failed: {e}")
 
 # --- Parts inventory ---
 PART_COLS = {"name", "sku", "category", "stock", "reorder_point", "unit_cost", "supplier", "supplier_email"}
@@ -5829,6 +5881,82 @@ async def _run_weekly_digest():
         except Exception as e:
             logger.error(f"digest for {ws.get('id')} failed: {e}")
 
+async def _send_spend_digest(workspace_id: str) -> Optional[str]:
+    """Emails the workspace owner a Monday summary of the last 7 days' parts spend plus a live
+    snapshot of everything still awaiting approval in the requisition/quote/PO chain."""
+    ws = await fetch_one("select * from workspaces where id = :id", id=workspace_id)
+    if not ws: return None
+    owner_email = ws.get("owner_email")
+    if not owner_email: return None
+
+    def _f(x): return float(x) if x is not None else 0.0
+    def _item_total(items): return sum(_f(i.get("qty_requested")) * _f(i.get("unit_cost")) for i in (items or []))
+
+    now = datetime.now(timezone.utc)
+    week_start = now - timedelta(days=7)
+
+    reqs = await fetch_all("select * from parts_requisitions where workspace_id = :ws", ws=workspace_id)
+    approved_this_week = [
+        r for r in reqs if r.get("status") == "approved"
+        and isinstance((r.get("decision") or {}).get("at"), str)
+        and datetime.fromisoformat(r["decision"]["at"]) >= week_start
+    ]
+    week_spend = sum(_item_total(r.get("items")) for r in approved_this_week)
+
+    pending_reqs = [r for r in reqs if r.get("status") == "pending_approval"]
+    pending_reqs_total = sum(_item_total(r.get("items")) for r in pending_reqs)
+
+    quotes = await fetch_all(
+        "select * from quotes where workspace_id = :ws and stage in ('pending_ops', 'pending_finance')", ws=workspace_id,
+    )
+    quotes_total = sum(_f(q.get("total")) for q in quotes)
+
+    pos = await fetch_all("select * from purchase_orders where workspace_id = :ws and status = 'po_issued'", ws=workspace_id)
+    pos_total = sum(_f(p.get("amount")) for p in pos)
+
+    sym = CURRENCY_SYMBOLS.get(ws.get("currency") or "USD", "$")
+    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
+    total_open = len(pending_reqs) + len(quotes) + len(pos)
+    subject = f"Weekly spend digest · {total_open} approval(s) waiting"
+    html = (
+        f'<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:3px solid #22C55E">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape(from_name)}</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:22px">Weekly spend digest</h1>'
+        f'<div style="color:#64748b;margin-top:4px">{escape(ws.get("name", "Workspace"))}</div></td></tr>'
+        f'<tr><td style="padding:24px">'
+        f'<p style="margin:0 0 8px 0">Parts approved in the last 7 days: <strong>{sym}{week_spend:,.2f}</strong> '
+        f'across {len(approved_this_week)} requisition(s).</p>'
+        f'<div style="margin:20px 0 8px 0;font-size:12px;letter-spacing:0.1em;color:#64748b;text-transform:uppercase">Open approvals right now</div>'
+        f'<table role="presentation" width="100%" style="border-collapse:collapse">'
+        f'<tr><td style="padding:12px;background:#f8fafc;font-weight:bold">Parts requisitions</td>'
+        f'<td style="padding:12px;background:#f8fafc;text-align:right">{len(pending_reqs)} · {sym}{pending_reqs_total:,.2f}</td></tr>'
+        f'<tr><td style="padding:12px;background:#ecfdf5;font-weight:bold">Quotes (Ops/Finance)</td>'
+        f'<td style="padding:12px;background:#ecfdf5;text-align:right">{len(quotes)} · {sym}{quotes_total:,.2f}</td></tr>'
+        f'<tr><td style="padding:12px;background:#fffbeb;font-weight:bold">POs awaiting payment</td>'
+        f'<td style="padding:12px;background:#fffbeb;text-align:right">{len(pos)} · {sym}{pos_total:,.2f}</td></tr>'
+        f'</table>'
+        f'<p style="margin:16px 0 0 0;font-size:12px;color:#888">Sent by {escape(from_name)}. We never ask for your password or card details by email.</p>'
+        f'</td></tr></table>'
+    )
+    return await send_email(to=owner_email, subject=subject, html=html)
+
+async def _run_spend_digest_due_check():
+    """Sends the weekly spend digest to every workspace for which it's due, gated to Monday (UTC)
+    specifically -- unlike the other per-workspace digests, this one is calendar-day-pinned per the
+    product ask ("Monday email"), not just "roughly every N days"."""
+    if datetime.now(timezone.utc).weekday() != 0:
+        return
+    workspaces = await fetch_all("select id, notification_prefs from workspaces")
+    for ws in workspaces:
+        if not _digest_due(ws.get("notification_prefs"), "weekly_spend_digest", "weekly"):
+            continue
+        try:
+            await _send_spend_digest(ws["id"])
+            await _mark_digest_evaluated(ws["id"], "weekly_spend_digest")
+        except Exception as e:
+            logger.error(f"spend digest for {ws.get('id')} failed: {e}")
+
 @api.api_route("/cron/weekly-digest", methods=["GET", "POST"])
 async def cron_weekly_digest(request: Request):
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work. GET is for
@@ -5846,6 +5974,14 @@ async def send_digest_now(user: dict = Depends(get_current_user)):
     email_id = await _send_workspace_digest(user["workspace_id"])
     await _mark_digest_evaluated(user["workspace_id"], "weekly_digest")
     await log_event(user, "digest.sent", "workspace", user["workspace_id"], {"email_id": email_id})
+    return {"sent": bool(email_id), "email_id": email_id}
+
+@api.post("/workspace/send-spend-digest")
+async def send_spend_digest_now(user: dict = Depends(get_current_user)):
+    """Manual trigger of the weekly spend digest for this workspace."""
+    email_id = await _send_spend_digest(user["workspace_id"])
+    await _mark_digest_evaluated(user["workspace_id"], "weekly_spend_digest")
+    await log_event(user, "spend_digest.sent", "workspace", user["workspace_id"], {"email_id": email_id})
     return {"sent": bool(email_id), "email_id": email_id}
 
 async def _send_health_digest(workspace_id: str) -> Optional[str]:
@@ -6149,11 +6285,12 @@ async def cron_overdue_checklists(request: Request):
 
 @api.api_route("/cron/daily-tick", methods=["GET", "POST"])
 async def cron_daily_tick(request: Request):
-    """The single daily-scheduled Vercel Cron entry point (see vercel.json). All three digests
-    (weekly-digest, health-digest, overdue-checklists) are now per-workspace configurable-frequency
-    due-checks rather than fixed schedules, so one daily tick is enough to drive all of them --
-    /cron/weekly-digest and /cron/overdue-checklists stay as separate endpoints for manual/testing
-    use (same due-check logic), but nothing schedules them directly anymore."""
+    """The single daily-scheduled Vercel Cron entry point (see vercel.json). All five digests
+    (weekly-digest, health-digest, overdue-checklists, monthly board email, weekly spend digest) are
+    per-workspace configurable-frequency due-checks rather than fixed schedules, so one daily tick is
+    enough to drive all of them -- /cron/weekly-digest and /cron/overdue-checklists stay as separate
+    endpoints for manual/testing use (same due-check logic), but nothing schedules them directly
+    anymore. The spend digest additionally gates on weekday==Monday inside its own due-check."""
     auth = request.headers.get("Authorization", "")
     expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
     if not expected or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], expected):
@@ -6161,6 +6298,8 @@ async def cron_daily_tick(request: Request):
     asyncio.create_task(_run_weekly_digest())
     asyncio.create_task(_run_overdue_checklists())
     asyncio.create_task(_run_health_digest_due_check())
+    asyncio.create_task(_run_board_email_due_check())
+    asyncio.create_task(_run_spend_digest_due_check())
     return {"ok": True, "queued": True}
 
 FLEET_MANAGER_ROLES = ("manager", "operations_manager", "admin")

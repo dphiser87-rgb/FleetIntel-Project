@@ -7,9 +7,11 @@ import { useCurrency } from "@/lib/CurrencyContext";
 import { CURRENCIES } from "@/lib/currency";
 
 const DIGESTS = [
-  { key: "weekly_digest", label: "Weekly KPI digest", defaultFrequency: "weekly", description: "KPIs, cost anomalies, pending jobs and low-stock parts." },
-  { key: "health_digest", label: "Fleet health digest", defaultFrequency: "weekly", description: "A list of at-risk and watch-status vehicles with their top contributing factors." },
-  { key: "overdue_checklists", label: "Overdue checklists alert", defaultFrequency: "daily", description: "Scheduled checklists that have gone past their configured frequency." },
+  { key: "weekly_digest", label: "Weekly KPI digest", defaultFrequency: "weekly", description: "KPIs, cost anomalies, pending jobs and low-stock parts.", sendEndpoint: "/workspace/send-digest" },
+  { key: "health_digest", label: "Fleet health digest", defaultFrequency: "weekly", description: "A list of at-risk and watch-status vehicles with their top contributing factors.", sendEndpoint: "/workspace/send-health-digest" },
+  { key: "overdue_checklists", label: "Overdue checklists alert", defaultFrequency: "daily", description: "Scheduled checklists that have gone past their configured frequency.", sendEndpoint: "/workspace/send-overdue-checklists-alert" },
+  { key: "monthly_board_email", label: "Monthly board email", defaultFrequency: "monthly", description: "Month-end cost summary with top insights, sent to the board email set on the Executive Dashboard.", sendEndpoint: "/analytics/executive-dashboard/email-summary" },
+  { key: "weekly_spend_digest", label: "Weekly spend digest", defaultFrequency: "weekly", description: "Every Monday: parts spend from the last 7 days, plus everything still awaiting approval.", sendEndpoint: "/workspace/send-spend-digest" },
 ];
 
 const DIGEST_FREQUENCIES = [
@@ -27,7 +29,7 @@ export default function Settings() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [prefs, setPrefs] = useState(null);
   const [canManage, setCanManage] = useState(false);
-  const [digestSending, setDigestSending] = useState(false);
+  const [digestSending, setDigestSending] = useState(null);
   const [licenseWarningDays, setLicenseWarningDays] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [reportLogo, setReportLogo] = useState(null);
@@ -164,14 +166,15 @@ export default function Settings() {
     }
   };
 
-  const sendDigest = async () => {
-    setDigestSending(true);
+  const sendDigestNow = async (d) => {
+    setDigestSending(d.key);
     try {
-      const { data } = await api.post("/workspace/send-digest");
-      if (data.sent) toast.success("Weekly digest emailed to the workspace owner");
-      else toast.error("No owner email configured or send failed");
-    } catch (e) { toast.error("Failed"); }
-    finally { setDigestSending(false); }
+      const { data } = await api.post(d.sendEndpoint);
+      if (data.sent) toast.success(`${d.label} sent`);
+      else toast.error("No recipient configured or send failed");
+    } catch (e) {
+      toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Failed to send");
+    } finally { setDigestSending(null); }
   };
 
   return (
@@ -410,13 +413,15 @@ export default function Settings() {
               </div>
               <h3 className="font-display text-2xl font-bold tracking-tight">Notification preferences</h3>
               <div className="mt-2 text-sm text-muted-foreground">
-                Controls whether each automated email sends at all, and how often. Checked daily;
-                recipient is always the workspace owner.
+                Controls whether each automated email sends at all, and how often. Checked daily.
+                Recipient is the workspace owner, except the monthly board email which goes to the
+                board email address set on the Executive Dashboard.
                 {!canManage && " Only admins and managers can change these."}
               </div>
               <div className="mt-4 divide-y divide-border/50">
                 {DIGESTS.map((d) => {
                   const on = prefs ? prefs[d.key] !== false : true;
+                  const sending = digestSending === d.key;
                   return (
                     <div key={d.key} className="flex items-center justify-between py-3 gap-4" data-testid={`digest-toggle-${d.key}`}>
                       <div className="pr-4">
@@ -439,6 +444,16 @@ export default function Settings() {
                         )}
                         <button
                           type="button"
+                          disabled={sending || digestSending !== null}
+                          onClick={() => sendDigestNow(d)}
+                          title="Send now"
+                          data-testid={`send-digest-${d.key}`}
+                          className="p-1.5 border border-border text-muted-foreground hover:text-primary hover:border-primary disabled:opacity-50"
+                        >
+                          <EnvelopeSimple size={14} />
+                        </button>
+                        <button
+                          type="button"
                           disabled={!canManage || prefs === null}
                           onClick={() => toggleDigest(d.key)}
                           className={`shrink-0 w-11 h-6 rounded-full border transition-colors relative disabled:opacity-50 ${on ? "bg-primary border-primary" : "bg-[#0b0b0d] border-border"}`}
@@ -450,13 +465,8 @@ export default function Settings() {
                   );
                 })}
               </div>
-              <div className="mt-4 border-t border-border pt-4">
-                <button onClick={sendDigest} disabled={digestSending} data-testid="send-digest-now" className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90 disabled:opacity-60">
-                  <EnvelopeSimple size={14} /> {digestSending ? "Sending…" : "Send weekly digest now"}
-                </button>
-                <div className="text-xs text-muted-foreground mt-3">
-                  Use this to preview what the scheduled weekly digest looks like, regardless of the toggle above.
-                </div>
+              <div className="text-xs text-muted-foreground mt-4 border-t border-border pt-4">
+                Use the envelope icon to send any of these immediately, regardless of the toggle/schedule above.
               </div>
             </div>
           </div>
