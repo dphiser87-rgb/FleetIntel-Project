@@ -9,7 +9,19 @@ import '../../features/templates/template_picker_screen.dart';
 import '../../features/vehicle/vehicle_confirm_screen.dart';
 import '../../features/vehicle/vehicle_picker_screen.dart';
 import '../../features/welcome/welcome_screen.dart';
+import '../../features/workshop/workshop_board_screen.dart';
+import '../../features/workshop/workshop_cost_rollup_screen.dart';
+import '../../features/workshop/workshop_job_detail_screen.dart';
+import '../../features/workshop/workshop_pos_screen.dart';
+import '../../features/workshop/workshop_queue_screen.dart';
+import '../../features/workshop/workshop_requisition_screen.dart';
 import '../auth/auth_state.dart';
+
+/// Roles that land on the Workshop area instead of the driver flow -- matches the FleetHub-Workshop
+/// reference's WORKSHOP_ROLES exactly, using this backend's actual role strings (server.py's
+/// OPS_ROLES/FINANCE_ROLES/REQUISITION_APPROVER_ROLES constants), not the reference's Mongo-prototype
+/// shorthand ("ops" -> "operations_manager", etc).
+const _kWorkshopRoles = {'mechanic', 'workshop_head', 'operations_manager', 'finance', 'admin'};
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -21,12 +33,27 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       if (auth.status == AuthStatus.unknown) return null; // wait for restore
       if (!auth.isAuthenticated) return loggingIn ? null : '/login';
-      if (auth.isAuthenticated && loggingIn) return '/welcome';
+      if (auth.isAuthenticated && loggingIn) {
+        final role = auth.user?['role'] as String?;
+        return _kWorkshopRoles.contains(role) ? '/workshop' : '/welcome';
+      }
       return null;
     },
     routes: [
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(path: '/welcome', builder: (context, state) => const WelcomeScreen()),
+      GoRoute(path: '/workshop', builder: (context, state) => const WorkshopBoardScreen()),
+      GoRoute(
+        path: '/workshop/job/:id',
+        builder: (context, state) => WorkshopJobDetailScreen(jobId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/workshop/requisition/:jobId',
+        builder: (context, state) => WorkshopRequisitionScreen(jobId: state.pathParameters['jobId']!),
+      ),
+      GoRoute(path: '/workshop/pos', builder: (context, state) => const WorkshopPosScreen()),
+      GoRoute(path: '/workshop/queue', builder: (context, state) => const WorkshopQueueScreen()),
+      GoRoute(path: '/workshop/cost-rollup', builder: (context, state) => const WorkshopCostRollupScreen()),
       GoRoute(path: '/vehicle', builder: (context, state) => const VehicleConfirmScreen()),
       GoRoute(path: '/vehicle-picker', builder: (context, state) => const VehiclePickerScreen()),
       GoRoute(
