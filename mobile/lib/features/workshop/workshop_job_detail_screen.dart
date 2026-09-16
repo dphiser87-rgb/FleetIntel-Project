@@ -318,7 +318,7 @@ class _PartsTab extends ConsumerWidget {
             ),
           ),
         const SizedBox(height: AppMetrics.spacingMd),
-        for (final r in requisitions) _RequisitionCard(req: r, role: role, onChanged: onChanged),
+        for (final r in requisitions) _RequisitionCard(req: r, currency: currency, role: role, onChanged: onChanged),
         for (final q in quotes) _QuoteCard(quote: q, currency: currency, role: role, onChanged: onChanged),
         for (final po in purchaseOrders) _PoCardMini(po: po, currency: currency, role: role),
       ],
@@ -367,8 +367,9 @@ Future<void> _showRejectSheet(BuildContext context, Future<void> Function(String
 }
 
 class _RequisitionCard extends ConsumerWidget {
-  const _RequisitionCard({required this.req, required this.role, required this.onChanged});
+  const _RequisitionCard({required this.req, required this.currency, required this.role, required this.onChanged});
   final Map<String, dynamic> req;
+  final String currency;
   final String? role;
   final VoidCallback onChanged;
 
@@ -418,7 +419,7 @@ class _RequisitionCard extends ConsumerWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('Requisition total', style: text.bodySmall?.copyWith(color: AppColors.muted)),
-                Text(total.toStringAsFixed(2), style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+                Text(formatMoney(total, currency), style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
               ],
             ),
             if (status == 'rejected' && (req['decision'] as Map?)?['reason'] != null) ...[
@@ -643,15 +644,20 @@ class _ActivityTab extends StatelessWidget {
 
   static const _labels = {
     'maintenance.created': 'Job created',
-    'maintenance.status_changed': 'Status changed',
+    'maintenance.pending': 'Job moved to Pending',
+    'maintenance.in_progress': 'Job moved to In progress',
+    'maintenance.on_hold': 'Job moved to On hold',
+    'maintenance.completed': 'Job completed',
+    'maintenance.resumed': 'Job resumed',
+    'maintenance.photo_added': 'Photo added',
     'part_requisition.submitted': 'Parts requested',
     'part_requisition.approved': 'Requisition approved',
     'part_requisition.rejected': 'Requisition rejected',
+    'quote.submitted': 'Quote submitted',
     'quote.ops_approved': 'Operations approved quote',
     'quote.ops_rejected': 'Quote rejected by Operations',
     'quote.finance_approved': 'Purchase order issued',
     'quote.finance_rejected': 'Quote rejected by Finance',
-    'maintenance.photo_added': 'Photo added',
   };
 
   @override

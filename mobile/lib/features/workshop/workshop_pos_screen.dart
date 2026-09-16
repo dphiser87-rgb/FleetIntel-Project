@@ -88,8 +88,8 @@ class _WorkshopPosScreenState extends ConsumerState<WorkshopPosScreen> {
                                     Text(formatMoney(po['amount'] as num?, _currency), style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
                                   ],
                                 ),
-                                if (po['status'] == 'paid')
-                                  Text('Paid by ${po['paid_by'] ?? '—'}', style: text.bodySmall?.copyWith(color: AppColors.muted))
+                                if (po['status'] == 'paid' && po['paid_at'] != null)
+                                  Text('Paid on ${(po['paid_at'] as String).split('T').first}', style: text.bodySmall?.copyWith(color: AppColors.muted))
                                 else if (canPay) ...[
                                   const SizedBox(height: AppMetrics.spacingSm),
                                   SizedBox(
