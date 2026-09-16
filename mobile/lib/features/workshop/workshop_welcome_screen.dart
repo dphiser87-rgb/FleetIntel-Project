@@ -76,6 +76,7 @@ class WorkshopWelcomeScreen extends ConsumerStatefulWidget {
 
 class _WorkshopWelcomeScreenState extends ConsumerState<WorkshopWelcomeScreen> {
   bool _loading = true;
+  bool _error = false;
   int _openJobs = 0;
   int _waiting = 0;
 
@@ -86,7 +87,10 @@ class _WorkshopWelcomeScreenState extends ConsumerState<WorkshopWelcomeScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = false;
+    });
     try {
       final dio = ref.read(apiClientProvider).dio;
       final results = await Future.wait([dio.get('/maintenance'), dio.get('/workshop/queue')]);
@@ -97,7 +101,12 @@ class _WorkshopWelcomeScreenState extends ConsumerState<WorkshopWelcomeScreen> {
         _loading = false;
       });
     } catch (_) {
-      setState(() => _loading = false);
+      // Don't show fabricated zero values on a failed load -- that's indistinguishable from
+      // genuinely-zero counts. Surface the failure and let the user retry instead.
+      setState(() {
+        _loading = false;
+        _error = true;
+      });
     }
   }
 
@@ -187,11 +196,26 @@ class _WorkshopWelcomeScreenState extends ConsumerState<WorkshopWelcomeScreen> {
                     const SizedBox(height: AppMetrics.spacingLg),
                     Row(
                       children: [
-                        Expanded(child: _StatCard(icon: Icons.inventory_2_outlined, label: blurb.statLabel, value: _loading ? '—' : '$_openJobs', onTap: () => context.go('/workshop'))),
+                        Expanded(child: _StatCard(icon: Icons.inventory_2_outlined, label: blurb.statLabel, value: _loading || _error ? '—' : '$_openJobs', onTap: () => context.go('/workshop'))),
                         const SizedBox(width: AppMetrics.spacingSm),
-                        Expanded(child: _StatCard(icon: Icons.inbox_outlined, label: blurb.waitingLabel, value: _loading ? '—' : '$_waiting', highlight: _waiting > 0, onTap: () => context.push('/workshop/queue'))),
+                        Expanded(child: _StatCard(icon: Icons.inbox_outlined, label: blurb.waitingLabel, value: _loading || _error ? '—' : '$_waiting', highlight: !_loading && !_error && _waiting > 0, onTap: () => context.push('/workshop/queue'))),
                       ],
                     ),
+                    if (_error)
+                      Padding(
+                        padding: const EdgeInsets.only(top: AppMetrics.spacingSm),
+                        child: GestureDetector(
+                          onTap: _load,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.refresh, size: 14, color: AppColors.muted),
+                              const SizedBox(width: 4),
+                              Text('Could not load your stats — tap to retry', style: text.bodySmall?.copyWith(color: AppColors.muted)),
+                            ],
+                          ),
+                        ),
+                      ),
                     const SizedBox(height: AppMetrics.spacingLg),
                     SizedBox(
                       width: double.infinity,

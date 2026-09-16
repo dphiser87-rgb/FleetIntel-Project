@@ -7,6 +7,7 @@ import '../../core/db/pending_sync_badge.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/fleet_button.dart';
 import '../../l10n/app_localizations.dart';
+import '../workshop/workshop_ui.dart';
 
 enum _ReminderMode { done, overdue, due }
 
@@ -207,11 +208,11 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                                 Text('FLEETINTEL AFRICA · FLEET HUB',
                                     style: text.labelSmall?.copyWith(color: colors.primary, letterSpacing: 1.4, fontWeight: FontWeight.w800)),
                                 const SizedBox(height: AppMetrics.spacingXs),
-                                Text('Ready for an inspection?',
+                                Text('Ready for your vehicle check?',
                                     style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.3)),
                                 const SizedBox(height: AppMetrics.spacingXs),
                                 Text(
-                                  'Vehicle checks, costing and compliance — all in one place.',
+                                  'Complete your pre-trip inspection and report any issues before you drive.',
                                   style: text.bodySmall?.copyWith(color: AppColors.muted, height: 1.4),
                                 ),
                               ],
@@ -227,7 +228,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                         children: [
                           const TextSpan(text: 'Hi '),
                           TextSpan(text: name, style: const TextStyle(fontWeight: FontWeight.w700)),
-                          TextSpan(text: ' · $role', style: const TextStyle(color: AppColors.muted)),
+                          TextSpan(text: ' · ${roleDisplayName(role)}', style: const TextStyle(color: AppColors.muted)),
                         ],
                       ),
                     ),
@@ -310,8 +311,8 @@ class _ReminderBanner extends StatelessWidget {
           AppColors.danger.withValues(alpha: AppMetrics.opacitySubtle),
           Icons.warning_amber_rounded,
           AppColors.danger,
-          'Pre-trip check overdue',
-          'Your depot has been notified. Complete it now to clear the flag.',
+          'Pre-trip inspection overdue',
+          'Your inspection is overdue. Complete it before starting your trip.',
         ),
       _ReminderMode.due => (
           AppColors.warning,

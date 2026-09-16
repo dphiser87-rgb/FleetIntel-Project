@@ -20,6 +20,7 @@ class ExecutiveWelcomeScreen extends ConsumerStatefulWidget {
 
 class _ExecutiveWelcomeScreenState extends ConsumerState<ExecutiveWelcomeScreen> {
   bool _loading = true;
+  bool _error = false;
   double _monthTotal = 0;
   int _insightCount = 0;
   String _currency = 'USD';
@@ -31,7 +32,10 @@ class _ExecutiveWelcomeScreenState extends ConsumerState<ExecutiveWelcomeScreen>
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = false;
+    });
     try {
       final dio = ref.read(apiClientProvider).dio;
       final results = await Future.wait([
@@ -47,7 +51,12 @@ class _ExecutiveWelcomeScreenState extends ConsumerState<ExecutiveWelcomeScreen>
         _loading = false;
       });
     } catch (_) {
-      setState(() => _loading = false);
+      // Don't show fabricated zero values on a failed load -- that's indistinguishable from
+      // genuinely-zero spend. Surface the failure and let the user retry instead.
+      setState(() {
+        _loading = false;
+        _error = true;
+      });
     }
   }
 
@@ -113,10 +122,10 @@ class _ExecutiveWelcomeScreenState extends ConsumerState<ExecutiveWelcomeScreen>
                               children: [
                                 Text('EXECUTIVE VIEW', style: text.labelSmall?.copyWith(color: colors.primary, letterSpacing: 1.4, fontWeight: FontWeight.w800)),
                                 const SizedBox(height: AppMetrics.spacingXs),
-                                Text('Your cost command centre.', style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.3)),
+                                Text('Your fleet at a glance.', style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.3)),
                                 const SizedBox(height: AppMetrics.spacingXs),
                                 Text(
-                                  'A single, live picture of what the fleet is costing you — with the insights that need your attention.',
+                                  'See what your fleet is costing, where costs are changing, and what needs your attention.',
                                   style: text.bodySmall?.copyWith(color: AppColors.muted, height: 1.4),
                                 ),
                               ],
@@ -139,15 +148,30 @@ class _ExecutiveWelcomeScreenState extends ConsumerState<ExecutiveWelcomeScreen>
                     const SizedBox(height: AppMetrics.spacingLg),
                     Row(
                       children: [
-                        Expanded(child: _StatCard(icon: Icons.payments_outlined, label: "This month's spend", value: _loading ? '—' : formatMoney(_monthTotal, _currency))),
+                        Expanded(child: _StatCard(icon: Icons.payments_outlined, label: "This month's spend", value: _loading || _error ? '—' : formatMoney(_monthTotal, _currency))),
                         const SizedBox(width: AppMetrics.spacingSm),
-                        Expanded(child: _StatCard(icon: Icons.auto_awesome_outlined, label: 'Insights live', value: _loading ? '—' : '$_insightCount', highlight: _insightCount > 0)),
+                        Expanded(child: _StatCard(icon: Icons.auto_awesome_outlined, label: 'Cost insights', value: _loading || _error ? '—' : '$_insightCount', highlight: !_loading && !_error && _insightCount > 0)),
                       ],
                     ),
+                    if (_error)
+                      Padding(
+                        padding: const EdgeInsets.only(top: AppMetrics.spacingSm),
+                        child: GestureDetector(
+                          onTap: _load,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.refresh, size: 14, color: AppColors.muted),
+                              const SizedBox(width: 4),
+                              Text('Could not load your stats — tap to retry', style: text.bodySmall?.copyWith(color: AppColors.muted)),
+                            ],
+                          ),
+                        ),
+                      ),
                     const SizedBox(height: AppMetrics.spacingLg),
                     SizedBox(
                       width: double.infinity,
-                      child: FleetButton(label: 'Open the dashboard', icon: Icons.bar_chart_outlined, onPressed: () => context.go('/executive')),
+                      child: FleetButton(label: 'Open Executive Dashboard', icon: Icons.bar_chart_outlined, onPressed: () => context.go('/executive')),
                     ),
                     const SizedBox(height: AppMetrics.spacingLg),
                   ],
