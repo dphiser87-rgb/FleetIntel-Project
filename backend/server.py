@@ -19,7 +19,7 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta, date as date_cls
 from typing import List, Optional, Literal, Dict
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr, ValidationError
@@ -3300,8 +3300,19 @@ async def vehicle_cost(user: dict = Depends(get_current_user)):
     return sorted(result, key=lambda x: x["cost"], reverse=True)
 
 
+def _exec_range_bounds(range_: str, now: datetime):
+    """(period_start, trend_months, period_label) for the executive dashboard's range selector.
+    "year" reproduces the endpoint's original always-calendar-YTD behavior exactly (the mobile app's
+    default), so existing web callers that never pass ?range get byte-identical output to before this
+    param existed."""
+    if range_ == "90d":
+        return now - timedelta(days=90), 3, "Last 90 days"
+    if range_ == "all":
+        return datetime(2000, 1, 1, tzinfo=timezone.utc), 12, "All time"
+    return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0), 6, "This year"
+
 @api.get("/analytics/executive-dashboard")
-async def executive_dashboard(user: dict = Depends(require_module("executive_dashboard", "read"))):
+async def executive_dashboard(range_: str = Query("year", alias="range"), user: dict = Depends(require_module("executive_dashboard", "read"))):
     """Management-level cost rollup. Cost buckets are defined by cost COMPONENT, not job category,
     since a maintenance job has one total made of labor_cost + parts_cost and "tyres" is just one of
     six job categories — there's no clean non-overlapping 3-way split otherwise:
@@ -3366,11 +3377,11 @@ async def executive_dashboard(user: dict = Depends(require_module("executive_das
         "cost_per_vehicle": {"value": cost_per_vehicle, "delta_pct": _delta_pct(cost_per_vehicle, last_cost_per_vehicle)},
     }
 
-    # --- 6-month trailing trend ---
-    # Build the last 6 calendar-month keys explicitly (avoids a relativedelta dependency).
+    # --- Trailing trend (window length depends on range) ---
+    period_start, trend_months, period_label = _exec_range_bounds(range_, now)
     month_keys = []
     y, mo = now.year, now.month
-    for _ in range(6):
+    for _ in range(trend_months):
         month_keys.append(f"{y:04d}-{mo:02d}")
         mo -= 1
         if mo == 0:
@@ -3387,9 +3398,9 @@ async def executive_dashboard(user: dict = Depends(require_module("executive_das
         mm, tt, pp = _bucket_costs(trend_buckets[k])
         monthly_trend.append({"month": k, "maintenance": mm, "tyres": tt, "parts": pp, "total": round(mm + tt + pp, 2)})
 
-    # --- YTD breakdown ---
-    ytd_jobs = [m for m in maint if _dt(m).year == now.year]
-    y_maint, y_tyres, y_parts = _bucket_costs(ytd_jobs)
+    # --- Period breakdown (defaults to calendar YTD, same as before this param existed) ---
+    period_jobs = [m for m in maint if _dt(m) >= period_start]
+    y_maint, y_tyres, y_parts = _bucket_costs(period_jobs)
     ytd_total = y_maint + y_tyres + y_parts
     ytd_breakdown = [
         {"name": "Maintenance", "value": y_maint, "pct": round(y_maint / ytd_total * 100, 1) if ytd_total else 0},
@@ -3397,9 +3408,9 @@ async def executive_dashboard(user: dict = Depends(require_module("executive_das
         {"name": "Parts", "value": y_parts, "pct": round(y_parts / ytd_total * 100, 1) if ytd_total else 0},
     ]
 
-    # --- Top 6 vehicles by total cost ---
+    # --- Top 6 vehicles by cost within the selected period ---
     vcost = {}
-    for m in maint:
+    for m in period_jobs:
         if m.get("vehicle_id"):
             vcost[m["vehicle_id"]] = vcost.get(m["vehicle_id"], 0) + _f(m.get("actual_cost"))
     top_vehicles = sorted(
@@ -3407,9 +3418,10 @@ async def executive_dashboard(user: dict = Depends(require_module("executive_das
         key=lambda x: x["value"], reverse=True,
     )[:6]
 
-    # --- Cost by region (via vehicle -> group -> region; "Ungrouped" for vehicles with no group/region) ---
+    # --- Cost by region within the selected period (via vehicle -> group -> region; "Ungrouped" for
+    # vehicles with no group/region) ---
     region_cost = {}
-    for m in maint:
+    for m in period_jobs:
         vid = m.get("vehicle_id")
         v = vmap.get(vid)
         region = "Ungrouped"
@@ -3421,9 +3433,9 @@ async def executive_dashboard(user: dict = Depends(require_module("executive_das
         key=lambda x: x["value"], reverse=True,
     )
 
-    # --- Top suppliers by spend (from maintenance.vendor; "Unknown" for blanks) ---
+    # --- Top suppliers by spend within the selected period (from maintenance.vendor; "Unknown" for blanks) ---
     supplier_cost = {}
-    for m in maint:
+    for m in period_jobs:
         supplier = (m.get("vendor") or "").strip() or "Unknown"
         supplier_cost[supplier] = supplier_cost.get(supplier, 0) + _f(m.get("actual_cost"))
     top_suppliers = sorted(
@@ -3490,6 +3502,10 @@ async def executive_dashboard(user: dict = Depends(require_module("executive_das
 
     return {
         "currency_note": "values are in the workspace's configured currency",
+        "range": range_,
+        "period_label": period_label,
+        "ytd_total": round(ytd_total, 2),
+        "insight_count": len(insights),
         "kpis": kpis,
         "monthly_trend": monthly_trend,
         "ytd_breakdown": ytd_breakdown,
@@ -3498,6 +3514,218 @@ async def executive_dashboard(user: dict = Depends(require_module("executive_das
         "top_suppliers": top_suppliers,
         "insights": insights,
     }
+
+@api.get("/analytics/executive-dashboard/vehicle/{vehicle_id}")
+async def executive_vehicle_drilldown(
+    vehicle_id: str, range_: str = Query("year", alias="range"),
+    user: dict = Depends(require_module("executive_dashboard", "read")),
+):
+    ws = user["workspace_id"]
+    v = await fetch_one("select * from vehicles where id = :id and workspace_id = :ws", id=vehicle_id, ws=ws)
+    if not v:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    group = await fetch_one("select * from vehicle_groups where id = :id", id=v["group_id"]) if v.get("group_id") else None
+    maint = await fetch_all(
+        "select * from maintenance where workspace_id = :ws and vehicle_id = :vid and status = 'completed'",
+        ws=ws, vid=vehicle_id,
+    )
+    now = datetime.now(timezone.utc)
+
+    def _f(x): return float(x) if x is not None else 0.0
+    def _dt(m):
+        d = m.get("completed_at") or m.get("created_at")
+        return d if isinstance(d, datetime) else now
+    def _bucket_costs(rows):
+        maintenance = sum(_f(m.get("labor_cost")) for m in rows)
+        parts_c = sum(_f(m.get("parts_cost")) for m in rows)
+        tyres = sum(_f(m.get("actual_cost")) for m in rows if m.get("category") == "tyres")
+        return round(maintenance, 2), round(tyres, 2), round(parts_c, 2)
+
+    period_start, trend_months, period_label = _exec_range_bounds(range_, now)
+    period_jobs = [m for m in maint if _dt(m) >= period_start]
+    b_maint, b_tyres, b_parts = _bucket_costs(period_jobs)
+    total = round(b_maint + b_tyres + b_parts, 2)
+    breakdown = [
+        {"name": "Maintenance", "value": b_maint, "pct": round(b_maint / total * 100, 1) if total else 0},
+        {"name": "Tyres", "value": b_tyres, "pct": round(b_tyres / total * 100, 1) if total else 0},
+        {"name": "Parts", "value": b_parts, "pct": round(b_parts / total * 100, 1) if total else 0},
+    ]
+
+    month_keys = []
+    y, mo = now.year, now.month
+    for _ in range(trend_months):
+        month_keys.append(f"{y:04d}-{mo:02d}")
+        mo -= 1
+        if mo == 0: mo, y = 12, y - 1
+    month_keys.reverse()
+    trend_buckets = {k: [] for k in month_keys}
+    for m in maint:
+        key = _dt(m).strftime("%Y-%m")
+        if key in trend_buckets: trend_buckets[key].append(m)
+    trend = []
+    for k in month_keys:
+        mm, tt, pp = _bucket_costs(trend_buckets[k])
+        trend.append({"month": k, "maintenance": mm, "tyres": tt, "parts": pp, "total": round(mm + tt + pp, 2)})
+
+    supplier_cost = {}
+    for m in period_jobs:
+        s = (m.get("vendor") or "").strip() or "Unknown"
+        supplier_cost[s] = supplier_cost.get(s, 0) + _f(m.get("actual_cost"))
+    top_suppliers = sorted(
+        [{"supplier": s, "value": round(c, 2)} for s, c in supplier_cost.items()],
+        key=lambda x: x["value"], reverse=True,
+    )[:6]
+
+    jobs = sorted(maint, key=lambda m: m.get("created_at") or now, reverse=True)[:20]
+
+    return {
+        "range": range_, "period_label": period_label, "total": total, "breakdown": breakdown,
+        "monthly_trend": trend, "top_suppliers": top_suppliers,
+        "vehicle": {
+            "id": v["id"], "name": v.get("name"), "registration": v.get("plate"),
+            "vehicle_class": v.get("type"), "region": (group or {}).get("region"),
+            "odometer": v.get("odometer"),
+        },
+        "jobs": [
+            {"id": j["id"], "title": j.get("title"), "status": j.get("status"),
+             "priority": j.get("priority"), "parts_cost": _f(j.get("parts_cost"))}
+            for j in jobs
+        ],
+    }
+
+@api.get("/analytics/executive-dashboard/supplier")
+async def executive_supplier_drilldown(
+    name: str = Query(...), range_: str = Query("year", alias="range"),
+    user: dict = Depends(require_module("executive_dashboard", "read")),
+):
+    ws = user["workspace_id"]
+    now = datetime.now(timezone.utc)
+    period_start, trend_months, period_label = _exec_range_bounds(range_, now)
+
+    def _f(x): return float(x) if x is not None else 0.0
+    def _dt(m):
+        d = m.get("completed_at") or m.get("created_at")
+        return d if isinstance(d, datetime) else now
+    def _bucket_costs(rows):
+        maintenance = sum(_f(m.get("labor_cost")) for m in rows)
+        parts_c = sum(_f(m.get("parts_cost")) for m in rows)
+        tyres = sum(_f(m.get("actual_cost")) for m in rows if m.get("category") == "tyres")
+        return round(maintenance, 2), round(tyres, 2), round(parts_c, 2)
+
+    is_unknown = name == "Unknown"
+    all_jobs = await fetch_all(
+        "select * from maintenance where workspace_id = :ws and status = 'completed'", ws=ws,
+    )
+    maint = [m for m in all_jobs if ((m.get("vendor") or "").strip() or "Unknown") == name]
+    period_jobs = [m for m in maint if _dt(m) >= period_start]
+
+    b_maint, b_tyres, b_parts = _bucket_costs(period_jobs)
+    total = round(b_maint + b_tyres + b_parts, 2)
+    breakdown = [
+        {"name": "Maintenance", "value": b_maint, "pct": round(b_maint / total * 100, 1) if total else 0},
+        {"name": "Tyres", "value": b_tyres, "pct": round(b_tyres / total * 100, 1) if total else 0},
+        {"name": "Parts", "value": b_parts, "pct": round(b_parts / total * 100, 1) if total else 0},
+    ]
+
+    month_keys = []
+    y, mo = now.year, now.month
+    for _ in range(trend_months):
+        month_keys.append(f"{y:04d}-{mo:02d}")
+        mo -= 1
+        if mo == 0: mo, y = 12, y - 1
+    month_keys.reverse()
+    trend_buckets = {k: [] for k in month_keys}
+    for m in maint:
+        key = _dt(m).strftime("%Y-%m")
+        if key in trend_buckets: trend_buckets[key].append(m)
+    trend = []
+    for k in month_keys:
+        mm, tt, pp = _bucket_costs(trend_buckets[k])
+        trend.append({"month": k, "maintenance": mm, "tyres": tt, "parts": pp, "total": round(mm + tt + pp, 2)})
+
+    vehicles = {v["id"]: v for v in await fetch_all("select * from vehicles where workspace_id = :ws", ws=ws)}
+    vcost = {}
+    for m in period_jobs:
+        vid = m.get("vehicle_id")
+        if vid: vcost[vid] = vcost.get(vid, 0) + _f(m.get("actual_cost"))
+    top_vehicles = sorted(
+        [{"vehicle_id": vid, "name": vehicles[vid]["name"], "value": round(c, 2)} for vid, c in vcost.items() if vid in vehicles],
+        key=lambda x: x["value"], reverse=True,
+    )[:6]
+
+    pos = await fetch_all(
+        "select po.*, mnt.title as job_title from purchase_orders po join maintenance mnt on mnt.id = po.maintenance_id "
+        "where po.workspace_id = :ws and po.status = 'paid' and po.supplier = :s order by po.paid_at desc",
+        ws=ws, s=name if not is_unknown else None,
+    ) if not is_unknown else []
+
+    return {
+        "range": range_, "period_label": period_label, "supplier": name, "total": total,
+        "breakdown": breakdown, "monthly_trend": trend, "top_vehicles": top_vehicles,
+        "purchase_orders": [
+            {"po_number": p["po_number"], "amount": _f(p.get("amount")), "job_title": p.get("job_title"),
+             "paid_at": p.get("paid_at").isoformat() if p.get("paid_at") else None}
+            for p in pos
+        ],
+    }
+
+class ExecEmailIn(BaseModel):
+    exec_email: str
+
+@api.put("/analytics/executive-dashboard/settings")
+async def set_exec_email(body: ExecEmailIn, user: dict = Depends(require_module("executive_dashboard", "read"))):
+    await execute(
+        "update workspaces set exec_email = :e where id = :id",
+        e=body.exec_email.strip() or None, id=user["workspace_id"],
+    )
+    return {"exec_email": body.exec_email.strip() or None}
+
+@api.post("/analytics/executive-dashboard/email-summary")
+async def send_exec_summary(user: dict = Depends(require_module("executive_dashboard", "read"))):
+    ws = await fetch_one("select name, exec_email, finance_email, currency from workspaces where id = :id", id=user["workspace_id"])
+    to = (ws or {}).get("exec_email") or (ws or {}).get("finance_email")
+    if not to:
+        raise HTTPException(status_code=400, detail="Set a board email address first")
+
+    now = datetime.now(timezone.utc)
+    last_full_end = now.replace(day=1) - timedelta(seconds=1)
+    last_full_start = last_full_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_name = last_full_start.strftime("%B %Y")
+
+    maint = await fetch_all(
+        "select * from maintenance where workspace_id = :ws and status = 'completed'", ws=user["workspace_id"],
+    )
+    def _f(x): return float(x) if x is not None else 0.0
+    def _dt(m):
+        d = m.get("completed_at") or m.get("created_at")
+        return d if isinstance(d, datetime) else now
+    month_jobs = [m for m in maint if last_full_start <= _dt(m) <= last_full_end]
+    m_maint = sum(_f(m.get("labor_cost")) for m in month_jobs)
+    m_parts = sum(_f(m.get("parts_cost")) for m in month_jobs)
+    m_tyres = sum(_f(m.get("actual_cost")) for m in month_jobs if m.get("category") == "tyres")
+    total = m_maint + m_tyres + m_parts
+
+    sym = CURRENCY_SYMBOLS.get((ws or {}).get("currency") or "USD", "$")
+    from_name = os.environ.get("EMAIL_FROM_NAME", "FleetIntel")
+    html = (
+        f'<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:3px solid #0EA5E9">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">{escape((ws or {}).get("name") or from_name)}</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:22px">{escape(month_name)} cost summary</h1></td></tr>'
+        f'<tr><td style="padding:24px">'
+        f'<p style="margin:0 0 8px 0">Total fleet spend: <strong>{sym}{total:,.2f}</strong></p>'
+        f'<ul style="margin:0 0 16px 0;padding-left:18px;color:#334155">'
+        f'<li>Maintenance: {sym}{m_maint:,.2f}</li>'
+        f'<li>Tyres: {sym}{m_tyres:,.2f}</li>'
+        f'<li>Parts: {sym}{m_parts:,.2f}</li>'
+        f'</ul>'
+        f'<p style="margin:0;font-size:13px;color:#64748b">Full breakdown available in the Executive Dashboard.</p>'
+        f'</td></tr></table>'
+    )
+    err = await send_email(to=to, subject=f"{(ws or {}).get('name') or 'FleetIntel'} — {month_name} fleet cost summary", html=html)
+    if err:
+        raise HTTPException(status_code=502, detail=f"Email failed to send: {err}")
+    return {"sent": True, "to": to, "month": month_name}
 
 # --- Parts inventory ---
 PART_COLS = {"name", "sku", "category", "stock", "reorder_point", "unit_cost", "supplier", "supplier_email"}
