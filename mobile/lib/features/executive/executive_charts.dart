@@ -127,11 +127,12 @@ class TrendLegend extends StatelessWidget {
 /// stroked-circle approach, no new package needed. `slices` items need name/value/pct keys (matching
 /// the ytd_breakdown/breakdown shape every executive-dashboard endpoint already returns).
 class CostDonut extends StatelessWidget {
-  const CostDonut({super.key, required this.slices, required this.total, required this.currency, this.centerLabel = 'TOTAL'});
+  const CostDonut({super.key, required this.slices, required this.total, required this.currency, this.centerLabel = 'TOTAL', this.onTapCategory});
   final List<dynamic> slices;
   final double total;
   final String currency;
   final String centerLabel;
+  final ValueChanged<String>? onTapCategory;
 
   @override
   Widget build(BuildContext context) {
@@ -161,23 +162,34 @@ class CostDonut extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               for (final s in slices)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(width: 10, height: 10, decoration: BoxDecoration(color: kCostCategoryColors[(s['name'] as String).toLowerCase()] ?? AppColors.primary, borderRadius: BorderRadius.circular(3))),
-                          const SizedBox(width: 6),
-                          Expanded(child: Text(s['name'] as String, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: AppColors.ink, fontWeight: FontWeight.w700))),
-                        ],
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(left: 16, top: 1),
-                        child: Text('${s['pct']}% · ${formatMoney((s['value'] as num?) ?? 0, currency)}', style: const TextStyle(fontSize: 11, color: AppColors.muted, fontWeight: FontWeight.w600)),
-                      ),
-                    ],
+                GestureDetector(
+                  onTap: onTapCategory == null ? null : () => onTapCategory!(s['name'] as String),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(width: 10, height: 10, decoration: BoxDecoration(color: kCostCategoryColors[(s['name'] as String).toLowerCase()] ?? AppColors.primary, borderRadius: BorderRadius.circular(3))),
+                                  const SizedBox(width: 6),
+                                  Expanded(child: Text(s['name'] as String, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: AppColors.ink, fontWeight: FontWeight.w700))),
+                                ],
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.only(left: 16, top: 1),
+                                child: Text('${s['pct']}% · ${formatMoney((s['value'] as num?) ?? 0, currency)}', style: const TextStyle(fontSize: 11, color: AppColors.muted, fontWeight: FontWeight.w600)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (onTapCategory != null) const Icon(Icons.chevron_right, size: 16, color: AppColors.muted),
+                      ],
+                    ),
                   ),
                 ),
             ],
