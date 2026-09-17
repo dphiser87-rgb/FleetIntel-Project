@@ -7,6 +7,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/fleet_button.dart';
 import '../../core/widgets/fleet_card.dart';
 import '../../core/widgets/status_badge.dart';
+import 'workshop_finance_board_view.dart';
 import 'workshop_ui.dart';
 
 const _kColumns = [
@@ -39,7 +40,9 @@ class _WorkshopBoardScreenState extends ConsumerState<WorkshopBoardScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+    // Finance renders WorkshopFinanceBoardView instead (see build()), which does its own loading --
+    // skip fetching job-board data it'll never display.
+    if (ref.read(authControllerProvider).user?['role'] != 'finance') _load();
   }
 
   Future<void> _load() async {
@@ -83,6 +86,14 @@ class _WorkshopBoardScreenState extends ConsumerState<WorkshopBoardScreen> {
     final text = Theme.of(context).textTheme;
     final colors = Theme.of(context).colorScheme;
     final visible = _filter == 'all' ? _jobs : _jobs.where((j) => j['status'] == _filter).toList();
+
+    // Finance's job is reviewing the financial workflow workshop activity generates (quotes needing a
+    // decision, POs awaiting payment) -- not tracking job status the way mechanics/workshop_head do,
+    // so it gets a dedicated view instead of this board with a relabeled subtitle. Every other role's
+    // board is unchanged.
+    if (role == 'finance') {
+      return const Scaffold(body: WorkshopFinanceBoardView());
+    }
 
     return Scaffold(
       body: SafeArea(
