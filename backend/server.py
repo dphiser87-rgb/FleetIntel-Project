@@ -3318,16 +3318,18 @@ def _exec_range_bounds(range_: str, now: datetime):
     return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0), 6, "This year"
 
 def _exec_period_phrase(range_: str):
-    """(in_phrase, prev_phrase) for narrating a period-over-period change in a cost insight, e.g.
-    "R3,461 {in_phrase} compared with R140 {prev_phrase}." -- kept separate from period_label (which
-    is a standalone noun phrase like "Last 3 months") since these need to read naturally inline."""
+    """(in_phrase, prev_phrase, vs_phrase) for narrating a period-over-period change in a cost insight,
+    e.g. "R3,461 {in_phrase} compared with R140 {prev_phrase}." plus a short "+2372% {vs_phrase}" impact
+    line -- kept separate from period_label (a standalone noun phrase like "Last 3 months") since these
+    need to read naturally inline. vs_phrase matches the mobile KPI tiles' own "vs last month" wording.
+    """
     if range_ == "month":
-        return "this month", "last month"
+        return "this month", "last month", "vs last month"
     if range_ == "3m":
-        return "in the last 3 months", "in the previous 3 months"
+        return "in the last 3 months", "in the previous 3 months", "vs previous 3 months"
     if range_ == "12m":
-        return "in the last 12 months", "in the previous 12 months"
-    return "in this period", "in the previous period"
+        return "in the last 12 months", "in the previous 12 months", "vs previous 12 months"
+    return "in this period", "in the previous period", "vs previous period"
 
 def _exec_previous_period_bounds(range_: str, period_start: datetime, now: datetime):
     """Start/end of the period immediately preceding [period_start, now) -- used for "vs previous
@@ -3546,8 +3548,16 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
                 out.append({"vehicle_id": vid, "name": v["name"], "value": round(val, 2)})
         return out
 
+    def _delta_label(delta):
+        # Mirrors the mobile KPI tiles' own formatting -- past 300%, a "17.1x" multiplier reads more
+        # clearly than a four-digit percentage (small-fleet test data routinely produces 1000%+ deltas).
+        abs_delta = abs(delta)
+        if abs_delta >= 300:
+            return f"{abs_delta / 100:.1f}×"
+        return f"{abs_delta:.0f}%"
+
     maint_by_vehicle, tyres_by_vehicle, parts_by_vehicle = _bucket_costs_by_vehicle(period_jobs)
-    in_phrase, prev_phrase = _exec_period_phrase(range_)
+    in_phrase, prev_phrase, vs_phrase = _exec_period_phrase(range_)
     for insight_id, label, cur, prev, vehicle_costs in [
         ("parts-spend-change", "Parts", y_parts, p_parts, parts_by_vehicle),
         ("maintenance-spend-change", "Maintenance", y_maint, p_maint, maint_by_vehicle),
@@ -3564,7 +3574,7 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
             "priority": "High" if abs(delta) >= 150 else "Medium",
             "title": f"{label} spend {'increased' if increased else 'decreased'} significantly",
             "message": f"{cur:,.0f} {in_phrase} compared with {prev:,.0f} {prev_phrase}.",
-            "impact": f"{'+' if increased else ''}{delta:.0f}% {prev_phrase}" if prev else f"New {label.lower()} spend {in_phrase}",
+            "impact": f"{'+' if increased else ''}{_delta_label(delta)} {vs_phrase}" if prev else f"New {label.lower()} spend {in_phrase}",
             "contributing_vehicles": _contributing_vehicles(vehicle_costs),
         })
 
