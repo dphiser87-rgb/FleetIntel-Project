@@ -68,6 +68,8 @@ class _WorkshopPosScreenState extends ConsumerState<WorkshopPosScreen> {
                       itemBuilder: (context, i) {
                         final po = _pos[i] as Map<String, dynamic>;
                         final meta = poStatusMeta(po['status'] as String? ?? 'po_issued');
+                        final supplierName = po['supplier_name'] as String?;
+                        final hasSupplier = supplierName != null && supplierName.isNotEmpty;
                         return Padding(
                           padding: const EdgeInsets.only(bottom: AppMetrics.spacingMd),
                           child: FleetCard(
@@ -84,10 +86,24 @@ class _WorkshopPosScreenState extends ConsumerState<WorkshopPosScreen> {
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Text(po['supplier'] as String? ?? 'Supplier TBC', style: text.bodySmall?.copyWith(color: AppColors.muted)),
+                                    if (hasSupplier || !canPay)
+                                      Text(hasSupplier ? supplierName : 'Supplier not assigned', style: text.bodySmall?.copyWith(color: AppColors.muted))
+                                    else
+                                      GestureDetector(
+                                        onTap: () => _showAssignSupplierSheet(context, po),
+                                        child: Text('Assign supplier', style: text.bodySmall?.copyWith(color: AppColors.primary, fontWeight: FontWeight.w700)),
+                                      ),
                                     Text(formatMoney(po['amount'] as num?, _currency), style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
                                   ],
                                 ),
+                                if (hasSupplier && canPay)
+                                  GestureDetector(
+                                    onTap: () => _showAssignSupplierSheet(context, po),
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Text('Change supplier', style: text.bodySmall?.copyWith(color: AppColors.primary, fontWeight: FontWeight.w700, fontSize: 11)),
+                                    ),
+                                  ),
                                 if (po['status'] == 'paid' && po['paid_at'] != null)
                                   Text('Paid on ${(po['paid_at'] as String).split('T').first}', style: text.bodySmall?.copyWith(color: AppColors.muted))
                                 else if (canPay) ...[
@@ -120,6 +136,109 @@ class _WorkshopPosScreenState extends ConsumerState<WorkshopPosScreen> {
       builder: (_) => _PayModal(po: po, onPaid: _load),
     );
   }
+
+  void _showAssignSupplierSheet(BuildContext context, Map<String, dynamic> po) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surfaceElevated,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(AppMetrics.radiusLarge))),
+      builder: (_) => _AssignSupplierSheet(po: po, onAssigned: _load),
+    );
+  }
+}
+
+class _AssignSupplierSheet extends ConsumerStatefulWidget {
+  const _AssignSupplierSheet({required this.po, required this.onAssigned});
+  final Map<String, dynamic> po;
+  final VoidCallback onAssigned;
+
+  @override
+  ConsumerState<_AssignSupplierSheet> createState() => _AssignSupplierSheetState();
+}
+
+class _AssignSupplierSheetState extends ConsumerState<_AssignSupplierSheet> {
+  bool _loading = true;
+  List<dynamic> _suppliers = [];
+  String? _assigning;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final dio = ref.read(apiClientProvider).dio;
+      final r = await dio.get('/suppliers');
+      setState(() {
+        _suppliers = r.data as List;
+        _loading = false;
+      });
+    } catch (_) {
+      setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _assign(String supplierId) async {
+    setState(() => _assigning = supplierId);
+    try {
+      final dio = ref.read(apiClientProvider).dio;
+      await dio.patch('/purchase-orders/${widget.po['id']}/supplier', data: {'supplier_id': supplierId});
+      if (mounted) {
+        Navigator.of(context).pop();
+        widget.onAssigned();
+      }
+    } catch (_) {
+      if (mounted) setState(() => _assigning = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(AppMetrics.spacingLg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Assign supplier', style: text.headlineSmall),
+            const SizedBox(height: 4),
+            Text('For ${widget.po['po_number']}', style: text.bodySmall?.copyWith(color: AppColors.muted)),
+            const SizedBox(height: AppMetrics.spacingMd),
+            if (_loading)
+              const Padding(padding: EdgeInsets.symmetric(vertical: AppMetrics.spacingXl), child: Center(child: CircularProgressIndicator()))
+            else if (_suppliers.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppMetrics.spacingMd),
+                child: Text('No suppliers yet -- add one from the Suppliers screen first.', style: text.bodyMedium?.copyWith(color: AppColors.muted)),
+              )
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 360),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _suppliers.length,
+                  itemBuilder: (context, i) {
+                    final s = _suppliers[i] as Map<String, dynamic>;
+                    final id = s['id'] as String;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(s['name'] as String? ?? '', style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+                      trailing: _assigning == id ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.chevron_right, color: AppColors.muted),
+                      onTap: _assigning != null ? null : () => _assign(id),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _PayModal extends ConsumerStatefulWidget {
@@ -133,7 +252,6 @@ class _PayModal extends ConsumerStatefulWidget {
 
 class _PayModalState extends ConsumerState<_PayModal> {
   final _picker = ImagePicker();
-  final _supplierController = TextEditingController();
   String? _proofBase64;
   String? _proofFileName;
   bool _uploading = false;
@@ -202,8 +320,6 @@ class _PayModalState extends ConsumerState<_PayModal> {
           Text('Mark ${widget.po['po_number']} paid', style: text.headlineSmall),
           const SizedBox(height: 4),
           Text('Attach proof of payment (image) to close the PO.', style: text.bodySmall?.copyWith(color: AppColors.muted)),
-          const SizedBox(height: AppMetrics.spacingMd),
-          TextField(controller: _supplierController, decoration: const InputDecoration(hintText: 'e.g. Bosch Auto Parts SA')),
           const SizedBox(height: AppMetrics.spacingMd),
           Text('PROOF OF PAYMENT', style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 1)),
           const SizedBox(height: AppMetrics.spacingSm),

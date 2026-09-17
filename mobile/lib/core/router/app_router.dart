@@ -19,6 +19,7 @@ import '../../features/workshop/workshop_job_detail_screen.dart';
 import '../../features/workshop/workshop_pos_screen.dart';
 import '../../features/workshop/workshop_queue_screen.dart';
 import '../../features/workshop/workshop_requisition_screen.dart';
+import '../../features/workshop/workshop_suppliers_screen.dart';
 import '../../features/workshop/workshop_welcome_screen.dart';
 import '../auth/auth_state.dart';
 
@@ -68,6 +69,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/workshop/pos', builder: (context, state) => const WorkshopPosScreen()),
       GoRoute(path: '/workshop/queue', builder: (context, state) => const WorkshopQueueScreen()),
       GoRoute(path: '/workshop/cost-rollup', builder: (context, state) => const WorkshopCostRollupScreen()),
+      GoRoute(path: '/workshop/suppliers', builder: (context, state) => const WorkshopSuppliersScreen()),
       GoRoute(path: '/executive/welcome', builder: (context, state) => const ExecutiveWelcomeScreen()),
       GoRoute(path: '/executive', builder: (context, state) => const ExecutiveDashboardScreen()),
       GoRoute(

@@ -130,8 +130,14 @@ class _WorkshopFinanceBoardViewState extends ConsumerState<WorkshopFinanceBoardV
                                 Expanded(child: _FinanceActionTile(icon: Icons.fact_check_outlined, label: 'My approvals', badge: _myApprovals, onTap: () => context.push('/workshop/queue'))),
                                 const SizedBox(width: AppMetrics.spacingSm),
                                 Expanded(child: _FinanceActionTile(icon: Icons.receipt_long_outlined, label: 'Purchase orders', badge: _purchaseOrders, onTap: () => context.push('/workshop/pos'))),
-                                const SizedBox(width: AppMetrics.spacingSm),
+                              ],
+                            ),
+                            const SizedBox(height: AppMetrics.spacingSm),
+                            Row(
+                              children: [
                                 Expanded(child: _FinanceActionTile(icon: Icons.bar_chart_outlined, label: 'Spend overview', onTap: () => context.push('/workshop/cost-rollup'))),
+                                const SizedBox(width: AppMetrics.spacingSm),
+                                Expanded(child: _FinanceActionTile(icon: Icons.storefront_outlined, label: 'Suppliers', onTap: () => context.push('/workshop/suppliers'))),
                               ],
                             ),
                             const SizedBox(height: AppMetrics.spacingMd),
