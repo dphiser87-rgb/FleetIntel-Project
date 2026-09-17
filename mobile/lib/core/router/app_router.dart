@@ -27,7 +27,7 @@ import '../auth/auth_state.dart';
 /// reference's WORKSHOP_ROLES exactly, using this backend's actual role strings (server.py's
 /// OPS_ROLES/FINANCE_ROLES/REQUISITION_APPROVER_ROLES constants), not the reference's Mongo-prototype
 /// shorthand ("ops" -> "operations_manager", etc).
-const _kWorkshopRoles = {'mechanic', 'workshop_head', 'operations_manager', 'finance', 'admin'};
+const _kWorkshopRoles = {'mechanic', 'workshop_manager', 'operations_manager', 'finance', 'admin'};
 
 /// Roles that land on the Executive dashboard instead of the driver flow. `finance`/`admin` also have
 /// read access to this module per the backend's role presets, but they already land on `/workshop`

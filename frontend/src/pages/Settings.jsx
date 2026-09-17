@@ -369,7 +369,7 @@ export default function Settings() {
                 <option value="">No override — Workshop Manager only</option>
                 <option value="operations_manager">Operations Manager</option>
                 <option value="finance">Finance</option>
-                <option value="workshop_head">Workshop Head</option>
+                <option value="workshop_manager">Workshop Manager</option>
               </select>
             </div>
 

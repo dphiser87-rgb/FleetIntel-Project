@@ -60,6 +60,13 @@ class _WorkshopSuppliersScreenState extends ConsumerState<WorkshopSuppliersScree
     );
   }
 
+  // Creating a supplier is Finance's job alone -- workshop_manager/operations_manager get read access
+  // (they're the ones actually contacting suppliers for quotations) but not the ability to add one.
+  bool get _canCreate {
+    final role = ref.read(authControllerProvider).user?['role'] as String?;
+    return role == 'finance' || role == 'admin';
+  }
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
@@ -116,11 +123,13 @@ class _WorkshopSuppliersScreenState extends ConsumerState<WorkshopSuppliersScree
                           ),
                   ),
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        onPressed: _showAddSupplierSheet,
-        child: const Icon(Icons.add, color: AppColors.primaryInk),
-      ),
+      floatingActionButton: _canCreate
+          ? FloatingActionButton(
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              onPressed: _showAddSupplierSheet,
+              child: const Icon(Icons.add, color: AppColors.primaryInk),
+            )
+          : null,
     );
   }
 }

@@ -41,7 +41,7 @@ const Map<String, _RoleCopy> _kRoleCopy = {
     statLabel: 'Open jobs', waitingLabel: 'Needs attention',
     primaryCta: 'Go to Workshop Board', secondaryCta: 'See what needs my attention',
   ),
-  'workshop_head': _RoleCopy(
+  'workshop_manager': _RoleCopy(
     eyebrow: 'WORKSHOP MODULE', title: 'Keep the workshop moving.',
     copy: 'Manage jobs, approve parts requests and keep vehicles moving through the workshop.',
     statLabel: 'Open jobs', waitingLabel: 'Needs attention',

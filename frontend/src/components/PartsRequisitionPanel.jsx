@@ -11,7 +11,7 @@ const STATUS_COLOR = {
 };
 
 // Mirrors QuoteApprovalPanel.jsx's shape (read-only line table + decision block). `canDecide` is
-// computed by the caller from REQUISITION_APPROVER_ROLES (workshop_head/admin), same pattern as quotes.
+// computed by the caller from REQUISITION_APPROVER_ROLES (workshop_manager/admin), same pattern as quotes.
 export default function PartsRequisitionPanel({ requisition, canDecide, onDecide }) {
   const { currency } = useCurrency();
   const [reason, setReason] = useState("");

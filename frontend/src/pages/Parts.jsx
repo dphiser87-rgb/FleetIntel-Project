@@ -8,7 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import PartsRequisitionPanel from "@/components/PartsRequisitionPanel";
 import { usePolling } from "@/hooks/use-polling";
 
-const REQUISITION_APPROVER_ROLES = ["workshop_head", "admin"];
+const REQUISITION_APPROVER_ROLES = ["workshop_manager", "admin"];
 const REQUISITION_STATUS_LABEL = { pending_approval: "Pending", approved: "Approved", rejected: "Rejected" };
 const REQUISITION_STATUS_COLOR = {
   pending_approval: "text-[#FFCC00] border-[#FFCC00]",

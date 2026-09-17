@@ -185,7 +185,7 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
     final job = widget.job;
     final status = job['status'] as String? ?? 'pending';
     final priority = job['priority'] as String? ?? 'medium';
-    final canMove = widget.role == 'mechanic' || widget.role == 'workshop_head' || widget.role == 'admin';
+    final canMove = widget.role == 'mechanic' || widget.role == 'workshop_manager' || widget.role == 'admin';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -292,7 +292,7 @@ class _PartsTab extends ConsumerWidget {
   final VoidCallback onChanged;
 
   bool get _hasOpenReq => requisitions.any((r) => r['status'] == 'pending_approval');
-  bool get _canRequest => role == 'mechanic' || role == 'workshop_head' || role == 'admin';
+  bool get _canRequest => role == 'mechanic' || role == 'workshop_manager' || role == 'admin';
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -387,7 +387,7 @@ class _RequisitionCard extends ConsumerWidget {
     final status = req['status'] as String? ?? 'pending_approval';
     final meta = requisitionStatusMeta(status);
     final items = (req['items'] as List?) ?? [];
-    final canDecide = status == 'pending_approval' && (role == 'workshop_head' || role == 'admin');
+    final canDecide = status == 'pending_approval' && (role == 'workshop_manager' || role == 'admin');
     final total = items.fold<double>(0, (s, i) => s + ((i['qty_requested'] ?? 0) as num) * ((i['unit_cost'] ?? 0) as num));
 
     return Padding(
@@ -711,7 +711,7 @@ class _PhotosTabState extends ConsumerState<_PhotosTab> {
   final _picker = ImagePicker();
   bool _uploading = false;
 
-  bool get _canAdd => widget.role == 'mechanic' || widget.role == 'workshop_head' || widget.role == 'admin';
+  bool get _canAdd => widget.role == 'mechanic' || widget.role == 'workshop_manager' || widget.role == 'admin';
 
   Future<void> _addPhoto() async {
     final XFile? file = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 60);
