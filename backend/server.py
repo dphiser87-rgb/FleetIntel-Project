@@ -3386,6 +3386,36 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         tyres = sum(_f(m.get("actual_cost")) for m in rows if m.get("category") == "tyres")
         return round(maintenance, 2), round(tyres, 2), round(parts_c, 2)
 
+    def _job_cost(m):
+        # Mirrors _bucket_costs' own per-job definition (labor_cost + parts_cost, or actual_cost for a
+        # tyre job) rather than the raw `actual_cost` column, which can also include external_cost and
+        # so doesn't always equal labor_cost + parts_cost -- using actual_cost here made vehicle/
+        # group/supplier breakdowns sum to a different total than the period's own KPI/breakdown totals.
+        if m.get("category") == "tyres":
+            return _f(m.get("actual_cost"))
+        return _f(m.get("labor_cost")) + _f(m.get("parts_cost"))
+
+    def _bucket_costs_by_vehicle(rows):
+        maint_v, tyres_v, parts_v = {}, {}, {}
+        for m in rows:
+            vid = m.get("vehicle_id")
+            if not vid:
+                continue
+            maint_v[vid] = maint_v.get(vid, 0) + _f(m.get("labor_cost"))
+            parts_v[vid] = parts_v.get(vid, 0) + _f(m.get("parts_cost"))
+            if m.get("category") == "tyres":
+                tyres_v[vid] = tyres_v.get(vid, 0) + _f(m.get("actual_cost"))
+        return maint_v, tyres_v, parts_v
+
+    def _top_by_value(vehicle_costs, n=6):
+        ranked = sorted(vehicle_costs.items(), key=lambda kv: kv[1], reverse=True)
+        out = []
+        for vid, val in ranked[:n]:
+            v = vmap.get(vid)
+            if v and val > 0:
+                out.append({"vehicle_id": vid, "name": v["name"], "value": round(val, 2)})
+        return out
+
     # --- KPI tiles: this month vs last month ---
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     last_month_end = month_start - timedelta(seconds=1)
@@ -3440,6 +3470,14 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         {"name": "Tyres", "value": y_tyres, "pct": round(y_tyres / ytd_total * 100, 1) if ytd_total else 0},
         {"name": "Parts", "value": y_parts, "pct": round(y_parts / ytd_total * 100, 1) if ytd_total else 0},
     ]
+    # Per-category top vehicles, so tapping a Cost Breakdown category can drill straight into which
+    # vehicles/jobs made it up instead of leaving the executive to guess.
+    maint_by_vehicle, tyres_by_vehicle, parts_by_vehicle = _bucket_costs_by_vehicle(period_jobs)
+    breakdown_vehicles = {
+        "Maintenance": _top_by_value(maint_by_vehicle),
+        "Tyres": _top_by_value(tyres_by_vehicle),
+        "Parts": _top_by_value(parts_by_vehicle),
+    }
 
     # --- Period-scoped KPIs for the mobile Executive dashboard (additive -- the original "kpis" keys
     # above are calendar-month-based and stay untouched for the web app, which never selects a range).
@@ -3471,7 +3509,7 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
     vcost = {}
     for m in period_jobs:
         if m.get("vehicle_id"):
-            vcost[m["vehicle_id"]] = vcost.get(m["vehicle_id"], 0) + _f(m.get("actual_cost"))
+            vcost[m["vehicle_id"]] = vcost.get(m["vehicle_id"], 0) + _job_cost(m)
     top_vehicles = sorted(
         [{"vehicle_id": vid, "name": vmap[vid]["name"], "value": round(c, 2)} for vid, c in vcost.items() if vid in vmap],
         key=lambda x: x["value"], reverse=True,
@@ -3486,7 +3524,7 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         region = "Ungrouped"
         if v and v.get("group_id") and gmap.get(v["group_id"], {}).get("region"):
             region = gmap[v["group_id"]]["region"]
-        region_cost[region] = region_cost.get(region, 0) + _f(m.get("actual_cost"))
+        region_cost[region] = region_cost.get(region, 0) + _job_cost(m)
     by_region = sorted(
         [{"region": r, "value": round(c, 2)} for r, c in region_cost.items()],
         key=lambda x: x["value"], reverse=True,
@@ -3503,18 +3541,20 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         gname = "Ungrouped"
         if v and v.get("group_id") and gmap.get(v["group_id"], {}).get("name"):
             gname = gmap[v["group_id"]]["name"]
-        group_cost[gname] = group_cost.get(gname, 0) + _f(m.get("actual_cost"))
+        group_cost[gname] = group_cost.get(gname, 0) + _job_cost(m)
     by_group = sorted(
         [{"name": g, "value": round(c, 2)} for g, c in group_cost.items()],
         key=lambda x: x["value"], reverse=True,
     )
     has_fleet_groups = len(groups) > 0
 
-    # --- Top suppliers by spend within the selected period (from maintenance.vendor; "Unknown" for blanks) ---
+    # --- Top suppliers by spend within the selected period (from maintenance.vendor; "Supplier not
+    # recorded" for blanks -- flagged as a data-quality gap rather than "Unknown", which read like
+    # FleetHub itself didn't know, not that the workspace never captured it) ---
     supplier_cost = {}
     for m in period_jobs:
-        supplier = (m.get("vendor") or "").strip() or "Unknown"
-        supplier_cost[supplier] = supplier_cost.get(supplier, 0) + _f(m.get("actual_cost"))
+        supplier = (m.get("vendor") or "").strip() or "Supplier not recorded"
+        supplier_cost[supplier] = supplier_cost.get(supplier, 0) + _job_cost(m)
     top_suppliers = sorted(
         [{"supplier": s, "value": round(c, 2)} for s, c in supplier_cost.items()],
         key=lambda x: x["value"], reverse=True,
@@ -3522,31 +3562,6 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
 
     # --- AI Cost Intelligence Insights (rule-based, no LLM) ---
     insights = []
-
-    # 1. Category spend change vs the previous equivalent period (period-scoped, so it reflects
-    # whatever range is selected rather than a fixed calendar month/quarter) -- each insight names the
-    # vehicles that actually drove the change, so an executive doesn't just see "parts spend is up",
-    # they see which vehicles to go look at.
-    def _bucket_costs_by_vehicle(rows):
-        maint_v, tyres_v, parts_v = {}, {}, {}
-        for m in rows:
-            vid = m.get("vehicle_id")
-            if not vid:
-                continue
-            maint_v[vid] = maint_v.get(vid, 0) + _f(m.get("labor_cost"))
-            parts_v[vid] = parts_v.get(vid, 0) + _f(m.get("parts_cost"))
-            if m.get("category") == "tyres":
-                tyres_v[vid] = tyres_v.get(vid, 0) + _f(m.get("actual_cost"))
-        return maint_v, tyres_v, parts_v
-
-    def _contributing_vehicles(vehicle_costs):
-        ranked = sorted(vehicle_costs.items(), key=lambda kv: kv[1], reverse=True)
-        out = []
-        for vid, val in ranked[:3]:
-            v = vmap.get(vid)
-            if v and val > 0:
-                out.append({"vehicle_id": vid, "name": v["name"], "value": round(val, 2)})
-        return out
 
     def _delta_label(delta):
         # Mirrors the mobile KPI tiles' own formatting -- past 300%, a "17.1x" multiplier reads more
@@ -3556,7 +3571,12 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
             return f"{abs_delta / 100:.1f}×"
         return f"{abs_delta:.0f}%"
 
-    maint_by_vehicle, tyres_by_vehicle, parts_by_vehicle = _bucket_costs_by_vehicle(period_jobs)
+    # 1. Category spend change vs the previous equivalent period (period-scoped, so it reflects
+    # whatever range is selected rather than a fixed calendar month/quarter) -- each insight names the
+    # vehicles that actually drove the change, so an executive doesn't just see "parts spend is up",
+    # they see which vehicles to go look at. Framed as a neutral "movement" (not success/warning by
+    # direction) -- a spend decrease isn't automatically good (e.g. skipped tyre replacements), so this
+    # only reports that something changed and prompts a review, rather than passing judgment on it.
     in_phrase, prev_phrase, vs_phrase = _exec_period_phrase(range_)
     for insight_id, label, cur, prev, vehicle_costs in [
         ("parts-spend-change", "Parts", y_parts, p_parts, parts_by_vehicle),
@@ -3570,12 +3590,13 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         increased = cur >= prev
         insights.append({
             "id": insight_id,
-            "type": "warning" if increased else "success",
+            "kind": "movement",
             "priority": "High" if abs(delta) >= 150 else "Medium",
-            "title": f"{label} spend {'increased' if increased else 'decreased'} significantly",
+            "title": f"{label} spend changed significantly {'↑' if increased else '↓'}",
             "message": f"{cur:,.0f} {in_phrase} compared with {prev:,.0f} {prev_phrase}.",
             "impact": f"{'+' if increased else ''}{_delta_label(delta)} {vs_phrase}" if prev else f"New {label.lower()} spend {in_phrase}",
-            "contributing_vehicles": _contributing_vehicles(vehicle_costs),
+            "cta": "Review drivers of change",
+            "contributing_vehicles": _top_by_value(vehicle_costs, n=3),
         })
 
     # 2. High-cost vehicle vs fleet average
@@ -3584,7 +3605,7 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         worst = top_vehicles[0]
         if fleet_avg > 0 and worst["value"] > fleet_avg * 1.5:
             insights.append({
-                "id": "high-cost-vehicle", "type": "alert", "priority": "High",
+                "id": "high-cost-vehicle", "kind": "anomaly", "priority": "High",
                 "title": "High Cost Vehicle",
                 "message": f"{worst['name']} has cost {round((worst['value'] / fleet_avg - 1) * 100)}% more than the fleet average this period.",
                 "impact": f"+{round(worst['value'] - fleet_avg):,} vs average",
@@ -3597,7 +3618,7 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
     dead_value = sum(_f(p.get("stock")) * _f(p.get("unit_cost")) for p in dead_stock)
     if dead_value > 0:
         insights.append({
-            "id": "dead-stock", "type": "success", "priority": "Low",
+            "id": "dead-stock", "kind": "opportunity", "priority": "Low",
             "title": "Cost Reduction Opportunity",
             "message": f"{len(dead_stock)} part{'s' if len(dead_stock) != 1 else ''} in inventory have had no recorded movement in 180+ days.",
             "impact": f"{round(dead_value):,} recoverable",
@@ -3613,6 +3634,7 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         "period_kpis": period_kpis,
         "monthly_trend": monthly_trend,
         "ytd_breakdown": ytd_breakdown,
+        "breakdown_vehicles": breakdown_vehicles,
         "top_vehicles": top_vehicles,
         "by_region": by_region,
         "by_group": by_group,
