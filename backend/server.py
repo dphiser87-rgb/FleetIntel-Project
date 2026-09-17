@@ -3034,6 +3034,65 @@ async def workshop_cost_rollup(user: dict = Depends(get_current_user)):
     return {"currency": (await fetch_one("select currency from workspaces where id = :id", id=ws) or {}).get("currency") or "USD",
             "vehicles": vehicles, "grand_total": grand_total}
 
+@api.get("/workshop/finance-board")
+async def workshop_finance_board(user: dict = Depends(require_role(*FINANCE_ROLES))):
+    """Finance's own view of workshop spend: the financial workflow (quotes awaiting a Finance
+    decision, purchase orders awaiting payment or already paid) rather than the raw job board every
+    other workshop role sees. A quote's approval and its PO's issuance happen atomically inside
+    decide_quote() (same file) -- there's no "approved but no PO yet" state to model separately,
+    "po_issued" already means the quote was approved, matching quoteStatusMeta()'s existing
+    "Approved · PO issued" label on the mobile job-detail screen."""
+    ws = user["workspace_id"]
+    quotes = await fetch_all(
+        "select q.id, q.maintenance_id, q.items, q.total, q.submitted_by_name, q.submitted_at, "
+        "m.title as job_title, v.name as vehicle_name "
+        "from quotes q join maintenance m on m.id = q.maintenance_id "
+        "left join vehicles v on v.id = m.vehicle_id "
+        "where q.workspace_id = :ws and q.stage = 'pending_finance' order by q.submitted_at",
+        ws=ws,
+    )
+    pos = await fetch_all(
+        "select po.id, po.po_number, po.maintenance_id, po.supplier, po.amount, po.status, "
+        "po.created_at, po.paid_at, m.title as job_title, v.name as vehicle_name, q.submitted_by_name "
+        "from purchase_orders po "
+        "left join maintenance m on m.id = po.maintenance_id "
+        "left join vehicles v on v.id = m.vehicle_id "
+        "left join quotes q on q.id = po.quote_id "
+        "where po.workspace_id = :ws order by po.created_at desc",
+        ws=ws,
+    )
+
+    items = []
+    for q in quotes:
+        line_items = q["items"] or []
+        parts_total = sum(float(it.get("qty") or 0) * float(it.get("unit_cost") or 0) for it in line_items if (it.get("type") or "").lower().startswith("part"))
+        labour_total = sum(float(it.get("qty") or 0) * float(it.get("unit_cost") or 0) for it in line_items if (it.get("type") or "").lower().startswith("labo"))
+        items.append({
+            "id": str(q["id"]), "kind": "quote", "financial_status": "awaiting_approval",
+            "job_id": str(q["maintenance_id"]), "job_title": q["job_title"], "vehicle_name": q["vehicle_name"],
+            "amount": round(float(q["total"] or 0), 2),
+            "parts_total": round(parts_total, 2), "labour_total": round(labour_total, 2),
+            "supplier": None, "requested_by": q["submitted_by_name"], "date": q["submitted_at"],
+            "po_number": None,
+        })
+    for po in pos:
+        items.append({
+            "id": str(po["id"]), "kind": "po",
+            "financial_status": "paid" if po["status"] == "paid" else "po_issued",
+            "job_id": str(po["maintenance_id"]) if po["maintenance_id"] else None,
+            "job_title": po["job_title"], "vehicle_name": po["vehicle_name"],
+            "amount": round(float(po["amount"] or 0), 2),
+            "parts_total": None, "labour_total": None,
+            "supplier": po["supplier"] or None, "requested_by": po["submitted_by_name"],
+            "date": po["paid_at"] or po["created_at"], "po_number": po["po_number"],
+        })
+
+    items.sort(key=lambda x: x["date"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return {
+        "stats": {"my_approvals": len(quotes), "purchase_orders": len(pos)},
+        "items": items,
+    }
+
 # --- Notifications ---
 @api.get("/notifications")
 async def list_notifications(user: dict = Depends(get_current_user)):
