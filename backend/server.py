@@ -3317,6 +3317,18 @@ def _exec_range_bounds(range_: str, now: datetime):
         return datetime(2000, 1, 1, tzinfo=timezone.utc), 12, "All time"
     return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0), 6, "This year"
 
+def _exec_period_phrase(range_: str):
+    """(in_phrase, prev_phrase) for narrating a period-over-period change in a cost insight, e.g.
+    "R3,461 {in_phrase} compared with R140 {prev_phrase}." -- kept separate from period_label (which
+    is a standalone noun phrase like "Last 3 months") since these need to read naturally inline."""
+    if range_ == "month":
+        return "this month", "last month"
+    if range_ == "3m":
+        return "in the last 3 months", "in the previous 3 months"
+    if range_ == "12m":
+        return "in the last 12 months", "in the previous 12 months"
+    return "in this period", "in the previous period"
+
 def _exec_previous_period_bounds(range_: str, period_start: datetime, now: datetime):
     """Start/end of the period immediately preceding [period_start, now) -- used for "vs previous
     period" KPI deltas. Calendar-month for "month" (so it reads as "vs last calendar month"); a
@@ -3509,37 +3521,54 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
     # --- AI Cost Intelligence Insights (rule-based, no LLM) ---
     insights = []
 
-    # 1. Cost spike vs trailing average
-    trailing = [b["total"] for b in monthly_trend[:-1]]  # exclude current month
-    if trailing:
-        avg = sum(trailing) / len(trailing)
-        current_total = monthly_trend[-1]["total"]
-        if avg > 0 and current_total > avg * 1.2:
-            insights.append({
-                "id": "cost-spike", "type": "warning", "priority": "High",
-                "title": "Maintenance Spend Spike",
-                "message": f"This month's total maintenance spend is {round((current_total / avg - 1) * 100)}% above the trailing 6-month average of {round(avg):,}.",
-                "impact": f"+{round(current_total - avg):,} vs average",
-            })
+    # 1. Category spend change vs the previous equivalent period (period-scoped, so it reflects
+    # whatever range is selected rather than a fixed calendar month/quarter) -- each insight names the
+    # vehicles that actually drove the change, so an executive doesn't just see "parts spend is up",
+    # they see which vehicles to go look at.
+    def _bucket_costs_by_vehicle(rows):
+        maint_v, tyres_v, parts_v = {}, {}, {}
+        for m in rows:
+            vid = m.get("vehicle_id")
+            if not vid:
+                continue
+            maint_v[vid] = maint_v.get(vid, 0) + _f(m.get("labor_cost"))
+            parts_v[vid] = parts_v.get(vid, 0) + _f(m.get("parts_cost"))
+            if m.get("category") == "tyres":
+                tyres_v[vid] = tyres_v.get(vid, 0) + _f(m.get("actual_cost"))
+        return maint_v, tyres_v, parts_v
 
-    # 2. Category cost leader (trailing 90 days)
-    cutoff90 = now - timedelta(days=90)
-    recent = [m for m in maint if _dt(m) >= cutoff90]
-    cat_totals = {}
-    for m in recent:
-        cat = m.get("category") or "general"
-        cat_totals[cat] = cat_totals.get(cat, 0) + _f(m.get("actual_cost"))
-    if cat_totals:
-        top_cat, top_cat_val = max(cat_totals.items(), key=lambda kv: kv[1])
-        if top_cat_val > 0:
-            insights.append({
-                "id": "category-leader", "type": "info", "priority": "Medium",
-                "title": "Top Cost Category",
-                "message": f"\"{top_cat.title()}\" is the highest-cost maintenance category this quarter.",
-                "impact": f"{round(top_cat_val):,} this quarter",
-            })
+    def _contributing_vehicles(vehicle_costs):
+        ranked = sorted(vehicle_costs.items(), key=lambda kv: kv[1], reverse=True)
+        out = []
+        for vid, val in ranked[:3]:
+            v = vmap.get(vid)
+            if v and val > 0:
+                out.append({"vehicle_id": vid, "name": v["name"], "value": round(val, 2)})
+        return out
 
-    # 3. High-cost vehicle vs fleet average
+    maint_by_vehicle, tyres_by_vehicle, parts_by_vehicle = _bucket_costs_by_vehicle(period_jobs)
+    in_phrase, prev_phrase = _exec_period_phrase(range_)
+    for insight_id, label, cur, prev, vehicle_costs in [
+        ("parts-spend-change", "Parts", y_parts, p_parts, parts_by_vehicle),
+        ("maintenance-spend-change", "Maintenance", y_maint, p_maint, maint_by_vehicle),
+        ("tyres-spend-change", "Tyres", y_tyres, p_tyres, tyres_by_vehicle),
+    ]:
+        delta = _delta_pct(cur, prev)
+        significant = (prev > 0 and abs(delta) >= 50) or (prev == 0 and cur >= 200)
+        if not significant:
+            continue
+        increased = cur >= prev
+        insights.append({
+            "id": insight_id,
+            "type": "warning" if increased else "success",
+            "priority": "High" if abs(delta) >= 150 else "Medium",
+            "title": f"{label} spend {'increased' if increased else 'decreased'} significantly",
+            "message": f"{cur:,.0f} {in_phrase} compared with {prev:,.0f} {prev_phrase}.",
+            "impact": f"{'+' if increased else ''}{delta:.0f}% {prev_phrase}" if prev else f"New {label.lower()} spend {in_phrase}",
+            "contributing_vehicles": _contributing_vehicles(vehicle_costs),
+        })
+
+    # 2. High-cost vehicle vs fleet average
     if len(top_vehicles) >= 2:
         fleet_avg = sum(vcost.values()) / len(vcost) if vcost else 0
         worst = top_vehicles[0]
@@ -3549,9 +3578,10 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
                 "title": "High Cost Vehicle",
                 "message": f"{worst['name']} has cost {round((worst['value'] / fleet_avg - 1) * 100)}% more than the fleet average this period.",
                 "impact": f"+{round(worst['value'] - fleet_avg):,} vs average",
+                "contributing_vehicles": [{"vehicle_id": worst["vehicle_id"], "name": worst["name"], "value": worst["value"]}],
             })
 
-    # 4. Recoverable / dead-stock parts — stock on hand with no movement in the last 180 days
+    # 3. Recoverable / dead-stock parts — stock on hand with no movement in the last 180 days
     moved_recently = {ph["part_id"] for ph in parts_history if (ph.get("at") or now) >= now - timedelta(days=180)}
     dead_stock = [p for p in parts if _f(p.get("stock")) > 0 and p["id"] not in moved_recently]
     dead_value = sum(_f(p.get("stock")) * _f(p.get("unit_cost")) for p in dead_stock)
