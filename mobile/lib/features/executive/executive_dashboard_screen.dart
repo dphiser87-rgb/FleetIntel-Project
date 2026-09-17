@@ -195,7 +195,14 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Expanded(child: Text('Fleet cost trend', style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink))),
-                                        Text(formatMoney((d?['ytd_total'] as num?) ?? 0, _currency), style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.primary)),
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.end,
+                                          children: [
+                                            // Neutral, not brand-green -- this is just the period total, not a "good" result.
+                                            Text(formatMoney((d?['ytd_total'] as num?) ?? 0, _currency), style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
+                                            Text('Total · ${_kRanges.firstWhere((r) => r.$1 == _range).$2}', style: text.labelSmall?.copyWith(color: AppColors.muted)),
+                                          ],
+                                        ),
                                       ],
                                     ),
                                     const SizedBox(height: AppMetrics.spacingMd),
@@ -276,7 +283,7 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                               if (((d?['insights'] as List?) ?? []).isEmpty)
                                 FleetCard(child: Text('No notable cost patterns detected yet.', style: text.bodyMedium?.copyWith(color: AppColors.muted)))
                               else
-                                for (final it in (d!['insights'] as List)) _InsightCard(insight: it as Map<String, dynamic>),
+                                for (final it in (d!['insights'] as List)) _InsightCard(insight: it as Map<String, dynamic>, range: _range, currency: _currency),
                             ],
                           ),
               ),
@@ -348,6 +355,15 @@ class _KpiGrid extends StatelessWidget {
     }
   }
 
+  // Demo/small-fleet test data can produce deltas like 1713.8%, which read as noise rather than
+  // signal -- past a threshold, a "x" multiplier (e.g. "17.1x") is easier to parse at a glance than a
+  // four-digit percentage.
+  static String _deltaLabel(double delta) {
+    final abs = delta.abs();
+    if (abs >= 300) return '${(abs / 100).toStringAsFixed(1)}×';
+    return '${abs.toStringAsFixed(1)}%';
+  }
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
@@ -383,7 +399,7 @@ class _KpiGrid extends StatelessWidget {
                         const SizedBox(width: 3),
                         Expanded(
                           child: Text(
-                            '${delta.abs().toStringAsFixed(1)}% $vsLabel',
+                            '${_deltaLabel(delta)} $vsLabel',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: text.labelSmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w700, fontSize: 11, height: 1.25),
@@ -463,8 +479,10 @@ class _RankList extends StatelessWidget {
 }
 
 class _InsightCard extends StatelessWidget {
-  const _InsightCard({required this.insight});
+  const _InsightCard({required this.insight, required this.range, required this.currency});
   final Map<String, dynamic> insight;
+  final String range;
+  final String currency;
 
   @override
   Widget build(BuildContext context) {
@@ -509,6 +527,13 @@ class _InsightCard extends StatelessWidget {
                         Text(insight['message'] as String? ?? '', style: text.bodySmall?.copyWith(color: AppColors.muted, height: 1.4)),
                         const SizedBox(height: 6),
                         Text(insight['impact'] as String? ?? '', style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
+                        if (((insight['contributing_vehicles'] as List?) ?? []).isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          Text('CONTRIBUTING VEHICLES', style: text.labelSmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w800, letterSpacing: 0.6, fontSize: 10)),
+                          const SizedBox(height: 4),
+                          for (final v in (insight['contributing_vehicles'] as List))
+                            _ContributingVehicleRow(vehicle: v as Map<String, dynamic>, range: range, currency: currency),
+                        ],
                       ],
                     ),
                   ),
@@ -516,6 +541,34 @@ class _InsightCard extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ContributingVehicleRow extends StatelessWidget {
+  const _ContributingVehicleRow({required this.vehicle, required this.range, required this.currency});
+  final Map<String, dynamic> vehicle;
+  final String range;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final name = vehicle['name'] as String? ?? 'Unknown vehicle';
+    final value = ((vehicle['value'] as num?) ?? 0).toDouble();
+    return GestureDetector(
+      onTap: () => context.push('/executive/vehicle/${vehicle['vehicle_id']}?range=$range'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            Expanded(child: Text(name, style: text.bodySmall?.copyWith(color: AppColors.ink, fontWeight: FontWeight.w700), maxLines: 1, overflow: TextOverflow.ellipsis)),
+            const SizedBox(width: 6),
+            Text(formatMoney(value, currency), style: text.bodySmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w700)),
+            const Icon(Icons.chevron_right, size: 14, color: AppColors.muted),
+          ],
         ),
       ),
     );
