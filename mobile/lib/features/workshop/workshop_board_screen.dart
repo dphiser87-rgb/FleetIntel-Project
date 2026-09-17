@@ -112,7 +112,7 @@ class _WorkshopBoardScreenState extends ConsumerState<WorkshopBoardScreen> {
                       children: [
                         Text('Workshop', style: text.displayLarge?.copyWith(fontSize: 28)),
                         if (userName != null)
-                          Text(role, style: text.labelMedium?.copyWith(color: colors.primary, fontWeight: FontWeight.w700)),
+                          Text(roleDisplayName(role), style: text.labelMedium?.copyWith(color: colors.primary, fontWeight: FontWeight.w700)),
                       ],
                     ),
                   ),
