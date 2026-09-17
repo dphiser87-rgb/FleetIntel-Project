@@ -3387,13 +3387,15 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         return round(maintenance, 2), round(tyres, 2), round(parts_c, 2)
 
     def _job_cost(m):
-        # Mirrors _bucket_costs' own per-job definition (labor_cost + parts_cost, or actual_cost for a
-        # tyre job) rather than the raw `actual_cost` column, which can also include external_cost and
-        # so doesn't always equal labor_cost + parts_cost -- using actual_cost here made vehicle/
-        # group/supplier breakdowns sum to a different total than the period's own KPI/breakdown totals.
+        # Mirrors _bucket_costs' own per-job arithmetic exactly: labor_cost + parts_cost always, PLUS
+        # actual_cost on top for a tyre job (not instead of -- _bucket_costs' maintenance/parts sums are
+        # unconditional across every row, its tyres sum is additional). Using the raw `actual_cost`
+        # column here instead (which can also include external_cost) made vehicle/group/supplier
+        # breakdowns sum to a different total than the period's own KPI/breakdown totals.
+        cost = _f(m.get("labor_cost")) + _f(m.get("parts_cost"))
         if m.get("category") == "tyres":
-            return _f(m.get("actual_cost"))
-        return _f(m.get("labor_cost")) + _f(m.get("parts_cost"))
+            cost += _f(m.get("actual_cost"))
+        return cost
 
     def _bucket_costs_by_vehicle(rows):
         maint_v, tyres_v, parts_v = {}, {}, {}
