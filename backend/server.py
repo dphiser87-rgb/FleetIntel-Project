@@ -3592,6 +3592,10 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         increased = cur >= prev
         insights.append({
             "id": insight_id,
+            # "type" is kept for the web app's ExecutiveDashboard.jsx, which looks up an icon/style by
+            # this field and has no "movement" case -- "info" is its closest existing neutral category.
+            # "kind" is the new, richer classification the mobile app renders instead.
+            "type": "info",
             "kind": "movement",
             "priority": "High" if abs(delta) >= 150 else "Medium",
             "title": f"{label} spend changed significantly {'↑' if increased else '↓'}",
@@ -3607,7 +3611,7 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         worst = top_vehicles[0]
         if fleet_avg > 0 and worst["value"] > fleet_avg * 1.5:
             insights.append({
-                "id": "high-cost-vehicle", "kind": "anomaly", "priority": "High",
+                "id": "high-cost-vehicle", "type": "alert", "kind": "anomaly", "priority": "High",
                 "title": "High Cost Vehicle",
                 "message": f"{worst['name']} has cost {round((worst['value'] / fleet_avg - 1) * 100)}% more than the fleet average this period.",
                 "impact": f"+{round(worst['value'] - fleet_avg):,} vs average",
@@ -3620,7 +3624,7 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
     dead_value = sum(_f(p.get("stock")) * _f(p.get("unit_cost")) for p in dead_stock)
     if dead_value > 0:
         insights.append({
-            "id": "dead-stock", "kind": "opportunity", "priority": "Low",
+            "id": "dead-stock", "type": "success", "kind": "opportunity", "priority": "Low",
             "title": "Cost Reduction Opportunity",
             "message": f"{len(dead_stock)} part{'s' if len(dead_stock) != 1 else ''} in inventory have had no recorded movement in 180+ days.",
             "impact": f"{round(dead_value):,} recoverable",
