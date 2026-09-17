@@ -185,7 +185,7 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                             children: [
                               _InsightBanner(count: (d?['insight_count'] as int?) ?? 0, onTap: _scrollToInsights),
                               const SizedBox(height: AppMetrics.spacingMd),
-                              _KpiGrid(kpis: (d?['period_kpis'] as Map<String, dynamic>?) ?? {}, currency: _currency),
+                              _KpiGrid(kpis: (d?['period_kpis'] as Map<String, dynamic>?) ?? {}, currency: _currency, range: _range),
                               const SizedBox(height: AppMetrics.spacingMd),
                               FleetCard(
                                 child: Column(
@@ -318,67 +318,75 @@ class _InsightBanner extends StatelessWidget {
 }
 
 class _KpiGrid extends StatelessWidget {
-  const _KpiGrid({required this.kpis, required this.currency});
+  const _KpiGrid({required this.kpis, required this.currency, required this.range});
   final Map<String, dynamic> kpis;
   final String currency;
+  final String range;
 
   // A movement's color depends on context FleetHub doesn't have yet (lower maintenance spend could
   // mean efficiency, or a missed service) -- so every tile's delta arrow/percentage stays neutral
-  // rather than implying "down is good."
+  // rather than implying "down is good." All four tiles are money amounts with a period-over-period
+  // delta underneath -- no separate "change vs previous period" tile, since that duplicated the delta
+  // already shown under Total fleet spend.
   static const _tiles = [
-    ('total_spend_period', 'Total fleet spend', false),
-    ('maintenance_period', 'Maintenance spend', false),
-    ('cost_per_vehicle_period', 'Cost per vehicle', false),
-    ('cost_change_period', 'Change vs previous period', true),
+    ('total_spend_period', 'Total fleet spend'),
+    ('maintenance_period', 'Maintenance spend'),
+    ('cost_per_vehicle_period', 'Cost per vehicle'),
+    ('parts_period', 'Parts spend'),
   ];
+
+  static String _vsLabel(String range) {
+    switch (range) {
+      case 'month':
+        return 'vs last month';
+      case '3m':
+        return 'vs previous 3 months';
+      case '12m':
+        return 'vs previous 12 months';
+      default:
+        return 'vs previous period';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final vsLabel = _vsLabel(range);
     return GridView.count(
       crossAxisCount: 2,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       crossAxisSpacing: AppMetrics.spacingSm,
       mainAxisSpacing: AppMetrics.spacingSm,
-      childAspectRatio: 1.55,
+      childAspectRatio: 1.3,
       children: [
         for (final t in _tiles)
           Builder(builder: (context) {
             final k = kpis[t.$1] as Map<String, dynamic>?;
             final value = ((k?['value'] as num?) ?? 0).toDouble();
             final delta = (k?['delta_pct'] as num?)?.toDouble();
-            final isPercentTile = t.$3;
-            final up = isPercentTile ? value > 0 : (delta ?? 0) > 0;
             return FleetCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(t.$2, style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 0.3)),
-                  Text(
-                    isPercentTile ? '${up ? '+' : ''}${value.toStringAsFixed(1)}%' : formatMoney(value, currency),
-                    style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800, fontSize: 18),
-                  ),
-                  if (isPercentTile)
+                  Text(formatMoney(value, currency), style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800, fontSize: 18)),
+                  if (delta != null && delta != 0)
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(up ? Icons.arrow_upward : Icons.arrow_downward, size: 12, color: AppColors.muted),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Icon(delta > 0 ? Icons.arrow_upward : Icons.arrow_downward, size: 12, color: AppColors.muted),
+                        ),
                         const SizedBox(width: 3),
-                        Text('vs previous period', style: text.labelSmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w700)),
-                      ],
-                    )
-                  else if (delta != null && delta != 0)
-                    Row(
-                      children: [
-                        Icon(delta > 0 ? Icons.arrow_upward : Icons.arrow_downward, size: 12, color: AppColors.muted),
-                        const SizedBox(width: 3),
-                        Flexible(
+                        Expanded(
                           child: Text(
-                            '${delta.abs().toStringAsFixed(1)}% vs previous period',
-                            maxLines: 1,
+                            '${delta.abs().toStringAsFixed(1)}% $vsLabel',
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: text.labelSmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w700),
+                            style: text.labelSmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w700, fontSize: 11, height: 1.25),
                           ),
                         ),
                       ],
