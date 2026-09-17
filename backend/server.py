@@ -3302,14 +3302,33 @@ async def vehicle_cost(user: dict = Depends(get_current_user)):
 
 def _exec_range_bounds(range_: str, now: datetime):
     """(period_start, trend_months, period_label) for the executive dashboard's range selector.
-    "year" reproduces the endpoint's original always-calendar-YTD behavior exactly (the mobile app's
-    default), so existing web callers that never pass ?range get byte-identical output to before this
-    param existed."""
+    "year"/"90d"/"all" are the endpoint's original values -- kept byte-identical since the web app
+    never passes ?range and always gets "year" (calendar YTD). "month"/"3m"/"12m" are the mobile
+    app's current range selector (This month / 3 months / 12 months)."""
+    if range_ == "month":
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0), 3, "This month"
+    if range_ == "3m":
+        return now - timedelta(days=90), 3, "Last 3 months"
+    if range_ == "12m":
+        return now - timedelta(days=365), 12, "Last 12 months"
     if range_ == "90d":
         return now - timedelta(days=90), 3, "Last 90 days"
     if range_ == "all":
         return datetime(2000, 1, 1, tzinfo=timezone.utc), 12, "All time"
     return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0), 6, "This year"
+
+def _exec_previous_period_bounds(range_: str, period_start: datetime, now: datetime):
+    """Start/end of the period immediately preceding [period_start, now) -- used for "vs previous
+    period" KPI deltas. Calendar-month for "month" (so it reads as "vs last calendar month"); a
+    mirrored-length window immediately before period_start otherwise."""
+    if range_ == "month":
+        prev_end = period_start - timedelta(seconds=1)
+        prev_start = prev_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return prev_start, prev_end
+    span = now - period_start
+    prev_end = period_start - timedelta(seconds=1)
+    prev_start = prev_end - span
+    return prev_start, prev_end
 
 @api.get("/analytics/executive-dashboard")
 async def executive_dashboard(range_: str = Query("year", alias="range"), user: dict = Depends(require_module("executive_dashboard", "read"))):
@@ -3408,6 +3427,25 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         {"name": "Parts", "value": y_parts, "pct": round(y_parts / ytd_total * 100, 1) if ytd_total else 0},
     ]
 
+    # --- Period-scoped KPIs for the mobile Executive dashboard (additive -- the original "kpis" keys
+    # above are calendar-month-based and stay untouched for the web app, which never selects a range).
+    # Compared against a mirrored-length prior window (or the prior calendar month for range="month"),
+    # not always "last calendar month" like the legacy tiles, so 3-month/12-month selections compare
+    # like-for-like periods. ---
+    prev_start, prev_end = _exec_previous_period_bounds(range_, period_start, now)
+    prev_period_jobs = [m for m in maint if prev_start <= _dt(m) <= prev_end]
+    p_maint, p_tyres, p_parts = _bucket_costs(prev_period_jobs)
+    prev_total = p_maint + p_tyres + p_parts
+    cost_per_vehicle_period = round(ytd_total / len(vehicles), 2) if vehicles else 0
+    prev_cost_per_vehicle_period = round(prev_total / len(vehicles), 2) if vehicles else 0
+    total_spend_delta = _delta_pct(ytd_total, prev_total)
+    period_kpis = {
+        "total_spend_period": {"value": round(ytd_total, 2), "delta_pct": total_spend_delta},
+        "maintenance_period": {"value": y_maint, "delta_pct": _delta_pct(y_maint, p_maint)},
+        "cost_per_vehicle_period": {"value": cost_per_vehicle_period, "delta_pct": _delta_pct(cost_per_vehicle_period, prev_cost_per_vehicle_period)},
+        "cost_change_period": {"value": total_spend_delta, "delta_pct": None},
+    }
+
     # --- Top 6 vehicles by cost within the selected period ---
     vcost = {}
     for m in period_jobs:
@@ -3432,6 +3470,24 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         [{"region": r, "value": round(c, 2)} for r, c in region_cost.items()],
         key=lambda x: x["value"], reverse=True,
     )
+
+    # --- Cost by fleet group within the selected period (via vehicle -> group NAME, not region --
+    # "Ungrouped" for vehicles with no group). has_fleet_groups tells the mobile app whether the
+    # workspace has any groups configured at all, so it can prompt to set them up instead of showing
+    # a lone "Ungrouped" row that looks like real data. ---
+    group_cost = {}
+    for m in period_jobs:
+        vid = m.get("vehicle_id")
+        v = vmap.get(vid)
+        gname = "Ungrouped"
+        if v and v.get("group_id") and gmap.get(v["group_id"], {}).get("name"):
+            gname = gmap[v["group_id"]]["name"]
+        group_cost[gname] = group_cost.get(gname, 0) + _f(m.get("actual_cost"))
+    by_group = sorted(
+        [{"name": g, "value": round(c, 2)} for g, c in group_cost.items()],
+        key=lambda x: x["value"], reverse=True,
+    )
+    has_fleet_groups = len(groups) > 0
 
     # --- Top suppliers by spend within the selected period (from maintenance.vendor; "Unknown" for blanks) ---
     supplier_cost = {}
@@ -3507,10 +3563,13 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
         "ytd_total": round(ytd_total, 2),
         "insight_count": len(insights),
         "kpis": kpis,
+        "period_kpis": period_kpis,
         "monthly_trend": monthly_trend,
         "ytd_breakdown": ytd_breakdown,
         "top_vehicles": top_vehicles,
         "by_region": by_region,
+        "by_group": by_group,
+        "has_fleet_groups": has_fleet_groups,
         "top_suppliers": top_suppliers,
         "insights": insights,
     }
