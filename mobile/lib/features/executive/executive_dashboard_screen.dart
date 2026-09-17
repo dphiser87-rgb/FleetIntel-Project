@@ -15,11 +15,13 @@ const _kRanges = [
   ('12m', '12 months'),
 ];
 
-const _kInsightMeta = {
-  'warning': (color: AppColors.danger, icon: Icons.warning_amber_rounded),
-  'alert': (color: AppColors.danger, icon: Icons.warning_amber_rounded),
-  'info': (color: Color(0xFFFFCC00), icon: Icons.insights_outlined),
-  'success': (color: Color(0xFF34C759), icon: Icons.check_circle_outline),
+// "kind" separates what an insight IS from how urgent it is (priority, handled separately) -- a
+// spend swing isn't automatically good or bad, so "movement" stays neutral rather than reusing
+// red/green the way the old warning/success split did.
+const _kInsightKindMeta = {
+  'movement': (color: Color(0xFF7C93B3), icon: Icons.show_chart_rounded, label: 'Cost movement'),
+  'anomaly': (color: AppColors.danger, icon: Icons.warning_amber_rounded, label: 'Cost anomaly'),
+  'opportunity': (color: Color(0xFF34C759), icon: Icons.lightbulb_outline, label: 'Savings opportunity'),
 };
 const _kPriorityColor = {
   'High': AppColors.danger,
@@ -81,6 +83,63 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
     _load();
   }
 
+  void _showBoardEmailSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(AppMetrics.radiusMedium))),
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(AppMetrics.spacingLg),
+            child: _BoardEmailCard(onSaved: _load),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showCategoryVehicles(BuildContext context, String category) {
+    final vehicles = ((_data?['breakdown_vehicles'] as Map<String, dynamic>?)?[category] as List?) ?? [];
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(AppMetrics.radiusMedium))),
+      builder: (sheetContext) {
+        final text = Theme.of(sheetContext).textTheme;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(AppMetrics.spacingLg),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('$category vehicles', style: text.titleMedium?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
+                const SizedBox(height: 4),
+                Text('${_kRanges.firstWhere((r) => r.$1 == _range).$2} spend by vehicle', style: text.bodySmall?.copyWith(color: AppColors.muted)),
+                const SizedBox(height: AppMetrics.spacingMd),
+                if (vehicles.isEmpty)
+                  Text('No $category spend in this period.', style: text.bodyMedium?.copyWith(color: AppColors.muted))
+                else
+                  for (final v in vehicles)
+                    _CategoryVehicleRow(
+                      vehicle: v as Map<String, dynamic>,
+                      currency: _currency,
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        context.push('/executive/vehicle/${v['vehicle_id']}?range=$_range');
+                      },
+                    ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -130,6 +189,11 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                           Text(userName, style: text.labelMedium?.copyWith(color: colors.primary, fontWeight: FontWeight.w700)),
                       ],
                     ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.ios_share_outlined, color: AppColors.muted),
+                    tooltip: 'Share / board email',
+                    onPressed: () => _showBoardEmailSheet(context),
                   ),
                   IconButton(
                     icon: const Icon(Icons.logout_outlined, color: AppColors.muted),
@@ -223,6 +287,7 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                                       slices: (d?['ytd_breakdown'] as List?) ?? [],
                                       total: ((d?['ytd_total'] as num?) ?? 0).toDouble(),
                                       currency: _currency,
+                                      onTapCategory: (category) => _showCategoryVehicles(context, category),
                                     ),
                                   ],
                                 ),
@@ -255,11 +320,11 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                                       Row(children: [
                                         const Icon(Icons.map_outlined, size: 16, color: AppColors.muted),
                                         const SizedBox(width: 6),
-                                        Text('Cost by fleet group', style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
+                                        Text('No fleet groups yet', style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
                                       ]),
                                       const SizedBox(height: AppMetrics.spacingSm),
                                       Text(
-                                        'No fleet groups set up yet — group vehicles by depot or route to see cost broken down that way.',
+                                        'Group vehicles by depot, region or operation to compare costs.',
                                         style: text.bodySmall?.copyWith(color: AppColors.muted, height: 1.4),
                                       ),
                                     ],
@@ -273,10 +338,9 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                                 labelKey: 'supplier',
                                 valueKey: 'value',
                                 currency: _currency,
+                                flagLabels: const {'Supplier not recorded'},
                                 onRow: (r) => context.push('/executive/supplier?name=${Uri.encodeComponent(r['supplier'] as String)}&range=$_range'),
                               ),
-                              const SizedBox(height: AppMetrics.spacingMd),
-                              _BoardEmailCard(onSaved: _load),
                               const SizedBox(height: AppMetrics.spacingLg),
                               Text('AI cost intelligence', style: text.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
                               const SizedBox(height: AppMetrics.spacingMd),
@@ -417,7 +481,7 @@ class _KpiGrid extends StatelessWidget {
 }
 
 class _RankList extends StatelessWidget {
-  const _RankList({required this.title, required this.icon, required this.rows, required this.labelKey, required this.valueKey, required this.currency, this.onRow});
+  const _RankList({required this.title, required this.icon, required this.rows, required this.labelKey, required this.valueKey, required this.currency, this.onRow, this.flagLabels = const {}});
   final String title;
   final IconData icon;
   final List<dynamic> rows;
@@ -425,6 +489,9 @@ class _RankList extends StatelessWidget {
   final String valueKey;
   final String currency;
   final void Function(Map<String, dynamic> row)? onRow;
+  // Labels that flag a data-quality gap rather than a real category/entity (e.g. "Supplier not
+  // recorded") -- rendered muted/italic so they read as a prompt to fix the data, not a real ranking.
+  final Set<String> flagLabels;
 
   @override
   Widget build(BuildContext context) {
@@ -453,6 +520,7 @@ class _RankList extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     final label = r[labelKey] as String? ?? 'Unknown';
     final value = ((r[valueKey] as num?) ?? 0).toDouble();
+    final isFlagged = flagLabels.contains(label);
     final row = Padding(
       padding: EdgeInsets.only(bottom: i == rows.length - 1 ? 0 : AppMetrics.spacingSm),
       child: Column(
@@ -460,7 +528,18 @@ class _RankList extends StatelessWidget {
         children: [
           Row(
             children: [
-              Expanded(child: Text('${i + 1}. $label', style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w700, color: AppColors.ink), maxLines: 1, overflow: TextOverflow.ellipsis)),
+              Expanded(
+                child: Text(
+                  isFlagged ? label : '${i + 1}. $label',
+                  style: text.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: isFlagged ? AppColors.muted : AppColors.ink,
+                    fontStyle: isFlagged ? FontStyle.italic : FontStyle.normal,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               Text(formatMoney(value, currency), style: text.bodySmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
               if (onRow != null) const Icon(Icons.chevron_right, size: 16, color: AppColors.muted),
             ],
@@ -487,9 +566,10 @@ class _InsightCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final meta = _kInsightMeta[insight['type'] as String? ?? 'info'] ?? _kInsightMeta['info']!;
+    final meta = _kInsightKindMeta[insight['kind'] as String? ?? 'movement'] ?? _kInsightKindMeta['movement']!;
     final priority = insight['priority'] as String? ?? 'Low';
     final priorityColor = _kPriorityColor[priority] ?? AppColors.muted;
+    final cta = insight['cta'] as String?;
     return Padding(
       padding: const EdgeInsets.only(bottom: AppMetrics.spacingMd),
       // Flutter's BoxDecoration disallows a borderRadius on a Border with non-uniform side colors, so
@@ -511,25 +591,32 @@ class _InsightCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(meta.icon, size: 18, color: meta.color),
-                            const SizedBox(width: 8),
-                            Expanded(child: Text(insight['title'] as String? ?? '', style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink))),
+                            Icon(meta.icon, size: 13, color: meta.color),
+                            const SizedBox(width: 4),
+                            Text(meta.label.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: meta.color, letterSpacing: 0.5)),
+                            const Spacer(),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(color: priorityColor.withValues(alpha: 0.12), border: Border.all(color: priorityColor.withValues(alpha: 0.4)), borderRadius: BorderRadius.circular(4)),
-                              child: Text(priority, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: priorityColor, letterSpacing: 0.3)),
+                              child: Text('$priority priority', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: priorityColor, letterSpacing: 0.3)),
                             ),
                           ],
                         ),
+                        const SizedBox(height: 6),
+                        Text(insight['title'] as String? ?? '', style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
                         const SizedBox(height: 6),
                         Text(insight['message'] as String? ?? '', style: text.bodySmall?.copyWith(color: AppColors.muted, height: 1.4)),
                         const SizedBox(height: 6),
                         Text(insight['impact'] as String? ?? '', style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
                         if (((insight['contributing_vehicles'] as List?) ?? []).isNotEmpty) ...[
                           const SizedBox(height: 10),
-                          Text('CONTRIBUTING VEHICLES', style: text.labelSmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w800, letterSpacing: 0.6, fontSize: 10)),
+                          Text(
+                            cta != null ? '$cta →' : 'CONTRIBUTING VEHICLES',
+                            style: cta != null
+                                ? text.labelSmall?.copyWith(color: AppColors.primary, fontWeight: FontWeight.w800)
+                                : text.labelSmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w800, letterSpacing: 0.6, fontSize: 10),
+                          ),
                           const SizedBox(height: 4),
                           for (final v in (insight['contributing_vehicles'] as List))
                             _ContributingVehicleRow(vehicle: v as Map<String, dynamic>, range: range, currency: currency),
@@ -568,6 +655,34 @@ class _ContributingVehicleRow extends StatelessWidget {
             const SizedBox(width: 6),
             Text(formatMoney(value, currency), style: text.bodySmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w700)),
             const Icon(Icons.chevron_right, size: 14, color: AppColors.muted),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CategoryVehicleRow extends StatelessWidget {
+  const _CategoryVehicleRow({required this.vehicle, required this.currency, required this.onTap});
+  final Map<String, dynamic> vehicle;
+  final String currency;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final name = vehicle['name'] as String? ?? 'Unknown vehicle';
+    final value = ((vehicle['value'] as num?) ?? 0).toDouble();
+    return GestureDetector(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Expanded(child: Text(name, style: text.bodyMedium?.copyWith(color: AppColors.ink, fontWeight: FontWeight.w700))),
+            Text(formatMoney(value, currency), style: text.bodyMedium?.copyWith(color: AppColors.ink, fontWeight: FontWeight.w800)),
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right, size: 16, color: AppColors.muted),
           ],
         ),
       ),
