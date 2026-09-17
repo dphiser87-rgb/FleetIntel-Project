@@ -2930,9 +2930,12 @@ async def assign_purchase_order_supplier(poid: str, body: PurchaseOrderSupplierA
 # --- Suppliers (Finance-owned master data) ---
 
 @api.get("/suppliers")
-async def list_suppliers(user: dict = Depends(require_role(*FINANCE_ROLES))):
+async def list_suppliers(user: dict = Depends(require_role("finance", "workshop_head", "operations_manager"))):
     """Supplier list with a paid-spend rollup, so Finance can see which supplier is costing the most --
-    the whole point of tracking suppliers as real entities instead of free text on a PO."""
+    the whole point of tracking suppliers as real entities instead of free text on a PO. Read access
+    also extends to workshop_head/operations_manager: they're the ones actually contacting suppliers
+    for quotations, so they need to see the existing list -- creating a supplier stays Finance-only
+    (POST /suppliers below), since Finance owns that master data per the user's explicit framing."""
     rows = await fetch_all(
         """
         select s.id, s.name, s.contact_name, s.contact_email, s.contact_phone, s.notes, s.created_at,
