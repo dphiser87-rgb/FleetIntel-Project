@@ -556,6 +556,16 @@ class PurchaseOrderIn(BaseModel):
 class POMarkPaid(BaseModel):
     proof_of_payment: List[QuoteAttachment]
 
+class SupplierIn(BaseModel):
+    name: str
+    contact_name: Optional[str] = ""
+    contact_email: Optional[str] = ""
+    contact_phone: Optional[str] = ""
+    notes: Optional[str] = ""
+
+class PurchaseOrderSupplierAssign(BaseModel):
+    supplier_id: str
+
 class PartRequisitionItem(BaseModel):
     part_id: str
     qty_requested: float
@@ -2859,14 +2869,17 @@ async def decide_requisition(rid: str, body: PartRequisitionDecision, user: dict
 # --- Purchase orders ---
 @api.get("/purchase-orders")
 async def list_purchase_orders(user: dict = Depends(get_current_user)):
+    # supplier_name resolves the linked suppliers row (Finance-assigned) and falls back to the legacy
+    # free-text `supplier` column for POs from before suppliers existed or created manually.
+    select = "select po.*, coalesce(s.name, po.supplier) as supplier_name from purchase_orders po left join suppliers s on s.id = po.supplier_id"
     if user.get("role") == "mechanic":
         return await fetch_all(
-            "select * from purchase_orders where workspace_id = :ws and maintenance_id in "
-            "(select id from maintenance where assigned_to = :uid) order by created_at desc",
+            f"{select} where po.workspace_id = :ws and po.maintenance_id in "
+            "(select id from maintenance where assigned_to = :uid) order by po.created_at desc",
             ws=user["workspace_id"], uid=str(user["id"]),
         )
     return await fetch_all(
-        "select * from purchase_orders where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
+        f"{select} where po.workspace_id = :ws order by po.created_at desc", ws=user["workspace_id"],
     )
 
 @api.post("/purchase-orders")
@@ -2898,6 +2911,69 @@ async def mark_purchase_order_paid(poid: str, body: POMarkPaid, user: dict = Dep
     )
     await log_event(user, "purchase_order.paid", "purchase_order", poid, {"po_number": po["po_number"]})
     return await fetch_one("select * from purchase_orders where id = :id", id=poid)
+
+@api.patch("/purchase-orders/{poid}/supplier")
+async def assign_purchase_order_supplier(poid: str, body: PurchaseOrderSupplierAssign, user: dict = Depends(require_role(*FINANCE_ROLES))):
+    """Quote-issued POs (the vast majority) are auto-created with no supplier -- the mechanic/quote
+    submitter has no reason to know who Finance will actually order from. Finance assigns the supplier
+    here instead, once they know, so spend-by-supplier reporting has something to roll up."""
+    po = await fetch_one("select id from purchase_orders where id = :id and workspace_id = :ws", id=poid, ws=user["workspace_id"])
+    if not po: raise HTTPException(status_code=404, detail="Purchase order not found")
+    supplier = await fetch_one("select id from suppliers where id = :id and workspace_id = :ws", id=body.supplier_id, ws=user["workspace_id"])
+    if not supplier: raise HTTPException(status_code=404, detail="Supplier not found")
+    await execute(
+        "update purchase_orders set supplier_id = :sid where id = :id and workspace_id = :ws",
+        id=poid, ws=user["workspace_id"], sid=body.supplier_id,
+    )
+    return await fetch_one("select * from purchase_orders where id = :id", id=poid)
+
+# --- Suppliers (Finance-owned master data) ---
+
+@api.get("/suppliers")
+async def list_suppliers(user: dict = Depends(require_role(*FINANCE_ROLES))):
+    """Supplier list with a paid-spend rollup, so Finance can see which supplier is costing the most --
+    the whole point of tracking suppliers as real entities instead of free text on a PO."""
+    rows = await fetch_all(
+        """
+        select s.id, s.name, s.contact_name, s.contact_email, s.contact_phone, s.notes, s.created_at,
+               coalesce(po.paid_total, 0) as paid_total, coalesce(po.po_count, 0) as po_count
+        from suppliers s
+        left join (
+            select supplier_id, sum(amount) as paid_total, count(*) as po_count
+            from purchase_orders where workspace_id = :ws and status = 'paid' and supplier_id is not null
+            group by supplier_id
+        ) po on po.supplier_id = s.id
+        where s.workspace_id = :ws
+        """,
+        ws=user["workspace_id"],
+    )
+    return sorted(
+        [{**dict(r), "id": str(r["id"]), "paid_total": round(float(r["paid_total"] or 0), 2)} for r in rows],
+        key=lambda x: x["paid_total"], reverse=True,
+    )
+
+@api.post("/suppliers")
+async def create_supplier(body: SupplierIn, user: dict = Depends(require_role(*FINANCE_ROLES))):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Supplier name is required")
+    existing = await fetch_one(
+        "select id from suppliers where workspace_id = :ws and lower(name) = lower(:name)",
+        ws=user["workspace_id"], name=name,
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="A supplier with this name already exists")
+    sid = str(uuid.uuid4())
+    await execute(
+        "insert into suppliers (id, workspace_id, name, contact_name, contact_email, contact_phone, notes, created_by) "
+        "values (:id, :ws, :name, :contact_name, :contact_email, :contact_phone, :notes, :uid)",
+        id=sid, ws=user["workspace_id"], uid=user["id"], name=name,
+        contact_name=body.contact_name, contact_email=body.contact_email,
+        contact_phone=body.contact_phone, notes=body.notes,
+    )
+    await log_event(user, "supplier.created", "supplier", sid, {"name": name})
+    row = await fetch_one("select * from suppliers where id = :id", id=sid)
+    return {**dict(row), "id": str(row["id"]), "paid_total": 0, "po_count": 0}
 
 # --- Workshop (mobile: role-scoped queue + per-vehicle cost rollup) ---
 @api.get("/workshop/queue")
@@ -3052,12 +3128,14 @@ async def workshop_finance_board(user: dict = Depends(require_role(*FINANCE_ROLE
         ws=ws,
     )
     pos = await fetch_all(
-        "select po.id, po.po_number, po.maintenance_id, po.supplier, po.amount, po.status, "
+        "select po.id, po.po_number, po.maintenance_id, po.supplier_id, "
+        "coalesce(s.name, po.supplier) as supplier_name, po.amount, po.status, "
         "po.created_at, po.paid_at, m.title as job_title, v.name as vehicle_name, q.submitted_by_name "
         "from purchase_orders po "
         "left join maintenance m on m.id = po.maintenance_id "
         "left join vehicles v on v.id = m.vehicle_id "
         "left join quotes q on q.id = po.quote_id "
+        "left join suppliers s on s.id = po.supplier_id "
         "where po.workspace_id = :ws order by po.created_at desc",
         ws=ws,
     )
@@ -3083,7 +3161,8 @@ async def workshop_finance_board(user: dict = Depends(require_role(*FINANCE_ROLE
             "job_title": po["job_title"], "vehicle_name": po["vehicle_name"],
             "amount": round(float(po["amount"] or 0), 2),
             "parts_total": None, "labour_total": None,
-            "supplier": po["supplier"] or None, "requested_by": po["submitted_by_name"],
+            "supplier_id": str(po["supplier_id"]) if po["supplier_id"] else None,
+            "supplier": po["supplier_name"] or None, "requested_by": po["submitted_by_name"],
             "date": po["paid_at"] or po["created_at"], "po_number": po["po_number"],
         })
 
