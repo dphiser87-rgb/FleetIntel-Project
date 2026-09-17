@@ -10,9 +10,9 @@ import '../workshop/workshop_ui.dart';
 import 'executive_charts.dart';
 
 const _kRanges = [
-  ('year', 'This year'),
-  ('90d', '90 days'),
-  ('all', 'All time'),
+  ('month', 'This month'),
+  ('3m', '3 months'),
+  ('12m', '12 months'),
 ];
 
 const _kInsightMeta = {
@@ -41,8 +41,39 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
   bool _loading = true;
   String? _error;
   Map<String, dynamic>? _data;
-  String _range = 'year';
+  String _range = 'month';
   String _currency = 'USD';
+  final _scrollController = ScrollController();
+  final Set<String> _hiddenCategories = {};
+
+  void _toggleCategory(String key) {
+    setState(() {
+      if (_hiddenCategories.contains(key)) {
+        _hiddenCategories.remove(key);
+      } else {
+        _hiddenCategories.add(key);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  // AI insights is the last major section on the page, so scrolling to the bottom lands right on
+  // it -- simpler and more reliable than Scrollable.ensureVisible with a GlobalKey, whose target
+  // this far below the fold may not have a laid-out RenderObject yet (ListView still virtualizes by
+  // viewport/cacheExtent even with an eagerly-built `children:` list).
+  void _scrollToInsights() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeInOut,
+    );
+  }
 
   @override
   void initState() {
@@ -149,21 +180,28 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                     : _error != null
                         ? Center(child: Text(_error!, style: text.bodyMedium?.copyWith(color: AppColors.muted)))
                         : ListView(
+                            controller: _scrollController,
                             padding: const EdgeInsets.fromLTRB(AppMetrics.spacingLg, AppMetrics.spacingMd, AppMetrics.spacingLg, AppMetrics.spacingXl * 2),
                             children: [
-                              _InsightBanner(count: (d?['insight_count'] as int?) ?? 0, periodLabel: d?['period_label'] as String? ?? ''),
+                              _InsightBanner(count: (d?['insight_count'] as int?) ?? 0, onTap: _scrollToInsights),
                               const SizedBox(height: AppMetrics.spacingMd),
-                              _KpiGrid(kpis: (d?['kpis'] as Map<String, dynamic>?) ?? {}, currency: _currency),
+                              _KpiGrid(kpis: (d?['period_kpis'] as Map<String, dynamic>?) ?? {}, currency: _currency),
                               const SizedBox(height: AppMetrics.spacingMd),
                               FleetCard(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text('Spend trend', style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
+                                    Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(child: Text('Fleet cost trend', style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink))),
+                                        Text(formatMoney((d?['ytd_total'] as num?) ?? 0, _currency), style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.primary)),
+                                      ],
+                                    ),
                                     const SizedBox(height: AppMetrics.spacingMd),
-                                    TrendChart(data: (d?['monthly_trend'] as List?) ?? [], currency: _currency),
+                                    TrendChart(data: (d?['monthly_trend'] as List?) ?? [], currency: _currency, hiddenCategories: _hiddenCategories),
                                     const SizedBox(height: AppMetrics.spacingMd),
-                                    const TrendLegend(),
+                                    TrendLegend(hiddenCategories: _hiddenCategories, onToggle: _toggleCategory),
                                   ],
                                 ),
                               ),
@@ -172,7 +210,7 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text('${d?['period_label'] ?? ''} breakdown', style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
+                                    Text('Cost breakdown', style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
                                     const SizedBox(height: AppMetrics.spacingMd),
                                     CostDonut(
                                       slices: (d?['ytd_breakdown'] as List?) ?? [],
@@ -184,7 +222,7 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                               ),
                               const SizedBox(height: AppMetrics.spacingMd),
                               _RankList(
-                                title: 'Top vehicles by cost',
+                                title: 'Highest-cost vehicles',
                                 icon: Icons.local_shipping_outlined,
                                 rows: (d?['top_vehicles'] as List?) ?? [],
                                 labelKey: 'name',
@@ -193,14 +231,33 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
                                 onRow: (r) => context.push('/executive/vehicle/${r['vehicle_id']}?range=$_range'),
                               ),
                               const SizedBox(height: AppMetrics.spacingMd),
-                              _RankList(
-                                title: 'Cost by region',
-                                icon: Icons.map_outlined,
-                                rows: (d?['by_region'] as List?) ?? [],
-                                labelKey: 'region',
-                                valueKey: 'value',
-                                currency: _currency,
-                              ),
+                              if ((d?['has_fleet_groups'] as bool?) == true)
+                                _RankList(
+                                  title: 'Cost by fleet group',
+                                  icon: Icons.map_outlined,
+                                  rows: (d?['by_group'] as List?) ?? [],
+                                  labelKey: 'name',
+                                  valueKey: 'value',
+                                  currency: _currency,
+                                )
+                              else
+                                FleetCard(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(children: [
+                                        const Icon(Icons.map_outlined, size: 16, color: AppColors.muted),
+                                        const SizedBox(width: 6),
+                                        Text('Cost by fleet group', style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
+                                      ]),
+                                      const SizedBox(height: AppMetrics.spacingSm),
+                                      Text(
+                                        'No fleet groups set up yet — group vehicles by depot or route to see cost broken down that way.',
+                                        style: text.bodySmall?.copyWith(color: AppColors.muted, height: 1.4),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               const SizedBox(height: AppMetrics.spacingMd),
                               _RankList(
                                 title: 'Top suppliers by spend',
@@ -232,27 +289,29 @@ class _ExecutiveDashboardScreenState extends ConsumerState<ExecutiveDashboardScr
 }
 
 class _InsightBanner extends StatelessWidget {
-  const _InsightBanner({required this.count, required this.periodLabel});
+  const _InsightBanner({required this.count, required this.onTap});
   final int count;
-  final String periodLabel;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.all(AppMetrics.spacingMd),
-      decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(AppMetrics.radiusMedium)),
-      child: Row(
-        children: [
-          const Icon(Icons.auto_awesome_outlined, size: 18, color: AppColors.primary),
-          const SizedBox(width: AppMetrics.spacingSm),
-          Expanded(
-            child: Text(
-              '$count cost ${count == 1 ? 'insight' : 'insights'} live · $periodLabel',
-              style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink),
+    final label = count == 0 ? 'No cost insights right now' : '$count cost ${count == 1 ? 'insight' : 'insights'} need attention';
+    return GestureDetector(
+      onTap: count == 0 ? null : onTap,
+      child: Container(
+        padding: const EdgeInsets.all(AppMetrics.spacingMd),
+        decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(AppMetrics.radiusMedium)),
+        child: Row(
+          children: [
+            const Icon(Icons.auto_awesome_outlined, size: 18, color: AppColors.primary),
+            const SizedBox(width: AppMetrics.spacingSm),
+            Expanded(
+              child: Text(label, style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w800, color: AppColors.ink)),
             ),
-          ),
-        ],
+            if (count > 0) const Icon(Icons.chevron_right, size: 18, color: AppColors.primary),
+          ],
+        ),
       ),
     );
   }
@@ -263,11 +322,14 @@ class _KpiGrid extends StatelessWidget {
   final Map<String, dynamic> kpis;
   final String currency;
 
+  // A movement's color depends on context FleetHub doesn't have yet (lower maintenance spend could
+  // mean efficiency, or a missed service) -- so every tile's delta arrow/percentage stays neutral
+  // rather than implying "down is good."
   static const _tiles = [
-    ('maintenance', 'Fleet maintenance spend'),
-    ('tyres', 'Tyre spend'),
-    ('parts', 'Spare parts spend'),
-    ('cost_per_vehicle', 'Cost per vehicle / month'),
+    ('total_spend_period', 'Total fleet spend', false),
+    ('maintenance_period', 'Maintenance spend', false),
+    ('cost_per_vehicle_period', 'Cost per vehicle', false),
+    ('cost_change_period', 'Change vs previous period', true),
   ];
 
   @override
@@ -285,26 +347,38 @@ class _KpiGrid extends StatelessWidget {
           Builder(builder: (context) {
             final k = kpis[t.$1] as Map<String, dynamic>?;
             final value = ((k?['value'] as num?) ?? 0).toDouble();
-            final delta = (k?['delta_pct'] as num?)?.toDouble() ?? 0;
-            final up = delta > 0;
+            final delta = (k?['delta_pct'] as num?)?.toDouble();
+            final isPercentTile = t.$3;
+            final up = isPercentTile ? value > 0 : (delta ?? 0) > 0;
             return FleetCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(t.$2, style: text.labelSmall?.copyWith(color: AppColors.muted, letterSpacing: 0.3)),
-                  Text(formatMoney(value, currency), style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800, fontSize: 18)),
-                  if (delta != 0)
+                  Text(
+                    isPercentTile ? '${up ? '+' : ''}${value.toStringAsFixed(1)}%' : formatMoney(value, currency),
+                    style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800, fontSize: 18),
+                  ),
+                  if (isPercentTile)
                     Row(
                       children: [
-                        Icon(up ? Icons.arrow_upward : Icons.arrow_downward, size: 12, color: up ? AppColors.danger : const Color(0xFF34C759)),
+                        Icon(up ? Icons.arrow_upward : Icons.arrow_downward, size: 12, color: AppColors.muted),
+                        const SizedBox(width: 3),
+                        Text('vs previous period', style: text.labelSmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w700)),
+                      ],
+                    )
+                  else if (delta != null && delta != 0)
+                    Row(
+                      children: [
+                        Icon(delta > 0 ? Icons.arrow_upward : Icons.arrow_downward, size: 12, color: AppColors.muted),
                         const SizedBox(width: 3),
                         Flexible(
                           child: Text(
-                            '${delta.abs()}% vs last month',
+                            '${delta.abs().toStringAsFixed(1)}% vs previous period',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: text.labelSmall?.copyWith(color: up ? AppColors.danger : const Color(0xFF34C759), fontWeight: FontWeight.w700),
+                            style: text.labelSmall?.copyWith(color: AppColors.muted, fontWeight: FontWeight.w700),
                           ),
                         ),
                       ],
