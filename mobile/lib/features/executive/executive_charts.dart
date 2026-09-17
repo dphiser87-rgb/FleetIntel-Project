@@ -21,15 +21,24 @@ const Map<String, String> kCostCategoryLabels = {
 /// tyres/parts/total keys, as returned by the monthly_trend list on every executive-dashboard
 /// endpoint.
 class TrendChart extends StatelessWidget {
-  const TrendChart({super.key, required this.data, required this.currency});
+  const TrendChart({super.key, required this.data, required this.currency, this.hiddenCategories = const {}});
   final List<dynamic> data;
   final String currency;
+  /// Categories toggled off via TrendLegend -- excluded from both the bar heights and the max-height
+  /// scale, so isolating "Maintenance" re-scales the chart to that category alone rather than just
+  /// hiding segments within bars still sized for the full stack.
+  final Set<String> hiddenCategories;
+
+  double _visibleTotal(Map<String, dynamic> m) {
+    const keys = ['parts', 'tyres', 'maintenance'];
+    return keys.where((k) => !hiddenCategories.contains(k)).fold<double>(0, (s, k) => s + ((m[k] as num?) ?? 0).toDouble());
+  }
 
   @override
   Widget build(BuildContext context) {
     final maxTotal = data.isEmpty
         ? 1.0
-        : data.map((m) => ((m['total'] as num?) ?? 0).toDouble()).reduce((a, b) => a > b ? a : b).clamp(1.0, double.infinity);
+        : data.map((m) => _visibleTotal(m as Map<String, dynamic>)).reduce((a, b) => a > b ? a : b).clamp(1.0, double.infinity);
     return SizedBox(
       height: 160,
       child: Row(
@@ -45,13 +54,13 @@ class TrendChart extends StatelessWidget {
                     ClipRRect(
                       borderRadius: BorderRadius.circular(3),
                       child: Container(
-                        height: (((m['total'] as num?) ?? 0).toDouble() / maxTotal * 130).clamp(4.0, 130.0),
+                        height: (_visibleTotal(m) / maxTotal * 130).clamp(4.0, 130.0),
                         decoration: const BoxDecoration(color: AppColors.surfaceElevated),
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             for (final k in const ['parts', 'tyres', 'maintenance'])
-                              _segment(m, k, (((m['total'] as num?) ?? 0).toDouble() / maxTotal * 130).clamp(4.0, 130.0)),
+                              if (!hiddenCategories.contains(k)) _segment(m, k, (_visibleTotal(m) / maxTotal * 130).clamp(4.0, 130.0)),
                           ],
                         ),
                       ),
@@ -68,7 +77,7 @@ class TrendChart extends StatelessWidget {
   }
 
   Widget _segment(Map<String, dynamic> m, String key, double barHeight) {
-    final total = ((m['total'] as num?) ?? 0).toDouble();
+    final total = _visibleTotal(m);
     final v = ((m[key] as num?) ?? 0).toDouble();
     final h = total > 0 ? (v / total) * barHeight : 0.0;
     return Container(height: h, color: kCostCategoryColors[key]);
@@ -84,7 +93,9 @@ class TrendChart extends StatelessWidget {
 }
 
 class TrendLegend extends StatelessWidget {
-  const TrendLegend({super.key});
+  const TrendLegend({super.key, this.hiddenCategories = const {}, this.onToggle});
+  final Set<String> hiddenCategories;
+  final ValueChanged<String>? onToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -93,13 +104,19 @@ class TrendLegend extends StatelessWidget {
       spacing: AppMetrics.spacingMd,
       children: [
         for (final k in const ['maintenance', 'tyres', 'parts'])
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(width: 10, height: 10, decoration: BoxDecoration(color: kCostCategoryColors[k], borderRadius: BorderRadius.circular(3))),
-              const SizedBox(width: 6),
-              Text(kCostCategoryLabels[k]!, style: const TextStyle(fontSize: 12, color: AppColors.ink, fontWeight: FontWeight.w600)),
-            ],
+          GestureDetector(
+            onTap: onToggle == null ? null : () => onToggle!(k),
+            child: Opacity(
+              opacity: hiddenCategories.contains(k) ? 0.35 : 1,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(width: 10, height: 10, decoration: BoxDecoration(color: kCostCategoryColors[k], borderRadius: BorderRadius.circular(3))),
+                  const SizedBox(width: 6),
+                  Text(kCostCategoryLabels[k]!, style: const TextStyle(fontSize: 12, color: AppColors.ink, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
           ),
       ],
     );
