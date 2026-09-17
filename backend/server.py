@@ -3436,13 +3436,20 @@ async def executive_dashboard(range_: str = Query("year", alias="range"), user: 
     prev_period_jobs = [m for m in maint if prev_start <= _dt(m) <= prev_end]
     p_maint, p_tyres, p_parts = _bucket_costs(prev_period_jobs)
     prev_total = p_maint + p_tyres + p_parts
-    cost_per_vehicle_period = round(ytd_total / len(vehicles), 2) if vehicles else 0
-    prev_cost_per_vehicle_period = round(prev_total / len(vehicles), 2) if vehicles else 0
+    # Cost per vehicle is divided by the vehicles that actually had cost activity in each respective
+    # period (not the total fleet size), so its delta is a genuinely independent comparison rather than
+    # always collapsing to total_spend_delta -- dividing both periods by today's fixed fleet size made
+    # this tile mathematically identical to total_spend_period whenever fleet size doesn't change.
+    active_vehicles_period = len({m["vehicle_id"] for m in period_jobs if m.get("vehicle_id")})
+    prev_active_vehicles_period = len({m["vehicle_id"] for m in prev_period_jobs if m.get("vehicle_id")})
+    cost_per_vehicle_period = round(ytd_total / active_vehicles_period, 2) if active_vehicles_period else 0
+    prev_cost_per_vehicle_period = round(prev_total / prev_active_vehicles_period, 2) if prev_active_vehicles_period else 0
     total_spend_delta = _delta_pct(ytd_total, prev_total)
     period_kpis = {
         "total_spend_period": {"value": round(ytd_total, 2), "delta_pct": total_spend_delta},
         "maintenance_period": {"value": y_maint, "delta_pct": _delta_pct(y_maint, p_maint)},
         "cost_per_vehicle_period": {"value": cost_per_vehicle_period, "delta_pct": _delta_pct(cost_per_vehicle_period, prev_cost_per_vehicle_period)},
+        "parts_period": {"value": y_parts, "delta_pct": _delta_pct(y_parts, p_parts)},
         "cost_change_period": {"value": total_spend_delta, "delta_pct": None},
     }
 
