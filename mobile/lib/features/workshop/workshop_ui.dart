@@ -36,7 +36,7 @@ String formatMoney(num? amount, String currency) {
   return '$symbol${v.toStringAsFixed(2)}';
 }
 
-/// Turns a raw role string ("finance", "workshop_head") into a display label ("Finance",
+/// Turns a raw role string ("finance", "workshop_manager") into a display label ("Finance",
 /// "Workshop Head") -- underscore-separated words, each capitalized.
 String roleDisplayName(String role) {
   return role.split('_').where((w) => w.isNotEmpty).map((w) => '${w[0].toUpperCase()}${w.substring(1)}').join(' ');

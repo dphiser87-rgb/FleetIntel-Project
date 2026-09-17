@@ -24,7 +24,7 @@ const STATUS_STYLES = {
   resolved: "border-[#34C759] text-[#34C759]",
 };
 
-const PRICING_ROLES = ["workshop_head", "operations_manager", "finance", "admin"];
+const PRICING_ROLES = ["workshop_manager", "operations_manager", "finance", "admin"];
 
 export default function DefectReporting() {
   const { user } = useAuth();
@@ -46,7 +46,7 @@ export default function DefectReporting() {
     const [d, v, u] = await Promise.all([api.get("/defects"), api.get("/vehicles"), api.get("/users")]);
     setDefects(d.data || []);
     setVehicles(v.data || []);
-    setTechnicians((u.data || []).filter(x => ["mechanic", "workshop_head"].includes(x.role)));
+    setTechnicians((u.data || []).filter(x => ["mechanic", "workshop_manager"].includes(x.role)));
   };
   useEffect(() => { load(); }, []);
 

@@ -14,7 +14,7 @@ import { hasAccess } from "@/lib/access";
 
 const OPS_ROLES = ["operations_manager", "admin"];
 const FINANCE_ROLES = ["finance", "admin"];
-const REQUISITION_APPROVER_ROLES = ["workshop_head", "admin"];
+const REQUISITION_APPROVER_ROLES = ["workshop_manager", "admin"];
 
 export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, onChange }) {
   const { currency } = useCurrency();
@@ -63,7 +63,7 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
   };
 
   // Gated by the "quotes" System Right rather than a hardcoded role, mirroring the backend's
-  // require_module("quotes", "full") on POST /maintenance/{mid}/quotes -- workshop_head/admin/manager
+  // require_module("quotes", "full") on POST /maintenance/{mid}/quotes -- workshop_manager/admin/manager
   // get it by default, but a workspace with no Workshop Manager can grant it to Operations or Finance
   // instead via Team permissions.
   const canSubmitQuote = (!latestQuote || latestQuote.stage === "rejected") && hasAccess(currentUser, "quotes", "full");

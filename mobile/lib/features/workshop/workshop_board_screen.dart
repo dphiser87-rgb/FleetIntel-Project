@@ -76,7 +76,7 @@ class _WorkshopBoardScreenState extends ConsumerState<WorkshopBoardScreen> {
 
   bool get _canCreate {
     final role = ref.read(authControllerProvider).user?['role'] as String?;
-    return role == 'mechanic' || role == 'workshop_head' || role == 'admin';
+    return role == 'mechanic' || role == 'workshop_manager' || role == 'admin';
   }
 
   @override
@@ -88,7 +88,7 @@ class _WorkshopBoardScreenState extends ConsumerState<WorkshopBoardScreen> {
     final visible = _filter == 'all' ? _jobs : _jobs.where((j) => j['status'] == _filter).toList();
 
     // Finance's job is reviewing the financial workflow workshop activity generates (quotes needing a
-    // decision, POs awaiting payment) -- not tracking job status the way mechanics/workshop_head do,
+    // decision, POs awaiting payment) -- not tracking job status the way mechanics/workshop_manager do,
     // so it gets a dedicated view instead of this board with a relabeled subtitle. Every other role's
     // board is unchanged.
     if (role == 'finance') {
@@ -144,6 +144,13 @@ class _WorkshopBoardScreenState extends ConsumerState<WorkshopBoardScreen> {
                                   Expanded(child: _ActionTile(icon: Icons.receipt_long_outlined, label: 'Purchase orders', onTap: () => context.push('/workshop/pos'))),
                                   const SizedBox(width: AppMetrics.spacingSm),
                                   Expanded(child: _ActionTile(icon: Icons.bar_chart_outlined, label: 'Cost rollup', onTap: () => context.push('/workshop/cost-rollup'))),
+                                  // workshop_manager/operations_manager are the ones actually contacting
+                                  // suppliers for quotations, so they get read access to the supplier
+                                  // list Finance maintains -- mechanic doesn't need this tile.
+                                  if (role == 'workshop_manager' || role == 'operations_manager' || role == 'admin') ...[
+                                    const SizedBox(width: AppMetrics.spacingSm),
+                                    Expanded(child: _ActionTile(icon: Icons.storefront_outlined, label: 'Suppliers', onTap: () => context.push('/workshop/suppliers'))),
+                                  ],
                                 ],
                               ),
                               const SizedBox(height: AppMetrics.spacingMd),

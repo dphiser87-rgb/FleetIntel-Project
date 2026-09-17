@@ -227,7 +227,7 @@ class RegisterReq(BaseModel):
     password: str
     name: str
     role: Optional[Literal["admin", "manager", "inspector", "mechanic", "operations_manager", "finance",
-                            "workshop_head", "operations_staff", "finance_staff", "executive", "driver"]] = "manager"
+                            "workshop_manager", "operations_staff", "finance_staff", "executive", "driver"]] = "manager"
     invite_code: Optional[str] = None
     workspace_name: Optional[str] = None
 
@@ -385,7 +385,7 @@ class PartAdjust(BaseModel):
 class InviteIn(BaseModel):
     email: EmailStr
     role: Literal["manager", "inspector", "mechanic", "admin", "operations_manager", "finance",
-                  "workshop_head", "operations_staff", "finance_staff", "executive", "driver"] = "manager"
+                  "workshop_manager", "operations_staff", "finance_staff", "executive", "driver"] = "manager"
 
 class WorkspaceRename(BaseModel):
     name: Optional[str] = None
@@ -619,7 +619,7 @@ class EmailInsuranceReq(BaseModel):
     to_email: EmailStr
     note: Optional[str] = ""
 
-DEFECT_PRICING_ROLES = ("workshop_head", "operations_manager", "finance", "admin")
+DEFECT_PRICING_ROLES = ("workshop_manager", "operations_manager", "finance", "admin")
 
 class DefectIn(BaseModel):
     vehicle_id: Optional[str] = None
@@ -1074,7 +1074,7 @@ def _default_permissions(role: str) -> dict:
         # Finance explicitly gets executive_dashboard visibility (per product decision) — it's not
         # part of read_all's blanket grant since most other roles above are deliberately excluded.
         modules = {**read_all, "parts": "full", "reports": "full", "purchase_orders": "full", "executive_dashboard": "read"}
-    elif role == "workshop_head":
+    elif role == "workshop_manager":
         modules = {**read_all, "maintenance": "full", "purchase_orders": "read", "parts": "read", "fleet": "read", "defects": "full", "parts_requisitions": "full", "quotes": "full", "executive_dashboard": "none"}
     elif role == "operations_staff":
         modules = {**read_all, "maintenance": "full", "vehicle_checklist": "full", "templates": "full",
@@ -1105,7 +1105,7 @@ def _default_permissions(role: str) -> dict:
 
 PROFILE_PRESETS = {role: _default_permissions(role) for role in
                     ("admin", "manager", "inspector", "mechanic", "operations_manager", "finance",
-                     "workshop_head", "operations_staff", "finance_staff", "executive", "driver")}
+                     "workshop_manager", "operations_staff", "finance_staff", "executive", "driver")}
 
 # --- Vehicle/asset visibility scoping ---
 # A second, data-level axis on top of the module (none/read/full) permissions above: which specific
@@ -2180,7 +2180,7 @@ async def delete_maintenance(mid: str, user: dict = Depends(require_module("main
 
 # --- Maintenance Scheduling & Service Reminder module ---
 # Roles: Fleet Manager (manager, operations_manager) create/edit/close schedules — require_module
-# "maintenance" full, same as the existing one-off maintenance jobs. Workshop Manager (workshop_head,
+# "maintenance" full, same as the existing one-off maintenance jobs. Workshop Manager (workshop_manager,
 # mechanic) completes maintenance — already gated the same way on PATCH /maintenance. Executive
 # (finance, finance_staff) gets read-only via require_module(..., "read"). Driver has no dedicated
 # RBAC role in this system — "view upcoming maintenance only" maps to the existing read-level grant
@@ -2583,7 +2583,7 @@ async def apply_maintenance_template(tid: str, body: ApplyTemplateIn, user: dict
 # --- Quote approvals (Workshop -> Operations Manager -> Finance) ---
 OPS_ROLES = ("operations_manager", "admin")
 FINANCE_ROLES = ("finance", "admin")
-REQUISITION_APPROVER_ROLES = ("workshop_head", "admin")
+REQUISITION_APPROVER_ROLES = ("workshop_manager", "admin")
 
 async def _notify(ws: str, roles: tuple, ntype: str, message: str, maintenance_id: str):
     """Writes one notification row per matching user in the workspace — recipients are resolved to
@@ -2634,7 +2634,7 @@ async def _create_quote(ws: str, mid: str, job_title: str, items: List[QuoteItem
 async def create_quote(mid: str, q: QuoteIn, user: dict = Depends(require_module("quotes", "full"))):
     # Gated by the "quotes" System Right (not a hardcoded role tuple) so a workspace without a
     # Workshop Manager can grant this to Operations or Finance instead via Team permissions.
-    # workshop_head/admin/manager get "full" by default (_default_permissions); every other role
+    # workshop_manager/admin/manager get "full" by default (_default_permissions); every other role
     # defaults to "read" (can view costing, same as the requisition-shortfall auto-escalation path
     # in _create_quote already gives them) until an admin explicitly upgrades them.
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
@@ -2930,10 +2930,10 @@ async def assign_purchase_order_supplier(poid: str, body: PurchaseOrderSupplierA
 # --- Suppliers (Finance-owned master data) ---
 
 @api.get("/suppliers")
-async def list_suppliers(user: dict = Depends(require_role("finance", "workshop_head", "operations_manager"))):
+async def list_suppliers(user: dict = Depends(require_role("finance", "workshop_manager", "operations_manager"))):
     """Supplier list with a paid-spend rollup, so Finance can see which supplier is costing the most --
     the whole point of tracking suppliers as real entities instead of free text on a PO. Read access
-    also extends to workshop_head/operations_manager: they're the ones actually contacting suppliers
+    also extends to workshop_manager/operations_manager: they're the ones actually contacting suppliers
     for quotations, so they need to see the existing list -- creating a supplier stays Finance-only
     (POST /suppliers below), since Finance owns that master data per the user's explicit framing."""
     rows = await fetch_all(
@@ -2989,7 +2989,7 @@ async def workshop_queue(user: dict = Depends(get_current_user)):
     role = user.get("role")
     items = []
 
-    if role in ("workshop_head", "admin"):
+    if role in ("workshop_manager", "admin"):
         rows = await fetch_all(
             "select r.maintenance_id, r.items, r.requested_by_name, m.title as job_title "
             "from parts_requisitions r join maintenance m on m.id = r.maintenance_id "
@@ -4472,7 +4472,7 @@ async def update_driver(did: str, patch: dict, user: dict = Depends(get_current_
     current = await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
     if not current: raise HTTPException(status_code=404, detail="Not found")
     if "assigned_vehicle_id" in patch and user.get("role") not in (
-        "admin", "manager", "operations_manager", "workshop_head", "mechanic",
+        "admin", "manager", "operations_manager", "workshop_manager", "mechanic",
     ):
         raise HTTPException(status_code=403, detail="Only an ops manager, workshop manager, or technician can reassign a vehicle")
     if "app_access" in patch or "email" in patch:
@@ -6713,7 +6713,7 @@ async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_curren
             raise HTTPException(status_code=400, detail="Logo image is too large (max ~1.5MB)")
         await execute("update workspaces set report_logo = :l where id = :id", l=req.report_logo or None, id=user["workspace_id"])
     if req.costing_approver_role is not None:
-        if req.costing_approver_role and req.costing_approver_role not in ("operations_manager", "finance", "workshop_head"):
+        if req.costing_approver_role and req.costing_approver_role not in ("operations_manager", "finance", "workshop_manager"):
             raise HTTPException(status_code=400, detail="Invalid costing approver role")
         await execute("update workspaces set costing_approver_role = :r where id = :id", r=req.costing_approver_role or None, id=user["workspace_id"])
         if req.costing_approver_role:

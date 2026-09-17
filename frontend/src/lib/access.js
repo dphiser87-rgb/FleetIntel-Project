@@ -22,7 +22,7 @@ function defaultPermissions(role) {
       return { ...readAll, maintenance: "full", parts: "full", fleet: "full", reports: "full", defects: "full", executive_dashboard: "none" };
     case "finance":
       return { ...readAll, parts: "full", reports: "full", purchase_orders: "full", executive_dashboard: "read" };
-    case "workshop_head":
+    case "workshop_manager":
       return { ...readAll, maintenance: "full", purchase_orders: "read", parts: "read", fleet: "read", defects: "full", parts_requisitions: "full", quotes: "full", executive_dashboard: "none" };
     case "operations_staff":
       return { ...readAll, maintenance: "full", vehicle_checklist: "full", templates: "full", parts: "full", purchase_orders: "read", defects: "full", executive_dashboard: "none" };
@@ -53,7 +53,7 @@ export const ROLE_LABEL = {
   operations_staff: "Operations Staff",
   finance: "Finance Manager",
   finance_staff: "Finance Staff",
-  workshop_head: "Workshop Head",
+  workshop_manager: "Workshop Manager",
   executive: "Executive",
 };
 
@@ -62,7 +62,7 @@ export const ROLE_COLOR = {
   manager: "border-[#FFCC00] text-[#FFCC00]",
   inspector: "border-[#3B82F6] text-[#3B82F6]",
   mechanic: "border-[#34C759] text-[#34C759]",
-  workshop_head: "border-[#A855F7] text-[#A855F7]",
+  workshop_manager: "border-[#A855F7] text-[#A855F7]",
   operations_manager: "border-[#F59E0B] text-[#F59E0B]",
   operations_staff: "border-[#F59E0B]/60 text-[#F59E0B]/80",
   finance: "border-[#14B8A6] text-[#14B8A6]",
