@@ -3,11 +3,12 @@ import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-route
 import { useAuth } from "@/contexts/AuthContext";
 import GlobalAlertBar from "@/components/GlobalAlertBar";
 import NotificationCenter from "@/components/NotificationCenter";
+import HelpMenu from "@/components/HelpMenu";
 import { hasAccess } from "@/lib/access";
 import {
   ChartLine, Truck, ClipboardText, Wrench, ChartBar, SignOut, Gauge, Package, UsersThree, ClockCounterClockwise,
   ShieldCheck, UserCircle, Warning, Stack, ListChecks, Receipt, ShieldCheckered, Calculator, CaretDown, WarningOctagon,
-  CalendarCheck, Brain, Gear, FileText,
+  CalendarCheck, Brain, Gear, FileText, Question,
 } from "@phosphor-icons/react";
 
 const nav = [
@@ -33,6 +34,7 @@ const nav = [
   { to: "/audit", label: "Activity", icon: ClockCounterClockwise, id: "nav-audit", moduleKey: "audit" },
   { to: "/security", label: "Security", icon: ShieldCheck, id: "nav-security", moduleKey: "security" },
   { to: "/settings", label: "Account Settings", icon: Gear, id: "nav-settings" },
+  { to: "/help", label: "Help & Support", icon: Question, id: "nav-help" },
 ];
 
 const GROUPS = ["Operations", "Finance"];
@@ -101,6 +103,7 @@ export default function Layout() {
               <div className="text-sm truncate" data-testid="user-name">{user?.name}</div>
               <div className="overline truncate" data-testid="user-role">{user?.role}</div>
             </div>
+            <HelpMenu />
             <NotificationCenter />
           </div>
           <button

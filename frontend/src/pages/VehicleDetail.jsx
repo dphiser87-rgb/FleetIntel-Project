@@ -1,15 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "@/lib/api";
-import { CaretLeft, ClipboardText, Wrench, ShareNetwork, Copy, X as XIcon, Warning as WarningIcon, ClockCounterClockwise, Heartbeat } from "@phosphor-icons/react";
+import { CaretLeft, ClipboardText, Wrench, ShareNetwork, Copy, X as XIcon, Warning as WarningIcon, ClockCounterClockwise, Heartbeat, DotsThreeVertical } from "@phosphor-icons/react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, CartesianGrid } from "recharts";
 import { toast } from "sonner";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 export default function VehicleDetail() {
   const { currency } = useCurrency();
   const { id } = useParams();
+  const navigate = useNavigate();
   const [v, setV] = useState(null);
   const [insp, setInsp] = useState([]);
   const [maint, setMaint] = useState([]);
@@ -123,8 +125,28 @@ export default function VehicleDetail() {
           </div>
 
           <div className="bg-[#121214] border border-border p-6">
-            <div className="overline">History</div>
-            <h3 className="font-display text-2xl font-bold tracking-tight mt-1 mb-4">Maintenance log</h3>
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="overline">History</div>
+                <h3 className="font-display text-2xl font-bold tracking-tight mt-1 mb-4">Maintenance log</h3>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button data-testid="maintenance-log-menu" className="text-muted-foreground hover:text-white p-1" aria-label="More actions">
+                    <DotsThreeVertical size={18} weight="bold" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="bg-[#121214] border-border text-foreground">
+                  <DropdownMenuItem
+                    data-testid="maintenance-log-report-issue"
+                    className="gap-2 cursor-pointer"
+                    onClick={() => navigate(`/help/new?vehicle_id=${id}&source_module=${encodeURIComponent("Maintenance")}&source_screen=${encodeURIComponent("Vehicle Detail")}`)}
+                  >
+                    <ClipboardText size={15} /> Report an Issue
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             <div className="space-y-2">
               {maint.map(m => (
                 <div key={m.id} className="flex items-center justify-between border-b border-border/50 py-2">

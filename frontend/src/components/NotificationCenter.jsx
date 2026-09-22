@@ -33,6 +33,7 @@ export default function NotificationCenter() {
     }
     setOpen(false);
     if (n.related_maintenance_id) navigate(`/maintenance?job=${n.related_maintenance_id}`);
+    else if (n.related_ticket_id) navigate(`/help/tickets/${n.related_ticket_id}`);
   };
 
   const markAllRead = async () => {
