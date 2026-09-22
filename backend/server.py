@@ -19,7 +19,7 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta, date as date_cls
 from typing import List, Optional, Literal, Dict
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query, Header
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr, ValidationError
@@ -565,6 +565,29 @@ class SupplierIn(BaseModel):
 
 class PurchaseOrderSupplierAssign(BaseModel):
     supplier_id: str
+
+class SupportTicketIn(BaseModel):
+    category: Literal["account", "vehicle", "billing", "reports_data", "mobile_app", "other"]
+    subcategory: Optional[str] = None
+    vehicle_id: Optional[str] = None
+    subject: str
+    description: str
+    priority: Literal["low", "normal", "high", "critical"] = "normal"
+    attachments: List[QuoteAttachment] = []
+    # Set by the context-aware "Report an Issue" entry point (Phase 4) -- never user-editable.
+    source_module: Optional[str] = None
+    source_screen: Optional[str] = None
+
+class SupportTicketMessageIn(BaseModel):
+    body: str
+    attachments: List[QuoteAttachment] = []
+
+class SupportInboxReplyIn(BaseModel):
+    body: str
+    author_name: Optional[str] = "FleetIntel Support"
+
+class SupportInboxStatusIn(BaseModel):
+    status: Literal["open", "in_progress", "waiting_on_customer", "resolved", "closed"]
 
 class PartRequisitionItem(BaseModel):
     part_id: str
@@ -3191,6 +3214,210 @@ async def mark_notification_read(nid: str, user: dict = Depends(get_current_user
 async def mark_all_notifications_read(user: dict = Depends(get_current_user)):
     await execute("update notifications set read = true where recipient_user_id = :uid and read = false", uid=user["id"])
     return {"ok": True}
+
+# --- Help & Support (V1) ---
+# Customer-facing ticket system only -- there is no internal FleetIntel-staff role or in-app support
+# queue in this codebase (every existing role is scoped to one workspace/"account"; a cross-workspace
+# staff view would need a genuinely new RBAC concept). Per the user, tickets instead route to
+# FleetIntel's support email inbox (SUPPORT_INBOX_EMAIL) and support acts through a small shared-secret
+# endpoint below (SUPPORT_API_KEY) rather than a logged-in staff UI.
+
+TICKET_STATUSES = ("open", "in_progress", "waiting_on_customer", "resolved", "closed")
+
+async def require_support_key(x_support_key: Optional[str] = Header(default=None)):
+    """Gates the support-inbox reply/status endpoints -- a shared secret instead of a user role, since
+    there's no cross-workspace staff account to authenticate as. Never used by any customer-facing route."""
+    expected = os.environ.get("SUPPORT_API_KEY")
+    if not expected or x_support_key != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+async def _gen_ticket_number() -> str:
+    count = (await fetch_one("select count(*) as c from support_tickets"))["c"]
+    return f"FI-{count + 1:04d}"
+
+async def _ticket_or_404(ticket_id: str, ws: str) -> dict:
+    ticket = await fetch_one("select * from support_tickets where id = :id and workspace_id = :ws", id=ticket_id, ws=ws)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return ticket
+
+def _ticket_email_html(title: str, lines: List[str]) -> str:
+    body = "".join(f'<p style="margin:0 0 8px 0">{escape(line)}</p>' for line in lines)
+    return (
+        '<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0f172a">'
+        f'<tr><td style="padding:24px;border-bottom:3px solid #0EA5E9">'
+        f'<div style="font-size:12px;letter-spacing:0.2em;color:#64748b;text-transform:uppercase">FleetIntel Help &amp; Support</div>'
+        f'<h1 style="margin:8px 0 0 0;font-size:22px">{escape(title)}</h1></td></tr>'
+        f'<tr><td style="padding:24px">{body}'
+        f'<p style="margin:16px 0 0 0;font-size:13px;color:#64748b">Sent by FleetIntel. This is an automated support notification.</p>'
+        f'</td></tr></table>'
+    )
+
+async def _notify_support_inbox(ticket: dict, event: str, extra: str = "") -> None:
+    """Best-effort email to FleetIntel's own support queue -- never blocks the request that triggered it."""
+    to = os.environ.get("SUPPORT_INBOX_EMAIL")
+    if not to:
+        logger.warning("SUPPORT_INBOX_EMAIL not set — skipping support-inbox notification")
+        return
+    ws = await fetch_one("select name from workspaces where id = :id", id=ticket["workspace_id"])
+    lines = [
+        f"{ticket['ticket_number']} — {event}",
+        f"Account: {(ws or {}).get('name') or 'Unknown'}",
+        f"Subject: {ticket['subject']}",
+        f"Category: {ticket['category']}" + (f" / {ticket['subcategory']}" if ticket.get("subcategory") else ""),
+        f"Priority: {ticket['priority']}",
+    ]
+    if extra:
+        lines.append(extra)
+    try:
+        await send_email(to=to, subject=f"[{ticket['ticket_number']}] {event}", html=_ticket_email_html(event, lines))
+    except Exception as e:
+        logger.error(f"support-inbox email failed: {e}")
+
+async def _notify_ticket_customer(ticket: dict, event: str, message: str) -> None:
+    """In-app notification (existing bell/Sheet) + best-effort email to the reporter."""
+    if not ticket.get("user_id"):
+        return
+    try:
+        await execute(
+            "insert into notifications (id, workspace_id, recipient_user_id, type, message, related_ticket_id) "
+            "values (:id, :ws, :uid, 'ticket_update', :msg, :tid)",
+            id=str(uuid.uuid4()), ws=ticket["workspace_id"], uid=ticket["user_id"], msg=message, tid=ticket["id"],
+        )
+    except Exception as e:
+        logger.error(f"ticket notification insert failed: {e}")
+    user = await fetch_one("select email from user_profiles where id = :id", id=ticket["user_id"])
+    to = (user or {}).get("email")
+    if not to:
+        return
+    try:
+        await send_email(to=to, subject=f"[{ticket['ticket_number']}] {event}", html=_ticket_email_html(event, [message]))
+    except Exception as e:
+        logger.error(f"customer ticket email failed: {e}")
+
+async def _log_ticket_activity(ticket_id: str, event_type: str, old_value: Optional[str], new_value: Optional[str], actor_type: str, actor_name: Optional[str]):
+    await execute(
+        "insert into support_ticket_activity (id, ticket_id, event_type, old_value, new_value, actor_type, actor_name) "
+        "values (:id, :tid, :et, :ov, :nv, :at, :an)",
+        id=str(uuid.uuid4()), tid=ticket_id, et=event_type, ov=old_value, nv=new_value, at=actor_type, an=actor_name,
+    )
+
+@api.post("/support/tickets")
+async def create_support_ticket(body: SupportTicketIn, user: dict = Depends(get_current_user)):
+    if body.vehicle_id:
+        vehicle = await fetch_one("select id from vehicles where id = :id and workspace_id = :ws", id=body.vehicle_id, ws=user["workspace_id"])
+        if not vehicle:
+            raise HTTPException(status_code=404, detail="Vehicle not found")
+    tid = str(uuid.uuid4())
+    ticket_number = await _gen_ticket_number()
+    await execute(
+        "insert into support_tickets (id, ticket_number, workspace_id, user_id, vehicle_id, category, subcategory, "
+        "subject, description, priority, source_module, source_screen) "
+        "values (:id, :tn, :ws, :uid, :vid, :cat, :subcat, :subj, :desc, :pri, :sm, :ss)",
+        id=tid, tn=ticket_number, ws=user["workspace_id"], uid=user["id"], vid=body.vehicle_id,
+        cat=body.category, subcat=body.subcategory, subj=body.subject, desc=body.description,
+        pri=body.priority, sm=body.source_module, ss=body.source_screen,
+    )
+    for a in body.attachments:
+        await execute(
+            "insert into support_ticket_attachments (id, ticket_id, file_name, file_type, file_size, data_url, uploaded_by) "
+            "values (:id, :tid, :fn, :ft, :fs, :url, :uid)",
+            id=a.id, tid=tid, fn=a.file_name, ft=a.file_type, fs=a.file_size, url=a.data_url, uid=user["id"],
+        )
+    await _log_ticket_activity(tid, "created", None, "open", "customer", user.get("name"))
+    ticket = await fetch_one("select * from support_tickets where id = :id", id=tid)
+    await _notify_support_inbox(ticket, "New ticket created", body.description)
+    await log_event(user, "support_ticket.created", "support_ticket", tid, {"ticket_number": ticket_number})
+    return ticket
+
+@api.get("/support/tickets")
+async def list_support_tickets(
+    status: Optional[str] = None, priority: Optional[str] = None, category: Optional[str] = None,
+    vehicle_id: Optional[str] = None, search: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    where = ["t.workspace_id = :ws"]
+    params = {"ws": user["workspace_id"]}
+    if status: where.append("t.status = :status"); params["status"] = status
+    if priority: where.append("t.priority = :priority"); params["priority"] = priority
+    if category: where.append("t.category = :category"); params["category"] = category
+    if vehicle_id: where.append("t.vehicle_id = :vehicle_id"); params["vehicle_id"] = vehicle_id
+    if search:
+        where.append("(t.ticket_number ilike :q or t.subject ilike :q)")
+        params["q"] = f"%{search}%"
+    rows = await fetch_all(
+        f"select t.*, v.name as vehicle_name, v.plate as vehicle_plate "
+        f"from support_tickets t left join vehicles v on v.id = t.vehicle_id "
+        f"where {' and '.join(where)} order by t.updated_at desc",
+        **params,
+    )
+    return rows
+
+@api.get("/support/tickets/{tid}")
+async def get_support_ticket(tid: str, user: dict = Depends(get_current_user)):
+    ticket = await _ticket_or_404(tid, user["workspace_id"])
+    vehicle = await fetch_one("select id, name, plate, type, group_id from vehicles where id = :id", id=ticket["vehicle_id"]) if ticket.get("vehicle_id") else None
+    messages = await fetch_all("select * from support_ticket_messages where ticket_id = :id order by created_at", id=tid)
+    activity = await fetch_all("select * from support_ticket_activity where ticket_id = :id order by created_at", id=tid)
+    attachments = await fetch_all("select * from support_ticket_attachments where ticket_id = :id order by created_at", id=tid)
+    return {**ticket, "vehicle": vehicle, "messages": messages, "activity": activity, "attachments": attachments}
+
+@api.post("/support/tickets/{tid}/messages")
+async def reply_to_support_ticket(tid: str, body: SupportTicketMessageIn, user: dict = Depends(get_current_user)):
+    ticket = await _ticket_or_404(tid, user["workspace_id"])
+    mid = str(uuid.uuid4())
+    await execute(
+        "insert into support_ticket_messages (id, ticket_id, author_type, author_id, author_name, body) "
+        "values (:id, :tid, 'customer', :uid, :name, :body)",
+        id=mid, tid=tid, uid=user["id"], name=user.get("name"), body=body.body,
+    )
+    for a in body.attachments:
+        await execute(
+            "insert into support_ticket_attachments (id, ticket_id, message_id, file_name, file_type, file_size, data_url, uploaded_by) "
+            "values (:id, :tid, :mid, :fn, :ft, :fs, :url, :uid)",
+            id=a.id, tid=tid, mid=mid, fn=a.file_name, ft=a.file_type, fs=a.file_size, url=a.data_url, uid=user["id"],
+        )
+    await execute("update support_tickets set updated_at = now() where id = :id", id=tid)
+    await _notify_support_inbox(ticket, "Customer replied", body.body)
+    return await fetch_one("select * from support_ticket_messages where id = :id", id=mid)
+
+@api.post("/support/inbox/tickets/{ticket_number}/reply", dependencies=[Depends(require_support_key)])
+async def support_inbox_reply(ticket_number: str, body: SupportInboxReplyIn):
+    ticket = await fetch_one("select * from support_tickets where ticket_number = :tn", tn=ticket_number)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    mid = str(uuid.uuid4())
+    await execute(
+        "insert into support_ticket_messages (id, ticket_id, author_type, author_name, body) "
+        "values (:id, :tid, 'support', :name, :body)",
+        id=mid, tid=ticket["id"], name=body.author_name, body=body.body,
+    )
+    await execute("update support_tickets set updated_at = now() where id = :id", id=ticket["id"])
+    await _notify_ticket_customer(ticket, "Support replied to your ticket", body.body)
+    return await fetch_one("select * from support_ticket_messages where id = :id", id=mid)
+
+@api.patch("/support/inbox/tickets/{ticket_number}/status", dependencies=[Depends(require_support_key)])
+async def support_inbox_set_status(ticket_number: str, body: SupportInboxStatusIn):
+    ticket = await fetch_one("select * from support_tickets where ticket_number = :tn", tn=ticket_number)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    old_status = ticket["status"]
+    if body.status == old_status:
+        return ticket
+    resolved_at = "now()" if body.status == "resolved" else None
+    closed_at = "now()" if body.status == "closed" else None
+    await execute(
+        f"update support_tickets set status = :status, updated_at = now() "
+        f"{', resolved_at = now()' if body.status == 'resolved' else ''} "
+        f"{', closed_at = now()' if body.status == 'closed' else ''} "
+        f"where id = :id",
+        status=body.status, id=ticket["id"],
+    )
+    await _log_ticket_activity(ticket["id"], "status_change", old_status, body.status, "support", "FleetIntel Support")
+    updated = await fetch_one("select * from support_tickets where id = :id", id=ticket["id"])
+    label = "Your ticket was resolved" if body.status == "resolved" else "Your ticket status changed"
+    await _notify_ticket_customer(updated, label, f"Status changed from {old_status.replace('_', ' ')} to {body.status.replace('_', ' ')}.")
+    return updated
 
 # --- KPIs / Analytics ---
 def _downtime_rate(vehicle: dict, ws_default: float) -> float:
