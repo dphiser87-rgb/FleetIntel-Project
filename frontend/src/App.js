@@ -36,6 +36,11 @@ import ComplianceDashboard from "@/pages/ComplianceDashboard";
 import BudgetVsActual from "@/pages/BudgetVsActual";
 import PublicVehicle from "@/pages/PublicVehicle";
 import PublicIncident from "@/pages/PublicIncident";
+import Help from "@/pages/Help";
+import HelpNewTicket from "@/pages/HelpNewTicket";
+import HelpTickets from "@/pages/HelpTickets";
+import HelpTicketDetail from "@/pages/HelpTicketDetail";
+import HelpCentre from "@/pages/HelpCentre";
 
 const Protected = ({ children }) => {
   const { user, loading } = useAuth();
@@ -90,6 +95,11 @@ function App() {
               <Route path="settings" element={<Settings />} />
               <Route path="reports" element={<Reports />} />
               <Route path="report-center" element={<ReportCenter />} />
+              <Route path="help" element={<Help />} />
+              <Route path="help/new" element={<HelpNewTicket />} />
+              <Route path="help/tickets" element={<HelpTickets />} />
+              <Route path="help/tickets/:id" element={<HelpTicketDetail />} />
+              <Route path="help/centre" element={<HelpCentre />} />
             </Route>
           </Routes>
         </BrowserRouter>
