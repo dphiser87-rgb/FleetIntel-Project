@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, API } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 import { ArrowDown, ArrowUp, ClipboardText, DownloadSimple, Gear, X } from "@phosphor-icons/react";
 import InspectionDetailPanel from "@/components/InspectionDetailPanel";
 
@@ -101,10 +101,7 @@ export default function VehicleChecklist() {
     else { setSortKey(k); setSortDir("desc"); }
   };
 
-  const exportCsv = () => {
-    const token = localStorage.getItem("token");
-    window.open(`${API}/export/inspections.csv?token=${encodeURIComponent(token)}`, "_blank");
-  };
+  const exportCsv = () => downloadFile("/export/inspections.csv", "inspections.csv");
 
   const SortTh = ({ label, sortableKey, testid }) => (
     <th className="p-2 cursor-pointer hover:text-primary" onClick={() => toggleSort(sortableKey)} data-testid={testid}>

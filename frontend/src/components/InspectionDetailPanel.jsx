@@ -1,15 +1,11 @@
 import React from "react";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { API } from "@/lib/api";
+import { downloadFile } from "@/lib/api";
 import { DownloadSimple } from "@phosphor-icons/react";
 import InspectionDetailContent from "@/components/InspectionDetailContent";
 
 export default function InspectionDetailPanel({ inspection, onClose, onActioned }) {
-  const downloadPdf = () => {
-    const token = localStorage.getItem("token");
-    const url = `${API}/inspections/${inspection.id}/pdf?token=${encodeURIComponent(token)}`;
-    window.open(url, "_blank");
-  };
+  const downloadPdf = () => downloadFile(`/inspections/${inspection.id}/pdf`, `inspection-${inspection.id}.pdf`);
 
   return (
     <Sheet open={!!inspection} onOpenChange={(o) => !o && onClose()}>

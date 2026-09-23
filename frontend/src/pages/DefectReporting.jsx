@@ -43,10 +43,9 @@ export default function DefectReporting() {
   const [form, setForm] = useState({ vehicle_id: "", category: "general", severity: "medium", description: "", location: "", assigned_to: "", estimated_cost: "" });
 
   const load = async () => {
-    // /users is gated on the team module, so a narrowly-scoped profile can legitimately get a 403
-    // here -- that should cost them the technician picker, not the whole Defects page.
+    // A failure fetching the directory should cost the technician picker, not the whole page.
     const [d, v, u] = await Promise.all([
-      api.get("/defects"), api.get("/vehicles"), api.get("/users").catch(() => ({ data: [] })),
+      api.get("/defects"), api.get("/vehicles"), api.get("/users/directory").catch(() => ({ data: [] })),
     ]);
     setDefects(d.data || []);
     setVehicles(v.data || []);

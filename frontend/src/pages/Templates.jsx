@@ -143,7 +143,7 @@ export default function Templates() {
   const load = () => api.get("/templates").then(r => setTemplates(r.data));
   useEffect(() => {
     load();
-    api.get("/users").then(r => setUsers(r.data || [])).catch(() => {});
+    api.get("/users/directory").then(r => setUsers(r.data || [])).catch(() => {});
     api.get("/vehicle-groups").then(r => setGroups(r.data || [])).catch(() => {});
   }, []);
 

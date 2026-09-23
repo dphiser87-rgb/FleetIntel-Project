@@ -65,7 +65,7 @@ export default function Maintenance() {
     load();
     api.get("/vehicles").then(r => setVehicles(r.data));
     api.get("/assets").then(r => setAssets(r.data)).catch(() => {});
-    api.get("/users").then(r => setUsers(r.data));
+    api.get("/users/directory").then(r => setUsers(r.data));
     api.get("/maintenance-schedules").then(r => setSchedules(r.data || [])).catch(() => {});
   }, []);
   // This board otherwise only ever fetched once on mount, so a job completed/approved/moved by

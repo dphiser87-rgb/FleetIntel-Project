@@ -217,11 +217,14 @@ def _assert_module(user: dict, module: str, level: str = "read") -> None:
         raise HTTPException(status_code=403, detail=f"Insufficient access to {module}")
 
 async def download_user(request: Request, module: str, level: str = "read") -> dict:
-    """Auth for file-download routes: header first, ?token= fallback, then the same module gate the
-    JSON routes get. Before this existed every export/PDF route was authenticated but ungated, so a
-    driver -- whose preset is "none" on every module -- could pull the full user/maintenance/parts CSVs."""
-    token = request.query_params.get("token")
-    user = await user_from_token(token) if token else await get_current_user(request)
+    """Auth for file-download routes: normal Authorization header, then the same module gate the JSON
+    routes get.
+
+    These used to also accept the access token as ?token=, because an <a href>/window.open can't set
+    a header. That put a full-privilege token in the URL, where it persists in browser history,
+    Referer headers and access logs. The frontend now fetches these as blobs through the usual
+    authenticated client instead, so the query-param path is gone rather than merely discouraged."""
+    user = await get_current_user(request)
     _assert_module(user, module, level)
     return user
 
@@ -1178,7 +1181,12 @@ MODULE_KEYS = ["dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_
 def _default_permissions(role: str) -> dict:
     """Pre-fills System Rights from a Profile (role). Enforced on routes via require_module()."""
     full = {m: "full" for m in MODULE_KEYS}
-    read_all = {m: "read" for m in MODULE_KEYS}
+    # Oversight modules are withheld from the blanket read grant below: the activity log, the team
+    # directory and the security policy expose every user's email and actions, which an operational
+    # role doesn't need to do its job. Roles that should see them are granted them explicitly.
+    # Assignee pickers read GET /users/directory (names only) rather than the full team list.
+    oversight = ("audit", "team", "security")
+    read_all = {m: ("none" if m in oversight else "read") for m in MODULE_KEYS}
     if role == "admin":
         modules = full
     elif role == "manager":
@@ -1294,6 +1302,19 @@ SAFE_USER_COLS = (
 async def list_users(user: dict = Depends(require_module("team", "read"))):
     return await fetch_all(
         f"select {SAFE_USER_COLS} from user_profiles where workspace_id = :ws",
+        ws=user["workspace_id"],
+    )
+
+@api.get("/users/directory")
+async def users_directory(user: dict = Depends(get_current_user)):
+    """Names only, for assignee pickers ("who can I give this job to").
+
+    Deliberately separate from GET /users, which returns the full profile -- email, cell,
+    permissions, lock state -- and is gated on the team module. The pickers on Maintenance,
+    Inspection, Defects and Templates only ever read id/name/role, so pointing them here stops every
+    operational screen from pulling the whole workspace's contact details to render a dropdown."""
+    return await fetch_all(
+        "select id, name, role from user_profiles where workspace_id = :ws order by name",
         ws=user["workspace_id"],
     )
 

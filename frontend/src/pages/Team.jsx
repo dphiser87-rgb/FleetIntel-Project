@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, API } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 import { toast } from "sonner";
 import { UserPlus, Copy, Trash, PencilSimple, ArrowUp, ArrowDown, DownloadSimple, Prohibit, Key } from "@phosphor-icons/react";
 import { formatApiErrorDetail } from "@/lib/api";
@@ -135,10 +135,7 @@ export default function Team() {
     setSelectedIds(new Set());
   };
 
-  const exportCsv = () => {
-    const token = localStorage.getItem("token");
-    window.open(`${API}/export/users.csv?token=${encodeURIComponent(token)}`, "_blank");
-  };
+  const exportCsv = () => downloadFile("/export/users.csv", "team.csv");
 
   const SortTh = ({ label, k }) => (
     <th className="p-3 cursor-pointer hover:text-primary" onClick={() => toggleSort(k)}>

@@ -21,7 +21,7 @@ export default function InspectionDetailContent({ id, onActioned }) {
         data.template_snapshot ? Promise.resolve({ data: data.template_snapshot }) : api.get(`/templates/${data.template_id}`),
         data.vehicle_id ? api.get(`/vehicles/${data.vehicle_id}`) : api.get(`/assets/${data.asset_id}`),
         api.get("/maintenance"),
-        api.get("/users").catch(() => ({ data: [] })),
+        api.get("/users/directory").catch(() => ({ data: [] })),
       ]);
       setTemplate(t.data);
       setTarget(v.data);

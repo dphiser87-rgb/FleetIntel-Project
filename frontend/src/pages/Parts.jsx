@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Plus, Minus, Warning, Package, Trash, DownloadSimple } from "@phosphor-icons/react";
-import { api, API } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 import { useAuth } from "@/contexts/AuthContext";
@@ -90,10 +90,7 @@ export default function Parts() {
           <button data-testid="add-part-btn" onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
             <Plus size={14} weight="bold" /> Add part
           </button>
-          <button data-testid="export-parts-csv" onClick={() => {
-            const token = localStorage.getItem("token");
-            window.open(`${API}/export/parts.csv?token=${encodeURIComponent(token)}`, "_blank");
-          }} className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
+          <button data-testid="export-parts-csv" onClick={() => downloadFile("/export/parts.csv", "parts-inventory.csv")} className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
             <DownloadSimple size={14} /> Export CSV
           </button>
           <label className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary cursor-pointer" data-testid="import-parts-csv">

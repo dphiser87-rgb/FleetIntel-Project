@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, API, formatApiErrorDetail } from "@/lib/api";
+import { api, downloadFile, formatApiErrorDetail } from "@/lib/api";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Plus, DownloadSimple, Trash, PencilSimple, ArrowUp, ArrowDown, Eye, X } from "@phosphor-icons/react";
@@ -169,9 +169,8 @@ export default function ReportCenter() {
   };
 
   const download = (def, format) => {
-    const token = localStorage.getItem("token");
-    const url = `${API}/reports/definitions/${def.id}/download?format=${format || def.file_type}&token=${encodeURIComponent(token)}`;
-    window.open(url, "_blank");
+    const fmt = format || def.file_type;
+    return downloadFile(`/reports/definitions/${def.id}/download?format=${fmt}`, `${def.name || "report"}.${fmt}`);
   };
 
   return (
