@@ -8,7 +8,13 @@ const MODULE_KEYS = [
 
 function defaultPermissions(role) {
   const full = Object.fromEntries(MODULE_KEYS.map((m) => [m, "full"]));
-  const readAll = Object.fromEntries(MODULE_KEYS.map((m) => [m, "read"]));
+  // Mirrors the backend's `oversight` set: the activity log, team directory and security policy are
+  // withheld from the blanket read grant and given out explicitly. Keep in step with
+  // _default_permissions -- if this drifts, the nav offers pages the API then refuses with a 403.
+  const OVERSIGHT = ["audit", "team", "security"];
+  const readAll = Object.fromEntries(
+    MODULE_KEYS.map((m) => [m, OVERSIGHT.includes(m) ? "none" : "read"]),
+  );
   switch (role) {
     case "admin":
       return full;
