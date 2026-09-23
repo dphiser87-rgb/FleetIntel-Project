@@ -35,7 +35,9 @@ function defaultPermissions(role) {
     case "finance_staff":
       return { ...readAll, parts: "read", reports: "read", purchase_orders: "read", maintenance: "read", vehicle_checklist: "read", templates: "read", executive_dashboard: "none" };
     case "executive":
-      return readAll;
+      // Oversight role: gets audit/team back from the withheld set (see the backend's executive
+      // branch). security stays out — policy configuration, not visibility.
+      return { ...readAll, audit: "read", team: "read" };
     default:
       return Object.fromEntries(MODULE_KEYS.map((m) => [m, "none"]));
   }
