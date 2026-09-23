@@ -899,8 +899,13 @@ async def _send_login_otp(user: dict) -> None:
     )
     await send_email(to=user["email"], subject=f"Your {from_name} sign-in code", html=html)
 
-LOGIN_RATE_LIMIT = 10           # failed attempts per IP...
-LOGIN_RATE_WINDOW_MINUTES = 15  # ...within this window
+# Tiered deliberately. The per-(ip, email) budget is the real brute-force control; the per-IP ceiling
+# only exists to catch spraying across many accounts, and is set high because a whole office can sit
+# behind one NAT'd egress IP -- too tight a per-IP number locks out colleagues of whoever fat-fingered
+# their password, which is a self-inflicted outage rather than a defence.
+LOGIN_RATE_LIMIT_PER_ACCOUNT = 5
+LOGIN_RATE_LIMIT_PER_IP = 50
+LOGIN_RATE_WINDOW_MINUTES = 15
 
 def _client_ip(request: Request) -> str:
     """Vercel terminates TLS upstream, so request.client.host is the proxy -- the real caller is the
@@ -910,39 +915,59 @@ def _client_ip(request: Request) -> str:
         return fwd.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
-async def _enforce_login_rate_limit(request: Request) -> None:
-    """Throttles by IP before any credential work happens. Deliberately counts attempts for
-    nonexistent emails too, which is exactly the traffic the per-account lockout can't observe."""
+async def _enforce_login_rate_limit(request: Request, email: str) -> None:
+    """Throttles before any credential work happens. Counts attempts against emails that don't exist
+    too -- exactly the traffic the per-account lockout can't observe, since it needs a profile row."""
     ip = _client_ip(request)
     try:
         row = await fetch_one(
-            "select count(*) as c from login_attempts "
+            "select "
+            "  count(*) filter (where email = :email) as per_account, "
+            "  count(*) as per_ip "
+            "from login_attempts "
             "where ip = :ip and at > now() - make_interval(mins => :mins)",
-            ip=ip, mins=LOGIN_RATE_WINDOW_MINUTES,
+            ip=ip, email=email, mins=LOGIN_RATE_WINDOW_MINUTES,
         )
     except Exception as e:
         # Never let a throttling-table problem take login down for everyone.
         logger.error(f"login rate-limit check failed: {e}")
         return
-    if (row or {}).get("c", 0) >= LOGIN_RATE_LIMIT:
+    row = row or {}
+    if (row.get("per_account") or 0) >= LOGIN_RATE_LIMIT_PER_ACCOUNT or (row.get("per_ip") or 0) >= LOGIN_RATE_LIMIT_PER_IP:
         raise HTTPException(
             status_code=429,
             detail=f"Too many sign-in attempts. Try again in {LOGIN_RATE_WINDOW_MINUTES} minutes.",
         )
 
-async def _record_login_failure(request: Request) -> None:
-    ip = _client_ip(request)
+async def _record_login_failure(request: Request, email: str) -> None:
     try:
-        await execute("insert into login_attempts (id, ip) values (:id, :ip)", id=str(uuid.uuid4()), ip=ip)
+        await execute(
+            "insert into login_attempts (id, ip, email) values (:id, :ip, :email)",
+            id=str(uuid.uuid4()), ip=_client_ip(request), email=email,
+        )
         # Opportunistic trim so the table can't grow unboundedly; no cron needed.
         await execute("delete from login_attempts where at < now() - interval '24 hours'")
     except Exception as e:
         logger.error(f"login attempt record failed: {e}")
 
+async def _clear_login_failures(request: Request, email: str) -> None:
+    """A correct password clears that account's failures from this IP, so an earlier typo streak
+    doesn't keep counting against someone who has since signed in successfully."""
+    try:
+        await execute(
+            "delete from login_attempts where ip = :ip and email = :email",
+            ip=_client_ip(request), email=email,
+        )
+    except Exception as e:
+        logger.error(f"login attempt clear failed: {e}")
+
 @api.post("/auth/login")
 async def login(req: LoginReq2FA, request: Request):
-    await _enforce_login_rate_limit(request)
     identifier = req.email.strip()
+    # Throttle on what the caller supplied, before any lookup -- for a phone login that's the phone
+    # number, which is the identifier being guessed either way.
+    rate_key = identifier.lower()
+    await _enforce_login_rate_limit(request, rate_key)
     if "@" in identifier:
         email = identifier.lower()
     else:
@@ -952,7 +977,7 @@ async def login(req: LoginReq2FA, request: Request):
         # that, not a second auth mechanism.
         by_phone = await fetch_one("select email from user_profiles where phone = :phone", phone=identifier)
         if not by_phone:
-            await _record_login_failure(request)
+            await _record_login_failure(request, rate_key)
             raise HTTPException(status_code=401, detail="Invalid credentials")
         email = by_phone["email"]
 
@@ -979,7 +1004,7 @@ async def login(req: LoginReq2FA, request: Request):
                 )
             else:
                 await execute("update user_profiles set failed_login_attempts = :n where id = :id", n=attempts, id=pre["id"])
-        await _record_login_failure(request)
+        await _record_login_failure(request, rate_key)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     user = await fetch_one(
@@ -987,11 +1012,12 @@ async def login(req: LoginReq2FA, request: Request):
         "from user_profiles where id = :id", id=session["user"]["id"],
     )
     if not user:
-        await _record_login_failure(request)
+        await _record_login_failure(request, rate_key)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if pre and (pre.get("failed_login_attempts") or 0) > 0:
         await execute("update user_profiles set failed_login_attempts = 0, locked_until = null where id = :id", id=user["id"])
+    await _clear_login_failures(request, rate_key)
 
     # Mandatory second factor for drivers (separate from the opt-in TOTP flow below, which the
     # mobile app has no UI for) -- checked first so it takes priority for any driver account.
