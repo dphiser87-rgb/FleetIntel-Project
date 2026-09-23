@@ -39,7 +39,7 @@ export default function Hero() {
         style={{ background: "linear-gradient(to right, var(--color-bg) 0%, var(--color-bg) 38%, color-mix(in oklab, var(--color-bg) 55%, transparent) 60%, transparent 85%)" }}
       />
 
-      <div className="relative px-6 md:px-12 lg:px-20 py-20 md:py-32">
+      <div className="relative mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20 py-20 md:py-32">
         <div
           className={`max-w-xl transition-[opacity,translate] duration-700 ease-out ${
             mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
@@ -81,23 +81,22 @@ export default function Hero() {
             Works offline. Syncs the moment signal returns.
           </p>
 
+          {/* Mobile fallback: the graphic stacks below the text instead of bleeding behind it. */}
+          <div className="md:hidden mt-8">
+            <div className="eyebrow mb-3">Fleet cost intelligence · Africa</div>
+            <DashboardMotionGraphic />
+          </div>
+
           {/* Mobile-only scroll cue, in-flow rather than fixed to the viewport bottom like the
-              desktop ScrollPrompt -- on mobile the stacked layout below (graphic under the text)
-              means a fixed-bottom element lands right on top of the graphic instead of empty space.
-              Sitting in normal flow here avoids that collision entirely and scrolls away with the
-              page once the visitor starts scrolling, same practical effect without the fixed-position
-              fight. */}
+              desktop ScrollPrompt -- a fixed-bottom element would land on top of the stacked graphic
+              instead of empty space. It sits after the graphic because that's the actual bottom of
+              the hero: pointing "down" from above the graphic told you to scroll past content that
+              was still on screen. */}
           <div className="md:hidden mt-8 flex items-center gap-3" aria-hidden="true">
             <div className="w-6 h-8 rounded-full border flex justify-center p-1.5" style={{ borderColor: "var(--color-muted)" }}>
               <div className="w-1 h-2 rounded-full animate-scroll-dot" style={{ background: "var(--color-primary)" }} />
             </div>
             <span className="eyebrow">Scroll</span>
-          </div>
-
-          {/* Mobile fallback: the graphic stacks below the text instead of bleeding behind it. */}
-          <div className="md:hidden mt-6">
-            <div className="eyebrow mb-3">Fleet cost intelligence · Africa</div>
-            <DashboardMotionGraphic />
           </div>
         </div>
       </div>

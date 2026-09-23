@@ -41,7 +41,7 @@ export default function Nav() {
         borderColor: isScrolled ? "var(--color-border)" : "transparent",
       }}
     >
-      <div className="px-6 md:px-12 lg:px-20 py-4 flex items-center justify-between">
+      <div className="mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20 py-4 flex items-center justify-between">
         <a href="/" className="flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-md flex items-center justify-center shrink-0" style={{ background: "var(--color-primary)" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
@@ -51,7 +51,7 @@ export default function Nav() {
           <span className="flex flex-col leading-none">
             <span className="font-display font-bold text-lg tracking-tight">FleetIntel</span>
             <span
-              className="font-display font-semibold text-[10px] tracking-tight mt-1"
+              className="hidden sm:block font-display font-semibold text-[10px] tracking-tight mt-1"
               style={{ color: "var(--color-muted)" }}
               data-testid="nav-slogan"
             >

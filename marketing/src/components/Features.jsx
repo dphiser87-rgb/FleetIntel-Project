@@ -30,7 +30,7 @@ const FEATURES = [
 export default function Features() {
   return (
     <section id="features" className="border-b" style={{ borderColor: "var(--color-border)" }}>
-      <div className="px-6 md:px-12 lg:px-20 py-20 md:py-28">
+      <div className="mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20 py-20 md:py-28">
         <Reveal>
           <div className="eyebrow mb-3">What's inside</div>
           <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-14">

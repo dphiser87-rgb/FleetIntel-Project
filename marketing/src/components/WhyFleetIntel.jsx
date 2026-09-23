@@ -18,28 +18,35 @@ const POINTS = [
 export default function WhyFleetIntel() {
   return (
     <section id="why" className="border-b" style={{ borderColor: "var(--color-border)" }}>
-      <div className="px-6 md:px-12 lg:px-20 py-20 md:py-28">
-        <Reveal>
-          <div className="eyebrow mb-3">Why FleetIntel</div>
-          <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-14">
-            Built for how fleet costing actually happens.
-          </h2>
-        </Reveal>
-        <div className="space-y-10">
-          {POINTS.map((p, i) => (
-            <Reveal key={p.title} delayMs={i * 120}>
-              <div
-                className="group grid md:grid-cols-[auto_1fr] gap-6 md:gap-10 items-start -mx-4 px-4 py-3 rounded-lg transition-colors duration-300 hover:[background:var(--color-surface)]"
-                data-testid={`why-${i}`}
-              >
-                <div className="font-mono text-sm transition-opacity duration-300 opacity-70 group-hover:opacity-100" style={{ color: "var(--color-primary)" }}>{String(i + 1).padStart(2, "0")}</div>
-                <div>
-                  <h3 className="font-display font-bold text-xl mb-2">{p.title}</h3>
-                  <p className="leading-relaxed" style={{ color: "var(--color-muted)" }}>{p.body}</p>
+      <div className="mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20 py-20 md:py-28">
+        {/* Two columns from lg up. Constraining the body copy to a readable measure (it used to run
+            ~150 characters a line) left the right half of this section empty, which read as a gap
+            rather than as breathing room -- every other section on the page fills the width. Moving
+            the heading into its own column uses that space deliberately, and keeps it in view while
+            you read all three points. */}
+        <div className="lg:grid lg:grid-cols-[minmax(0,4fr)_minmax(0,7fr)] lg:gap-16 xl:gap-24">
+          <Reveal className="lg:sticky lg:top-28 lg:self-start">
+            <div className="eyebrow mb-3">Why FleetIntel</div>
+            <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl lg:max-w-none mb-14 lg:mb-0">
+              Built for how fleet costing actually happens.
+            </h2>
+          </Reveal>
+          <div className="space-y-10">
+            {POINTS.map((p, i) => (
+              <Reveal key={p.title} delayMs={i * 120}>
+                <div
+                  className="group grid md:grid-cols-[auto_1fr] gap-6 md:gap-10 items-start -mx-4 px-4 py-3 rounded-lg transition-colors duration-300 hover:[background:var(--color-surface)]"
+                  data-testid={`why-${i}`}
+                >
+                  <div className="font-mono text-sm transition-opacity duration-300 opacity-70 group-hover:opacity-100" style={{ color: "var(--color-primary)" }}>{String(i + 1).padStart(2, "0")}</div>
+                  <div>
+                    <h3 className="font-display font-bold text-xl mb-2">{p.title}</h3>
+                    <p className="leading-relaxed max-w-[68ch]" style={{ color: "var(--color-muted)" }}>{p.body}</p>
+                  </div>
                 </div>
-              </div>
-            </Reveal>
-          ))}
+              </Reveal>
+            ))}
+          </div>
         </div>
       </div>
     </section>

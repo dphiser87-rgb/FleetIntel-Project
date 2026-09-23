@@ -12,7 +12,7 @@ const INDUSTRIES = [
 export default function Industries() {
   return (
     <section className="border-b" style={{ borderColor: "var(--color-border)" }}>
-      <Reveal className="px-6 md:px-12 lg:px-20 py-10">
+      <Reveal className="mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20 py-12">
         <div className="eyebrow mb-4">Built for</div>
         <div className="flex flex-wrap gap-3">
           {INDUSTRIES.map((i) => (
