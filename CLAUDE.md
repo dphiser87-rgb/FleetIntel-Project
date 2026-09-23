@@ -47,13 +47,20 @@ directly (`black .`, `flake8 .`, etc.) if needed, they're not wired into a scrip
 
 ## Architecture
 
-**Backend is a single file.** `backend/server.py` is a monolithic FastAPI app (async, Motor/MongoDB) —
-there's no per-domain module split. Adding a fleet feature means adding a Pydantic model and route
-directly in `server.py`.
+**Backend is a single file.** `backend/server.py` is a monolithic FastAPI app (async, Postgres/Supabase
+accessed through the `fetch_one`/`fetch_all`/`execute` helpers) — there's no per-domain module split.
+Adding a fleet feature means adding a Pydantic model and route directly in `server.py`.
 
-**Workspace isolation is the load-bearing invariant.** Every query is expected to go through a
-`ws_filter()` helper that scopes it to the caller's workspace. Any new query or endpoint must use it —
-skipping it is a cross-tenant data leak, not just a bug.
+**Workspace isolation is the load-bearing invariant.** There is no `ws_filter()` helper — every query
+carries an explicit `where workspace_id = :ws` bound to `user["workspace_id"]`. Any new query or
+endpoint must do the same; skipping it is a cross-tenant data leak, not just a bug. Never interpolate
+user input into SQL — bind it as a named parameter.
+
+**Authorization is separate from authentication.** `get_current_user` only proves *who* is calling.
+Anything module-scoped must also declare `Depends(require_module("<module>", "read"|"full"))`, and
+file-download routes (which accept `?token=` because an `<a href>` can't set a header) must call
+`download_user(request, "<module>")` instead of resolving the user themselves. A route that takes only
+`get_current_user` is readable by every role including `driver`, whose preset is `none` on every module.
 
 **Auth**: JWT-based, with TOTP two-factor auth and recovery codes, bcrypt password hashing, and
 role-based access control (admin / manager / inspector / mechanic) enforced per-route.

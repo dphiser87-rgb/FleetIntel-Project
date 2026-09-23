@@ -22,7 +22,7 @@ from typing import List, Optional, Literal, Dict
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query, Header
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, EmailStr, ValidationError
+from pydantic import BaseModel, Field, EmailStr, ValidationError, field_validator
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -201,14 +201,29 @@ def require_module(module: str, level: str = "read"):
     when the user has no customized permissions saved — same fallback TeamMemberPanel.jsx uses
     client-side when opening a member's Profile tab for the first time."""
     async def dep(user: dict = Depends(get_current_user)):
-        modules = (user.get("permissions") or {}).get("modules") or {}
-        user_level = modules.get(module)
-        if user_level is None:
-            user_level = PROFILE_PRESETS.get(user.get("role"), {}).get("modules", {}).get(module, "none")
-        if _ACCESS_LEVELS.get(user_level, 0) < _ACCESS_LEVELS[level]:
-            raise HTTPException(status_code=403, detail=f"Insufficient access to {module}")
+        _assert_module(user, module, level)
         return user
     return dep
+
+def _assert_module(user: dict, module: str, level: str = "read") -> None:
+    """The module check itself, callable outside the Depends() chain — download routes resolve their
+    own user (they accept ?token= because an <a href> can't set an Authorization header) and so can't
+    express the gate as a dependency, but must still enforce the same matrix."""
+    modules = (user.get("permissions") or {}).get("modules") or {}
+    user_level = modules.get(module)
+    if user_level is None:
+        user_level = PROFILE_PRESETS.get(user.get("role"), {}).get("modules", {}).get(module, "none")
+    if _ACCESS_LEVELS.get(user_level, 0) < _ACCESS_LEVELS[level]:
+        raise HTTPException(status_code=403, detail=f"Insufficient access to {module}")
+
+async def download_user(request: Request, module: str, level: str = "read") -> dict:
+    """Auth for file-download routes: header first, ?token= fallback, then the same module gate the
+    JSON routes get. Before this existed every export/PDF route was authenticated but ungated, so a
+    driver -- whose preset is "none" on every module -- could pull the full user/maintenance/parts CSVs."""
+    token = request.query_params.get("token")
+    user = await user_from_token(token) if token else await get_current_user(request)
+    _assert_module(user, module, level)
+    return user
 
 PLATFORM_OWNER_EMAIL = os.environ.get("PLATFORM_OWNER_EMAIL", "")
 
@@ -530,6 +545,8 @@ class QuoteItem(BaseModel):
     unit_cost: float = 0
     vat_pct: float = 0
 
+MAX_ATTACHMENT_DATA_URL_CHARS = 10 * 1024 * 1024
+
 class QuoteAttachment(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     file_name: str
@@ -538,6 +555,15 @@ class QuoteAttachment(BaseModel):
     uploaded_by: str
     uploaded_at: str
     data_url: str  # base64 data URL — matches InspectionAnswer.photo / IncidentIn.photos
+
+    @field_validator("data_url")
+    @classmethod
+    def _bounded(cls, v: str) -> str:
+        # These are stored inline in Postgres, so an unbounded one is a cheap way for any authenticated
+        # user to bloat the table. base64 runs ~1.37x the raw file, so this lands near a 7MB upload.
+        if len(v) > MAX_ATTACHMENT_DATA_URL_CHARS:
+            raise ValueError("Attachment is too large (10MB limit)")
+        return v
 
 class QuoteIn(BaseModel):
     items: List[QuoteItem] = []
@@ -873,8 +899,49 @@ async def _send_login_otp(user: dict) -> None:
     )
     await send_email(to=user["email"], subject=f"Your {from_name} sign-in code", html=html)
 
+LOGIN_RATE_LIMIT = 10           # failed attempts per IP...
+LOGIN_RATE_WINDOW_MINUTES = 15  # ...within this window
+
+def _client_ip(request: Request) -> str:
+    """Vercel terminates TLS upstream, so request.client.host is the proxy -- the real caller is the
+    first entry in x-forwarded-for. Falls back to the socket peer for local/dev runs."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+async def _enforce_login_rate_limit(request: Request) -> None:
+    """Throttles by IP before any credential work happens. Deliberately counts attempts for
+    nonexistent emails too, which is exactly the traffic the per-account lockout can't observe."""
+    ip = _client_ip(request)
+    try:
+        row = await fetch_one(
+            "select count(*) as c from login_attempts "
+            "where ip = :ip and at > now() - make_interval(mins => :mins)",
+            ip=ip, mins=LOGIN_RATE_WINDOW_MINUTES,
+        )
+    except Exception as e:
+        # Never let a throttling-table problem take login down for everyone.
+        logger.error(f"login rate-limit check failed: {e}")
+        return
+    if (row or {}).get("c", 0) >= LOGIN_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many sign-in attempts. Try again in {LOGIN_RATE_WINDOW_MINUTES} minutes.",
+        )
+
+async def _record_login_failure(request: Request) -> None:
+    ip = _client_ip(request)
+    try:
+        await execute("insert into login_attempts (id, ip) values (:id, :ip)", id=str(uuid.uuid4()), ip=ip)
+        # Opportunistic trim so the table can't grow unboundedly; no cron needed.
+        await execute("delete from login_attempts where at < now() - interval '24 hours'")
+    except Exception as e:
+        logger.error(f"login attempt record failed: {e}")
+
 @api.post("/auth/login")
-async def login(req: LoginReq2FA):
+async def login(req: LoginReq2FA, request: Request):
+    await _enforce_login_rate_limit(request)
     identifier = req.email.strip()
     if "@" in identifier:
         email = identifier.lower()
@@ -885,6 +952,7 @@ async def login(req: LoginReq2FA):
         # that, not a second auth mechanism.
         by_phone = await fetch_one("select email from user_profiles where phone = :phone", phone=identifier)
         if not by_phone:
+            await _record_login_failure(request)
             raise HTTPException(status_code=401, detail="Invalid credentials")
         email = by_phone["email"]
 
@@ -911,6 +979,7 @@ async def login(req: LoginReq2FA):
                 )
             else:
                 await execute("update user_profiles set failed_login_attempts = :n where id = :id", n=attempts, id=pre["id"])
+        await _record_login_failure(request)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     user = await fetch_one(
@@ -918,6 +987,7 @@ async def login(req: LoginReq2FA):
         "from user_profiles where id = :id", id=session["user"]["id"],
     )
     if not user:
+        await _record_login_failure(request)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if pre and (pre.get("failed_login_attempts") or 0) > 0:
@@ -1195,7 +1265,7 @@ SAFE_USER_COLS = (
 )  # excludes totp_secret/totp_pending_secret — raw 2FA seeds must never reach another user's browser
 
 @api.get("/users")
-async def list_users(user: dict = Depends(get_current_user)):
+async def list_users(user: dict = Depends(require_module("team", "read"))):
     return await fetch_all(
         f"select {SAFE_USER_COLS} from user_profiles where workspace_id = :ws",
         ws=user["workspace_id"],
@@ -3228,15 +3298,30 @@ async def require_support_key(x_support_key: Optional[str] = Header(default=None
     """Gates the support-inbox reply/status endpoints -- a shared secret instead of a user role, since
     there's no cross-workspace staff account to authenticate as. Never used by any customer-facing route."""
     expected = os.environ.get("SUPPORT_API_KEY")
-    if not expected or x_support_key != expected:
+    if not expected or not x_support_key or not secrets.compare_digest(x_support_key, expected):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 async def _gen_ticket_number() -> str:
-    count = (await fetch_one("select count(*) as c from support_tickets"))["c"]
-    return f"FI-{count + 1:04d}"
+    # nextval, not count(*)+1: the old form let two concurrent creates read the same count and the
+    # loser then died on ticket_number's unique constraint.
+    n = (await fetch_one("select nextval('support_ticket_number_seq') as n"))["n"]
+    return f"FI-{n:04d}"
 
-async def _ticket_or_404(ticket_id: str, ws: str) -> dict:
-    ticket = await fetch_one("select * from support_tickets where id = :id and workspace_id = :ws", id=ticket_id, ws=ws)
+TICKET_OVERSIGHT_ROLES = ("admin", "manager")
+
+def _sees_all_tickets(user: dict) -> bool:
+    """Who sees the whole workspace's tickets vs. only their own. Tickets carry billing questions and
+    free-text account detail, so the default is own-only -- previously every member of a workspace
+    could read every ticket in it, including another user's billing thread."""
+    return user.get("role") in TICKET_OVERSIGHT_ROLES
+
+async def _ticket_or_404(ticket_id: str, user: dict) -> dict:
+    sql = "select * from support_tickets where id = :id and workspace_id = :ws"
+    params = {"id": ticket_id, "ws": user["workspace_id"]}
+    if not _sees_all_tickets(user):
+        sql += " and user_id = :uid"
+        params["uid"] = user["id"]
+    ticket = await fetch_one(sql, **params)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
     return ticket
@@ -3338,6 +3423,8 @@ async def list_support_tickets(
 ):
     where = ["t.workspace_id = :ws"]
     params = {"ws": user["workspace_id"]}
+    if not _sees_all_tickets(user):
+        where.append("t.user_id = :uid"); params["uid"] = user["id"]
     if status: where.append("t.status = :status"); params["status"] = status
     if priority: where.append("t.priority = :priority"); params["priority"] = priority
     if category: where.append("t.category = :category"); params["category"] = category
@@ -3355,8 +3442,11 @@ async def list_support_tickets(
 
 @api.get("/support/tickets/{tid}")
 async def get_support_ticket(tid: str, user: dict = Depends(get_current_user)):
-    ticket = await _ticket_or_404(tid, user["workspace_id"])
-    vehicle = await fetch_one("select id, name, plate, type, group_id from vehicles where id = :id", id=ticket["vehicle_id"]) if ticket.get("vehicle_id") else None
+    ticket = await _ticket_or_404(tid, user)
+    vehicle = await fetch_one(
+        "select id, name, plate, type, group_id from vehicles where id = :id and workspace_id = :ws",
+        id=ticket["vehicle_id"], ws=user["workspace_id"],
+    ) if ticket.get("vehicle_id") else None
     messages = await fetch_all("select * from support_ticket_messages where ticket_id = :id order by created_at", id=tid)
     activity = await fetch_all("select * from support_ticket_activity where ticket_id = :id order by created_at", id=tid)
     attachments = await fetch_all("select * from support_ticket_attachments where ticket_id = :id order by created_at", id=tid)
@@ -3364,7 +3454,7 @@ async def get_support_ticket(tid: str, user: dict = Depends(get_current_user)):
 
 @api.post("/support/tickets/{tid}/messages")
 async def reply_to_support_ticket(tid: str, body: SupportTicketMessageIn, user: dict = Depends(get_current_user)):
-    ticket = await _ticket_or_404(tid, user["workspace_id"])
+    ticket = await _ticket_or_404(tid, user)
     mid = str(uuid.uuid4())
     await execute(
         "insert into support_ticket_messages (id, ticket_id, author_type, author_id, author_name, body) "
@@ -4378,7 +4468,7 @@ async def delete_part(pid: str, user: dict = Depends(get_current_user)):
 
 # --- Audit log ---
 @api.get("/audit")
-async def audit_list(limit: int = 200, entity_id: Optional[str] = None, entity_type: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def audit_list(limit: int = 200, entity_id: Optional[str] = None, entity_type: Optional[str] = None, user: dict = Depends(require_module("audit", "read"))):
     if entity_id:
         return await fetch_all(
             "select * from audit_log where workspace_id = :ws and entity_id = :eid order by at desc limit :limit",
@@ -4406,14 +4496,9 @@ def _csv_response(rows: list, header: list, filename: str) -> StreamingResponse:
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"})
 
-def _csv_export_dep(request: Request):
-    """Auth dependency that accepts ?token= for direct download links."""
-    return None
-
 @api.get("/export/maintenance.csv")
 async def export_maintenance(request: Request):
-    token = request.query_params.get("token")
-    user = await user_from_token(token) if token else await get_current_user(request)
+    user = await download_user(request, "maintenance")
     jobs = await fetch_all(
         "select * from maintenance where workspace_id = :ws order by created_at desc limit 5000", ws=user["workspace_id"],
     )
@@ -4434,8 +4519,7 @@ async def export_maintenance(request: Request):
 
 @api.get("/export/parts.csv")
 async def export_parts(request: Request):
-    token = request.query_params.get("token")
-    user = await user_from_token(token) if token else await get_current_user(request)
+    user = await download_user(request, "parts")
     parts = await fetch_all("select * from parts where workspace_id = :ws order by name limit 5000", ws=user["workspace_id"])
     rows = []
     for p in parts:
@@ -4453,8 +4537,7 @@ async def export_parts(request: Request):
 
 @api.get("/export/inspections.csv")
 async def export_inspections(request: Request):
-    token = request.query_params.get("token")
-    user = await user_from_token(token) if token else await get_current_user(request)
+    user = await download_user(request, "vehicle_checklist")
     ws = user["workspace_id"]
     insp = await fetch_all("select * from inspections where workspace_id = :ws order by created_at desc limit 5000", ws=ws)
     vehicles = {v["id"]: v for v in await fetch_all("select * from vehicles where workspace_id = :ws", ws=ws)}
@@ -4479,8 +4562,7 @@ async def export_inspections(request: Request):
 
 @api.get("/export/drivers.csv")
 async def export_drivers(group_id: Optional[str] = None, status: Optional[str] = None, request: Request = None):
-    token = request.query_params.get("token")
-    user = await user_from_token(token) if token else await get_current_user(request)
+    user = await download_user(request, "drivers")
     ws = user["workspace_id"]
     q = "select * from drivers where workspace_id = :ws"
     params = {"ws": ws}
@@ -4505,8 +4587,7 @@ async def export_drivers(group_id: Optional[str] = None, status: Optional[str] =
 
 @api.get("/export/users.csv")
 async def export_users(request: Request):
-    token = request.query_params.get("token")
-    user = await user_from_token(token) if token else await get_current_user(request)
+    user = await download_user(request, "team")
     users = await fetch_all(f"select {SAFE_USER_COLS} from user_profiles where workspace_id = :ws order by name", ws=user["workspace_id"])
     rows = [{
         "name": u.get("name", ""), "username": u.get("username", ""), "email": u.get("email", ""),
@@ -7127,9 +7208,7 @@ async def forecast(user: dict = Depends(get_current_user)):
 # --- PDF export ---
 @api.get("/inspections/{iid}/pdf")
 async def inspection_pdf(iid: str, request: Request):
-    # Accept token via query param for direct download links
-    token = request.query_params.get("token") or None
-    user = await user_from_token(token) if token else await get_current_user(request)
+    user = await download_user(request, "vehicle_checklist")
 
     # NOTE: was fetched by id only with no workspace check in the Mongo version (cross-tenant read) — fixed here.
     insp = await fetch_one("select * from inspections where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
@@ -7243,8 +7322,7 @@ async def inspection_pdf(iid: str, request: Request):
 
 @api.get("/maintenance/{mid}/pdf")
 async def maintenance_pdf(mid: str, request: Request):
-    token = request.query_params.get("token") or None
-    user = await user_from_token(token) if token else await get_current_user(request)
+    user = await download_user(request, "maintenance")
     ws = user["workspace_id"]
 
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=ws)
@@ -7432,8 +7510,7 @@ async def _build_incident_pdf(iid: str, workspace_id: Optional[str] = None) -> S
 
 @api.get("/incidents/{iid}/pdf")
 async def incident_pdf(iid: str, request: Request):
-    token = request.query_params.get("token") or None
-    user = await user_from_token(token) if token else await get_current_user(request)
+    user = await download_user(request, "incidents")
     return await _build_incident_pdf(iid, workspace_id=user["workspace_id"])
 
 # --- Seed ---
@@ -7817,8 +7894,7 @@ async def preview_report(req: ReportPreviewIn, user: dict = Depends(get_current_
 
 @api.get("/reports/definitions/{rid}/download")
 async def download_report(rid: str, request: Request, format: Optional[str] = None):
-    token = request.query_params.get("token") or None
-    user = await user_from_token(token) if token else await get_current_user(request)
+    user = await download_user(request, "reports")
     rep = await fetch_one("select * from report_definitions where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
     if not rep: raise HTTPException(status_code=404, detail="Not found")
     file_type = format or rep["file_type"]
