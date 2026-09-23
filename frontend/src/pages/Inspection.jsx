@@ -49,7 +49,7 @@ export default function Inspection() {
       setTemplates(matching);
       if (matching[0]) setTemplateId(matching[0].id);
     });
-    api.get("/users").then(r => setMechanics(r.data.filter(u => u.role === "mechanic")));
+    api.get("/users/directory").then(r => setMechanics(r.data.filter(u => u.role === "mechanic")));
   }, [vehicleId, targetType, isVehicle]);
 
   useEffect(() => {

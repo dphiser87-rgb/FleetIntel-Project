@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, API } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 import { toast } from "sonner";
 import { Warning, DownloadSimple, Trash, PencilSimple, X as XIcon, MagnifyingGlass, CaretLeft, CaretRight, Image as ImageIcon, FilePdf, ShareNetwork, Copy, EnvelopeSimple } from "@phosphor-icons/react";
 import { useCurrency } from "@/lib/CurrencyContext";
@@ -227,10 +227,7 @@ export default function Incidents() {
                     </div>
                     <div className="flex flex-col gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => openShare(i)} data-testid={`share-incident-${i.id}`} title="Share with insurance" className="text-muted-foreground hover:text-primary p-1"><ShareNetwork size={14} /></button>
-                      <button onClick={() => {
-                        const token = localStorage.getItem("token");
-                        window.open(`${API}/incidents/${i.id}/pdf?token=${encodeURIComponent(token)}`, "_blank");
-                      }} data-testid={`pdf-incident-${i.id}`} title="Download insurance PDF" className="text-muted-foreground hover:text-primary p-1"><FilePdf size={14} /></button>
+                      <button onClick={() => downloadFile(`/incidents/${i.id}/pdf`, `incident-${i.id}.pdf`)} data-testid={`pdf-incident-${i.id}`} title="Download insurance PDF" className="text-muted-foreground hover:text-primary p-1"><FilePdf size={14} /></button>
                       <button onClick={() => setEditing({ ...i, driver_id: i.driver_id || "", resolution_notes: i.resolution_notes || "" })} data-testid={`edit-incident-${i.id}`} className="text-muted-foreground hover:text-primary p-1"><PencilSimple size={14} /></button>
                       <button onClick={() => del(i.id)} data-testid={`delete-incident-${i.id}`} className="text-muted-foreground hover:text-primary p-1"><Trash size={14} /></button>
                     </div>

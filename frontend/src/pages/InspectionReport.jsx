@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { api, API } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 import { CaretLeft, DownloadSimple } from "@phosphor-icons/react";
 import InspectionDetailContent from "@/components/InspectionDetailContent";
 
@@ -23,11 +23,7 @@ export default function InspectionReport() {
     });
   }, [id]);
 
-  const downloadPdf = () => {
-    const token = localStorage.getItem("token");
-    const url = `${API}/inspections/${id}/pdf?token=${encodeURIComponent(token)}`;
-    window.open(url, "_blank");
-  };
+  const downloadPdf = () => downloadFile(`/inspections/${id}/pdf`, `inspection-${id}.pdf`);
 
   if (!insp || !target) return <div className="p-12 text-muted-foreground">Loading…</div>;
 

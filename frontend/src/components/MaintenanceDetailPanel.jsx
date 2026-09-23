@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { ClockCounterClockwise, DownloadSimple } from "@phosphor-icons/react";
-import { API } from "@/lib/api";
+import { downloadFile } from "@/lib/api";
 import QuoteBuilder from "@/components/QuoteBuilder";
 import QuoteApprovalPanel from "@/components/QuoteApprovalPanel";
 import PartsRequisitionBuilder from "@/components/PartsRequisitionBuilder";
@@ -99,10 +99,7 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
                 <h2 className="font-display text-2xl font-bold mt-1">{job.title}</h2>
               </div>
               <button
-                onClick={() => {
-                  const token = localStorage.getItem("token");
-                  window.open(`${API}/maintenance/${jobId}/pdf?token=${encodeURIComponent(token)}`, "_blank");
-                }}
+                onClick={() => downloadFile(`/maintenance/${jobId}/pdf`, `job-${jobId}.pdf`)}
                 data-testid="download-job-pdf"
                 className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest text-muted-foreground hover:border-primary hover:text-primary shrink-0"
               >

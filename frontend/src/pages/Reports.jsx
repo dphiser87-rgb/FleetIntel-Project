@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api, API } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line, Legend, ComposedChart, Area } from "recharts";
 import { DownloadSimple } from "@phosphor-icons/react";
 import { useCurrency } from "@/lib/CurrencyContext";
@@ -40,10 +40,7 @@ export default function Reports() {
           <div className="overline">Analytics</div>
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="reports-title">Reports</h1>
         </div>
-        <button data-testid="export-maintenance-csv" onClick={() => {
-          const token = localStorage.getItem("token");
-          window.open(`${API}/export/maintenance.csv?token=${encodeURIComponent(token)}`, "_blank");
-        }} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
+        <button data-testid="export-maintenance-csv" onClick={() => downloadFile("/export/maintenance.csv", "maintenance-ledger.csv")} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
           <DownloadSimple size={14} weight="bold" /> Export ledger CSV
         </button>
       </header>
