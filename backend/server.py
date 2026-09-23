@@ -1212,7 +1212,10 @@ def _default_permissions(role: str) -> dict:
     elif role == "executive":
         # Pure oversight — full visibility everywhere, no write access anywhere. For CEO/COO-level
         # profiles: they need to see everything to make decisions, but shouldn't be editing records.
-        modules = read_all
+        # That mandate is why this is the one non-admin role handed the audit log and team directory
+        # back after `oversight` withheld them: "see everything" is the whole point of the role.
+        # `security` stays out — that's policy configuration, not visibility.
+        modules = {**read_all, "audit": "read", "team": "read"}
     elif role == "driver":
         # The most restrictive preset by design: a driver's whole job in the app is running their
         # assigned vehicle's checklist -- nothing else. Not even read access elsewhere, unlike every
