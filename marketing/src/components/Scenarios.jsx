@@ -60,7 +60,7 @@ export default function Scenarios() {
 
   return (
     <section id="how-it-works" className="border-b" style={{ borderColor: "var(--color-border)" }}>
-      <div className="px-6 md:px-12 lg:px-20 py-20 md:py-28">
+      <div className="mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20 py-20 md:py-28">
         <Reveal>
           <div className="eyebrow mb-3">How it works</div>
           <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-16">
@@ -81,7 +81,7 @@ export default function Scenarios() {
                   {item.tag}
                 </div>
                 <h3 className="font-display font-bold text-2xl mb-3">{item.title}</h3>
-                <p className="text-sm leading-relaxed" style={{ color: "var(--color-muted)" }}>{item.body}</p>
+                <p className="text-sm leading-relaxed max-w-[64ch]" style={{ color: "var(--color-muted)" }}>{item.body}</p>
                 {item.signature && <CostSpikeCard />}
 
                 {/* Mobile only: inline image right under its own block, no sticky panel needed. */}

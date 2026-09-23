@@ -2,14 +2,15 @@ import { useEffect, useRef } from "react";
 
 // A live-rendered stand-in for a hero "video" -- real dashboard-shaped motion (KPI tiles counting
 // up, gauges filling, a trend line drawing in) rather than an actual video file. No file to record,
-// encode, host, or keep in sync with the real app; loops perfectly by construction; effectively free
-// to load. Values are illustrative UI chrome, not asserted as real product claims (matches the
-// existing signature cost-spike card's "+18% vs last month" treatment) -- this is a motion graphic
-// of the kind of thing the dashboard shows, not a screenshot standing in as evidence.
+// encode, host, or keep in sync with the real app; effectively free to load. Values are illustrative
+// UI chrome, not asserted as real product claims (matches the existing signature cost-spike card's
+// "+18% vs last month" treatment) -- this is a motion graphic of the kind of thing the dashboard
+// shows, not a screenshot standing in as evidence. They still need to be plausible, though: this is
+// the first number a visitor reads, so it has to look like a real fleet's month.
 //
-// One shared timeline drives everything (count-up, gauge fill, chart draw happen together, then hold,
-// then reset) rather than several independently-looping pieces -- the same "one coordinated effect,
-// not five competing rhythms" reasoning as the rest of this site's motion.
+// One shared timeline drives everything (count-up, gauge fill and chart draw happen together) rather
+// than several independently-looping pieces -- the same "one coordinated effect, not five competing
+// rhythms" reasoning as the rest of this site's motion.
 const TILES = [
   { label: "Total monthly cost", value: 84300, prefix: "R", format: (n) => Math.round(n).toLocaleString(), gauge: 0.62 },
   { label: "Cost per vehicle", value: 3240, prefix: "R", format: (n) => Math.round(n).toLocaleString(), gauge: 0.45 },
@@ -17,10 +18,13 @@ const TILES = [
   { label: "Fleet utilization", value: 87, prefix: "", suffix: "%", format: (n) => Math.round(n), gauge: 0.87 },
 ];
 
-const CYCLE_MS = 6000;
+// Ramps up once on mount and then holds the settled figures, rather than looping back down to zero
+// every few seconds. The loop it replaced spent roughly 40% of each cycle mid-ramp or counting back
+// down, so a visitor arriving at the wrong moment met a fleet-cost product advertising "R213 total
+// monthly cost" and "0% utilization" -- captured exactly that way during a review. The entrance
+// motion is the part worth having; the reset only risked making the product look broken. The status
+// dot keeps pulsing, so the panel still reads as live.
 const RAMP_MS = 1400; // count-up / fill / draw
-const HOLD_MS = 3600; // steady, just the status dot pulsing
-// remainder of CYCLE_MS is a quick fade back to zero before the next loop
 
 const CHART_POINTS = "0,38 14,32 28,34 42,22 56,26 70,14 84,18 100,6";
 
@@ -48,17 +52,8 @@ export default function DashboardMotionGraphic() {
     const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 
     const tick = (now) => {
-      const elapsed = (now - start) % CYCLE_MS;
-      let progress;
-      if (elapsed < RAMP_MS) {
-        progress = easeOut(elapsed / RAMP_MS);
-      } else if (elapsed < RAMP_MS + HOLD_MS) {
-        progress = 1;
-      } else {
-        // quick fade back to 0 to close the loop cleanly
-        const fadeT = (elapsed - RAMP_MS - HOLD_MS) / (CYCLE_MS - RAMP_MS - HOLD_MS);
-        progress = 1 - easeOut(fadeT);
-      }
+      const elapsed = now - start;
+      const progress = elapsed < RAMP_MS ? easeOut(elapsed / RAMP_MS) : 1;
 
       TILES.forEach((t, i) => {
         const v = t.value * progress;
@@ -66,7 +61,7 @@ export default function DashboardMotionGraphic() {
         if (gaugeRefs.current[i]) gaugeRefs.current[i].style.strokeDashoffset = String(100 - t.gauge * progress * 100);
       });
       if (chartRef.current) chartRef.current.style.strokeDashoffset = String(100 - progress * 100);
-      if (dotRef.current) dotRef.current.style.opacity = elapsed < RAMP_MS + HOLD_MS ? String(0.5 + 0.5 * Math.sin(elapsed / 260)) : "0.3";
+      if (dotRef.current) dotRef.current.style.opacity = String(0.5 + 0.5 * Math.sin(elapsed / 260));
 
       raf = requestAnimationFrame(tick);
     };

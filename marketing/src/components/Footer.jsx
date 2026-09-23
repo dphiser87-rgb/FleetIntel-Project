@@ -3,7 +3,7 @@ const APP_URL = "https://app.fleetintel.africa";
 export default function Footer() {
   return (
     <footer>
-      <div className="px-6 md:px-12 lg:px-20 py-16 flex flex-col md:flex-row md:items-end justify-between gap-8">
+      <div className="mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20 py-16 flex flex-col md:flex-row md:items-end justify-between gap-8">
         <div>
           <div className="flex items-center gap-2.5 mb-4">
             <div className="w-6 h-6 rounded-md flex items-center justify-center" style={{ background: "var(--color-primary)" }}>
@@ -29,7 +29,7 @@ export default function Footer() {
         </div>
       </div>
       <div className="border-t" style={{ borderColor: "var(--color-border)" }}>
-        <div className="px-6 md:px-12 lg:px-20 py-6 eyebrow">
+        <div className="mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20 py-6 eyebrow">
           © {new Date().getFullYear()} FleetIntel. All rights reserved.
         </div>
       </div>

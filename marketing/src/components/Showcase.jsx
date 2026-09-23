@@ -5,7 +5,7 @@ import Reveal from "./Reveal";
 export default function Showcase() {
   return (
     <section className="border-b" style={{ borderColor: "var(--color-border)" }}>
-      <Reveal className="px-6 md:px-12 lg:px-20 py-20 md:py-24">
+      <Reveal className="mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20 py-20 md:py-28">
         <div className="eyebrow mb-3">See it in action</div>
         <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight max-w-xl mb-10">
           The view your executives actually check.

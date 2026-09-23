@@ -6,7 +6,7 @@ import Reveal from "./Reveal";
 export default function ConversionBand() {
   return (
     <section className="border-b" style={{ borderColor: "var(--color-border)" }}>
-      <Reveal className="px-6 md:px-12 lg:px-20 py-20 text-center">
+      <Reveal className="mx-auto w-full max-w-[1440px] px-6 md:px-12 lg:px-20 py-20 md:py-28 text-center">
         <h2 className="font-display font-bold text-3xl md:text-4xl tracking-tight mb-8">
           See your fleet's real costs. Book a call.
         </h2>
