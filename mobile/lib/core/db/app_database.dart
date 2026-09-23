@@ -20,6 +20,13 @@ class OutboxEntries extends Table {
   TextColumn get payloadJson => text()();
   DateTimeColumn get queuedAt => dateTime()();
 
+  /// Set when the server rejected this entry in a way retrying cannot fix (a validation error).
+  /// The row is kept rather than deleted so the work is still visible to whoever captured it --
+  /// previously any non-401 response deleted the entry outright, so a rejected inspection vanished
+  /// with no trace. Null means still pending.
+  TextColumn get failedReason => text().nullable()();
+  DateTimeColumn get failedAt => dateTime().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -40,8 +47,25 @@ class CacheEntries extends Table {
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
+  /// In-memory or otherwise injected executor, for tests.
+  AppDatabase.forTesting(super.executor);
+
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) => m.createAll(),
+        onUpgrade: (m, from, to) async {
+          // v2 adds the failure columns to outbox_entries. Added rather than recreating the table
+          // so anything already queued on a device survives the upgrade -- the whole point of this
+          // change is that queued work stops disappearing.
+          if (from < 2) {
+            await m.addColumn(outboxEntries, outboxEntries.failedReason);
+            await m.addColumn(outboxEntries, outboxEntries.failedAt);
+          }
+        },
+      );
 
   Future<void> cacheReplaceAll(String collection, List<MapEntry<String, String>> idToJson) async {
     await transaction(() async {

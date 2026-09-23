@@ -49,11 +49,16 @@ class _VehicleConfirmScreenState extends ConsumerState<VehicleConfirmScreen> {
 
   Future<void> _flushOutbox() async {
     final outbox = ref.read(outboxRepositoryProvider);
-    final before = await outbox.pendingCount();
-    if (before == 0) return;
+    final pendingBefore = await outbox.pendingCount();
+    if (pendingBefore == 0) return;
+    final failedBefore = await outbox.failedCount();
     await outbox.flush();
-    final after = await outbox.pendingCount();
-    if (mounted && before > after) setState(() => _syncedCount = before - after);
+    final pendingAfter = await outbox.pendingCount();
+    final failedAfter = await outbox.failedCount();
+    // An entry can leave the pending count by syncing OR by being marked failed, so the drop in
+    // pending alone would report a rejected inspection as "synced".
+    final synced = (pendingBefore - pendingAfter) - (failedAfter - failedBefore);
+    if (mounted && synced > 0) setState(() => _syncedCount = synced);
   }
 
   Future<void> _load() async {

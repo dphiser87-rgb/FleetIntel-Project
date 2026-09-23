@@ -69,6 +69,28 @@ class $OutboxEntriesTable extends OutboxEntries
     type: DriftSqlType.dateTime,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _failedReasonMeta = const VerificationMeta(
+    'failedReason',
+  );
+  @override
+  late final GeneratedColumn<String> failedReason = GeneratedColumn<String>(
+    'failed_reason',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _failedAtMeta = const VerificationMeta(
+    'failedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> failedAt = GeneratedColumn<DateTime>(
+    'failed_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -77,6 +99,8 @@ class $OutboxEntriesTable extends OutboxEntries
     endpoint,
     payloadJson,
     queuedAt,
+    failedReason,
+    failedAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -138,6 +162,21 @@ class $OutboxEntriesTable extends OutboxEntries
     } else if (isInserting) {
       context.missing(_queuedAtMeta);
     }
+    if (data.containsKey('failed_reason')) {
+      context.handle(
+        _failedReasonMeta,
+        failedReason.isAcceptableOrUnknown(
+          data['failed_reason']!,
+          _failedReasonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('failed_at')) {
+      context.handle(
+        _failedAtMeta,
+        failedAt.isAcceptableOrUnknown(data['failed_at']!, _failedAtMeta),
+      );
+    }
     return context;
   }
 
@@ -171,6 +210,14 @@ class $OutboxEntriesTable extends OutboxEntries
         DriftSqlType.dateTime,
         data['${effectivePrefix}queued_at'],
       )!,
+      failedReason: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}failed_reason'],
+      ),
+      failedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}failed_at'],
+      ),
     );
   }
 
@@ -187,6 +234,13 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
   final String endpoint;
   final String payloadJson;
   final DateTime queuedAt;
+
+  /// Set when the server rejected this entry in a way retrying cannot fix (a validation error).
+  /// The row is kept rather than deleted so the work is still visible to whoever captured it --
+  /// previously any non-401 response deleted the entry outright, so a rejected inspection vanished
+  /// with no trace. Null means still pending.
+  final String? failedReason;
+  final DateTime? failedAt;
   const OutboxEntry({
     required this.id,
     required this.kind,
@@ -194,6 +248,8 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
     required this.endpoint,
     required this.payloadJson,
     required this.queuedAt,
+    this.failedReason,
+    this.failedAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -204,6 +260,12 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
     map['endpoint'] = Variable<String>(endpoint);
     map['payload_json'] = Variable<String>(payloadJson);
     map['queued_at'] = Variable<DateTime>(queuedAt);
+    if (!nullToAbsent || failedReason != null) {
+      map['failed_reason'] = Variable<String>(failedReason);
+    }
+    if (!nullToAbsent || failedAt != null) {
+      map['failed_at'] = Variable<DateTime>(failedAt);
+    }
     return map;
   }
 
@@ -215,6 +277,12 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
       endpoint: Value(endpoint),
       payloadJson: Value(payloadJson),
       queuedAt: Value(queuedAt),
+      failedReason: failedReason == null && nullToAbsent
+          ? const Value.absent()
+          : Value(failedReason),
+      failedAt: failedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(failedAt),
     );
   }
 
@@ -230,6 +298,8 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
       endpoint: serializer.fromJson<String>(json['endpoint']),
       payloadJson: serializer.fromJson<String>(json['payloadJson']),
       queuedAt: serializer.fromJson<DateTime>(json['queuedAt']),
+      failedReason: serializer.fromJson<String?>(json['failedReason']),
+      failedAt: serializer.fromJson<DateTime?>(json['failedAt']),
     );
   }
   @override
@@ -242,6 +312,8 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
       'endpoint': serializer.toJson<String>(endpoint),
       'payloadJson': serializer.toJson<String>(payloadJson),
       'queuedAt': serializer.toJson<DateTime>(queuedAt),
+      'failedReason': serializer.toJson<String?>(failedReason),
+      'failedAt': serializer.toJson<DateTime?>(failedAt),
     };
   }
 
@@ -252,6 +324,8 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
     String? endpoint,
     String? payloadJson,
     DateTime? queuedAt,
+    Value<String?> failedReason = const Value.absent(),
+    Value<DateTime?> failedAt = const Value.absent(),
   }) => OutboxEntry(
     id: id ?? this.id,
     kind: kind ?? this.kind,
@@ -259,6 +333,8 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
     endpoint: endpoint ?? this.endpoint,
     payloadJson: payloadJson ?? this.payloadJson,
     queuedAt: queuedAt ?? this.queuedAt,
+    failedReason: failedReason.present ? failedReason.value : this.failedReason,
+    failedAt: failedAt.present ? failedAt.value : this.failedAt,
   );
   OutboxEntry copyWithCompanion(OutboxEntriesCompanion data) {
     return OutboxEntry(
@@ -270,6 +346,10 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
           ? data.payloadJson.value
           : this.payloadJson,
       queuedAt: data.queuedAt.present ? data.queuedAt.value : this.queuedAt,
+      failedReason: data.failedReason.present
+          ? data.failedReason.value
+          : this.failedReason,
+      failedAt: data.failedAt.present ? data.failedAt.value : this.failedAt,
     );
   }
 
@@ -281,14 +361,24 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
           ..write('method: $method, ')
           ..write('endpoint: $endpoint, ')
           ..write('payloadJson: $payloadJson, ')
-          ..write('queuedAt: $queuedAt')
+          ..write('queuedAt: $queuedAt, ')
+          ..write('failedReason: $failedReason, ')
+          ..write('failedAt: $failedAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, kind, method, endpoint, payloadJson, queuedAt);
+  int get hashCode => Object.hash(
+    id,
+    kind,
+    method,
+    endpoint,
+    payloadJson,
+    queuedAt,
+    failedReason,
+    failedAt,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -298,7 +388,9 @@ class OutboxEntry extends DataClass implements Insertable<OutboxEntry> {
           other.method == this.method &&
           other.endpoint == this.endpoint &&
           other.payloadJson == this.payloadJson &&
-          other.queuedAt == this.queuedAt);
+          other.queuedAt == this.queuedAt &&
+          other.failedReason == this.failedReason &&
+          other.failedAt == this.failedAt);
 }
 
 class OutboxEntriesCompanion extends UpdateCompanion<OutboxEntry> {
@@ -308,6 +400,8 @@ class OutboxEntriesCompanion extends UpdateCompanion<OutboxEntry> {
   final Value<String> endpoint;
   final Value<String> payloadJson;
   final Value<DateTime> queuedAt;
+  final Value<String?> failedReason;
+  final Value<DateTime?> failedAt;
   final Value<int> rowid;
   const OutboxEntriesCompanion({
     this.id = const Value.absent(),
@@ -316,6 +410,8 @@ class OutboxEntriesCompanion extends UpdateCompanion<OutboxEntry> {
     this.endpoint = const Value.absent(),
     this.payloadJson = const Value.absent(),
     this.queuedAt = const Value.absent(),
+    this.failedReason = const Value.absent(),
+    this.failedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   OutboxEntriesCompanion.insert({
@@ -325,6 +421,8 @@ class OutboxEntriesCompanion extends UpdateCompanion<OutboxEntry> {
     required String endpoint,
     required String payloadJson,
     required DateTime queuedAt,
+    this.failedReason = const Value.absent(),
+    this.failedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        kind = Value(kind),
@@ -339,6 +437,8 @@ class OutboxEntriesCompanion extends UpdateCompanion<OutboxEntry> {
     Expression<String>? endpoint,
     Expression<String>? payloadJson,
     Expression<DateTime>? queuedAt,
+    Expression<String>? failedReason,
+    Expression<DateTime>? failedAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -348,6 +448,8 @@ class OutboxEntriesCompanion extends UpdateCompanion<OutboxEntry> {
       if (endpoint != null) 'endpoint': endpoint,
       if (payloadJson != null) 'payload_json': payloadJson,
       if (queuedAt != null) 'queued_at': queuedAt,
+      if (failedReason != null) 'failed_reason': failedReason,
+      if (failedAt != null) 'failed_at': failedAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -359,6 +461,8 @@ class OutboxEntriesCompanion extends UpdateCompanion<OutboxEntry> {
     Value<String>? endpoint,
     Value<String>? payloadJson,
     Value<DateTime>? queuedAt,
+    Value<String?>? failedReason,
+    Value<DateTime?>? failedAt,
     Value<int>? rowid,
   }) {
     return OutboxEntriesCompanion(
@@ -368,6 +472,8 @@ class OutboxEntriesCompanion extends UpdateCompanion<OutboxEntry> {
       endpoint: endpoint ?? this.endpoint,
       payloadJson: payloadJson ?? this.payloadJson,
       queuedAt: queuedAt ?? this.queuedAt,
+      failedReason: failedReason ?? this.failedReason,
+      failedAt: failedAt ?? this.failedAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -393,6 +499,12 @@ class OutboxEntriesCompanion extends UpdateCompanion<OutboxEntry> {
     if (queuedAt.present) {
       map['queued_at'] = Variable<DateTime>(queuedAt.value);
     }
+    if (failedReason.present) {
+      map['failed_reason'] = Variable<String>(failedReason.value);
+    }
+    if (failedAt.present) {
+      map['failed_at'] = Variable<DateTime>(failedAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -408,6 +520,8 @@ class OutboxEntriesCompanion extends UpdateCompanion<OutboxEntry> {
           ..write('endpoint: $endpoint, ')
           ..write('payloadJson: $payloadJson, ')
           ..write('queuedAt: $queuedAt, ')
+          ..write('failedReason: $failedReason, ')
+          ..write('failedAt: $failedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -749,6 +863,8 @@ typedef $$OutboxEntriesTableCreateCompanionBuilder =
       required String endpoint,
       required String payloadJson,
       required DateTime queuedAt,
+      Value<String?> failedReason,
+      Value<DateTime?> failedAt,
       Value<int> rowid,
     });
 typedef $$OutboxEntriesTableUpdateCompanionBuilder =
@@ -759,6 +875,8 @@ typedef $$OutboxEntriesTableUpdateCompanionBuilder =
       Value<String> endpoint,
       Value<String> payloadJson,
       Value<DateTime> queuedAt,
+      Value<String?> failedReason,
+      Value<DateTime?> failedAt,
       Value<int> rowid,
     });
 
@@ -798,6 +916,16 @@ class $$OutboxEntriesTableFilterComposer
 
   ColumnFilters<DateTime> get queuedAt => $composableBuilder(
     column: $table.queuedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get failedReason => $composableBuilder(
+    column: $table.failedReason,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get failedAt => $composableBuilder(
+    column: $table.failedAt,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -840,6 +968,16 @@ class $$OutboxEntriesTableOrderingComposer
     column: $table.queuedAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get failedReason => $composableBuilder(
+    column: $table.failedReason,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get failedAt => $composableBuilder(
+    column: $table.failedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$OutboxEntriesTableAnnotationComposer
@@ -870,6 +1008,14 @@ class $$OutboxEntriesTableAnnotationComposer
 
   GeneratedColumn<DateTime> get queuedAt =>
       $composableBuilder(column: $table.queuedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get failedReason => $composableBuilder(
+    column: $table.failedReason,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get failedAt =>
+      $composableBuilder(column: $table.failedAt, builder: (column) => column);
 }
 
 class $$OutboxEntriesTableTableManager
@@ -909,6 +1055,8 @@ class $$OutboxEntriesTableTableManager
                 Value<String> endpoint = const Value.absent(),
                 Value<String> payloadJson = const Value.absent(),
                 Value<DateTime> queuedAt = const Value.absent(),
+                Value<String?> failedReason = const Value.absent(),
+                Value<DateTime?> failedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => OutboxEntriesCompanion(
                 id: id,
@@ -917,6 +1065,8 @@ class $$OutboxEntriesTableTableManager
                 endpoint: endpoint,
                 payloadJson: payloadJson,
                 queuedAt: queuedAt,
+                failedReason: failedReason,
+                failedAt: failedAt,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -927,6 +1077,8 @@ class $$OutboxEntriesTableTableManager
                 required String endpoint,
                 required String payloadJson,
                 required DateTime queuedAt,
+                Value<String?> failedReason = const Value.absent(),
+                Value<DateTime?> failedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => OutboxEntriesCompanion.insert(
                 id: id,
@@ -935,6 +1087,8 @@ class $$OutboxEntriesTableTableManager
                 endpoint: endpoint,
                 payloadJson: payloadJson,
                 queuedAt: queuedAt,
+                failedReason: failedReason,
+                failedAt: failedAt,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
