@@ -5151,6 +5151,38 @@ async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Opti
         rows.sort(key=lambda x: x["cost"], reverse=True)
         total = sum(r["cost"] for r in rows)
         return {"title": "Total maintenance cost", "total": total, "unit": "$", "columns": ["vehicle","plate","title","cost","priority","date"], "rows": rows[:200]}
+    if kpi_key == "total_monthly_cost":
+        # Mirrors how /analytics/kpi computes this tile -- the current calendar month (UTC):
+        # completed maintenance + its downtime + fuel -- so the drill-down adds up to the number on
+        # the tile. The tile is inherently "this month", so `period` doesn't apply. Rows are compared
+        # with last month. Previously this key fell through to "Unknown KPI key", so clicking
+        # Investigate on a tile that's on every dashboard by default returned a 404.
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        prev_start = (month_start - timedelta(days=1)).replace(day=1)
+        def when(x): return x if isinstance(x, datetime) else now  # same fallback as the KPI
+        done = [m for m in maint_all if m.get("status") == "completed"]
+        month_jobs = [m for m in done if when(m_date(m)) >= month_start]
+        prev_jobs = [m for m in done if prev_start <= when(m_date(m)) < month_start]
+        month_fuel = sum(f.get("cost", 0) or 0 for f in fuel_logs_all if when(f.get("occurred_at")) >= month_start)
+        label = month_start.strftime("%B %Y")
+        if group_by in ("vehicle", "group"):
+            rows = _aggregate(month_jobs, vmap, gmap, group_by, fleet_cost_fn)
+            for r in rows: r["value"] = round(r["value"], 2)
+            _with_delta(rows, prev_jobs, vmap, gmap, group_by, fleet_cost_fn)
+            rows.sort(key=lambda x: x["value"], reverse=True)
+            cols = (["vehicle", "value", "jobs"] if group_by == "group" else ["vehicle", "plate", "value", "jobs"]) + ["delta_pct"]
+            return {"title": f"Total monthly cost · {label} · by {group_by}",
+                    "total": round(sum(r["value"] for r in rows) + month_fuel, 2), "unit": "$", "columns": cols, "rows": rows}
+        maint_cost = sum(m.get("actual_cost", 0) or 0 for m in month_jobs)
+        downtime_cost = sum(downtime_cost_fn(m) for m in month_jobs)
+        rows = [
+            {"component": "Maintenance", "cost": round(maint_cost, 2)},
+            {"component": "Fuel", "cost": round(month_fuel, 2)},
+            {"component": "Downtime", "cost": round(downtime_cost, 2)},
+        ]
+        return {"title": f"Total monthly cost · {label}", "total": round(maint_cost + downtime_cost + month_fuel, 2),
+                "unit": "$", "columns": ["component", "cost"], "rows": rows}
     if kpi_key == "total_fleet_cost":
         if group_by in ("vehicle", "group"):
             rows = _aggregate(completed, vmap, gmap, group_by, fleet_cost_fn)
