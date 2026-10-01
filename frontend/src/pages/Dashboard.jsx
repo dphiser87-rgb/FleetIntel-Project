@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { Link } from "react-router-dom";
 import {
@@ -9,19 +9,22 @@ import {
   ArrowUpRight, TrendUp, Wrench, Truck, ClockCounterClockwise, GasPump, CurrencyDollar,
   Warning, Package, Crosshair, Gear, Siren, IdentificationBadge, Heartbeat,
   UsersThree, Wallet, Tire, Storefront, Gauge, Car, CalendarBlank,
-  MapTrifold, Path, Bug,
+  MapTrifold, Path, Bug, DotsSixVertical,
 } from "@phosphor-icons/react";
 import InvestigationHub from "@/components/investigation/InvestigationHub";
 import GroupManager from "@/components/GroupManager";
 import CreateTileModal from "@/components/tile-config/CreateTileModal";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { toast } from "sonner";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoney, formatMoneyFull } from "@/lib/currency";
 import { usePolling } from "@/hooks/use-polling";
 import { MiniBars, FeaturedVehicle, MaintenanceSpendChart, MonthCalendar, ScheduledList, Pending, useUpcoming } from "@/components/dashboard/DashboardWidgets";
 
 
-const COLORS = ["#34C759", "#FF3B30", "#FFCC00", "#3B82F6", "#A855F7"];
 const CHART = {
   green: "hsl(var(--chart-1))",
   red: "hsl(var(--chart-2))",
@@ -30,7 +33,26 @@ const CHART = {
   purple: "hsl(var(--chart-5))",
 };
 
-const MAX_TILES = 10;
+// The server enforces the real limit per user and reports it with the prefs; this is only what's
+// assumed until that arrives.
+const DEFAULT_TILE_LIMIT = 15;
+
+// Charts and panels a user can put on their dashboard alongside KPI tiles. They're picked from the
+// same dialog, count toward the same limit and sit in the same drag-to-arrange grid. The parts
+// alert and forecast at the top of the page aren't here: those always show. `span` is the default
+// width -- "lg" takes two grid columns.
+const WIDGETS = [
+  { key: "w_needs_attention", label: "Needs attention", desc: "The vehicle with the lowest health score, and why", span: "md" },
+  { key: "w_spend_chart", label: "Maintenance spend by month", desc: "Parts and labour over the last 12 months", span: "lg" },
+  { key: "w_cost_by_category", label: "Cost by category", desc: "How spend splits across parts, labour and fuel", span: "md" },
+  { key: "w_top_spenders", label: "Top spending vehicles", desc: "The six vehicles that have cost the most", span: "lg" },
+  { key: "w_recent_jobs", label: "Recent maintenance jobs", desc: "The latest six jobs and what they cost", span: "lg" },
+  { key: "w_calendar", label: "Schedule calendar", desc: "Maintenance due dates on a month view", span: "md" },
+  { key: "w_scheduled", label: "Upcoming scheduled maintenance", desc: "The next six items due", span: "md" },
+].map(w => ({ ...w, widget: true }));
+
+// One colour per cost category everywhere on the page, matching the spend-by-month chart.
+const CATEGORY_COLORS = { Parts: "#FFCC00", Labor: "#3B82F6", Labour: "#3B82F6", Fuel: "#34C759", Downtime: "#A855F7" };
 
 // breakdown: "both" (vehicle + group), "group" (group only), "driver" (driver only), or null (no drill-down breakdown)
 const ALL_TILES = [
@@ -73,8 +95,15 @@ const ALL_TILES = [
   { key: "failed_checklists", label: "Failed Checklists", icon: Warning, color: CHART.red, get: k => k?.failed_checklists ?? 0, sub: () => "Inspections with 1+ failed items", higher_better: false, breakdown: null, investigate: false, riskMode: "binary" },
 ];
 
-const DEFAULT_TILES = ["total_monthly_cost", "total_fleet_cost", "total_maintenance_cost", "cost_per_vehicle", "downtime_cost", "utilization", "fuel_cost", "driver_performance"];
-const defaultConfigs = () => DEFAULT_TILES.map(key => ({ key, threshold: null, view_by: "none", group_id: null }));
+// A new user's starting layout: eight KPIs plus the two panels most people want, leaving room under
+// the limit for their own choices. Migration 0053 gave existing layouts the same two panels.
+const DEFAULT_TILES = ["total_monthly_cost", "total_fleet_cost", "total_maintenance_cost", "cost_per_vehicle", "downtime_cost", "utilization", "fuel_cost", "driver_performance", "w_needs_attention", "w_spend_chart"];
+const defaultConfigs = () => DEFAULT_TILES.map(key => {
+  const widget = WIDGETS.find(w => w.key === key);
+  return { key, threshold: null, view_by: "none", group_id: null, ...(widget ? { size: widget.span } : {}) };
+});
+// Everything a user can place on their dashboard grid.
+const CATALOGUE = [...ALL_TILES, ...WIDGETS];
 
 // Chart styles a tile can use. "gauge" and "bar" drew the value as a share of a fixed maximum that was
 // a guess written into the tile definition ("Total fleet cost" counted as full at 15,000), so a bigger
@@ -125,7 +154,63 @@ const tileState = (tile, kpi, cfg, anomaly) => {
   return null;
 };
 
-const KpiTile = ({ tile, kpi, cfg, trend, currency, anomaly, onClick, onGear }) => {
+// A grid cell the user can drag to a new position. The drag handle and settings gear sit in a small
+// pill on the cell's top edge rather than inside it, so they never cover a panel's own controls
+// (the calendar's month arrows, "View all" links). They appear on hover with a mouse and stay
+// visible on touch screens, which have no hover.
+function SortableCell({ id, label, className = "", onGear, children }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const reveal = "[@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-within:opacity-100";
+  // Touch screens get bigger controls: a 26px handle on a tile's edge is too small to hit with a finger.
+  const control = "p-1.5 [@media(hover:none)]:p-2.5 text-muted-foreground hover:text-primary";
+  return (
+    <div
+      ref={setNodeRef}
+      // On a touch screen the whole tile is a drag handle after a press-and-hold (see the
+      // TouchSensor delay), which is how people expect to move things on a phone. A quick swipe
+      // still scrolls the page and a tap still opens the tile. Mouse dragging stays on the handle
+      // only, so clicks and text selection on desktop are untouched.
+      onTouchStart={listeners?.onTouchStart}
+      // Stop the long-press link menu / iOS preview from opening over a drag.
+      onContextMenu={(e) => { if (e.nativeEvent.pointerType !== "mouse" && window.matchMedia("(hover: none)").matches) e.preventDefault(); }}
+      style={{ transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 30 : undefined, WebkitTouchCallout: "none" }}
+      className={`relative group min-w-0 [@media(hover:none)]:select-none ${isDragging ? "opacity-80 ring-1 ring-primary shadow-2xl" : ""} ${className}`}
+      data-testid={`cell-${id}`}
+    >
+      {children}
+      <div className={`absolute -top-3.5 right-3 z-20 flex items-center border border-border bg-[#0b0b0d] transition-opacity ${reveal}`}>
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          {...attributes}
+          // The handle picks up straight away -- mouse, pen or finger -- with no hold. Its touches
+          // stop here so the tile's press-and-hold below doesn't also start on them.
+          onPointerDown={listeners?.onPointerDown}
+          onKeyDown={listeners?.onKeyDown}
+          onTouchStart={(e) => e.stopPropagation()}
+          aria-label={`Move ${label}`}
+          title="Drag to move"
+          data-testid={`drag-${id}`}
+          className={`${control} cursor-grab active:cursor-grabbing touch-none`}
+        >
+          <DotsSixVertical size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={onGear}
+          aria-label={`Configure ${label}`}
+          title="Configure"
+          data-testid={`kpi-gear-${id}`}
+          className={`${control} border-l border-border`}
+        >
+          <Gear size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const KpiTile = ({ tile, kpi, cfg, trend, currency, anomaly, onClick }) => {
   const loading = kpi == null;
   const val = loading ? null : tile.get(kpi);
   const state = loading ? null : tileState(tile, kpi, cfg, anomaly);
@@ -138,33 +223,23 @@ const KpiTile = ({ tile, kpi, cfg, trend, currency, anomaly, onClick, onGear }) 
   const series = tile.series && trend ? tile.series(trend).slice(-6) : null;
   const sparkData = tile.spark && trend ? tile.spark(trend) : null;
   const viewByLabel = cfg?.view_by === "vehicle" ? "By vehicle" : cfg?.view_by === "group" ? "By group" : cfg?.view_by === "driver" ? "By driver" : null;
-  const sizeSpan = cfg?.size === "lg" ? "sm:col-span-2" : "";
 
   const Wrapper = tile.link ? Link : "button";
   const wrapperProps = tile.link ? { to: tile.link } : { type: "button", onClick };
 
   return (
     <div
-      className={`relative bg-[#121214] border border-border overflow-hidden group ${sizeSpan}`}
+      className="relative bg-[#121214] border border-border overflow-hidden h-full"
       style={{
         borderLeft: `3px solid ${accent}`,
         ...(alarming ? { background: `linear-gradient(180deg, color-mix(in srgb, ${CHART.red} 9%, transparent), #121214 70%)` } : {}),
       }}
       data-testid={`kpi-${tile.key}`}
     >
-      <button
-        type="button"
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onGear(); }}
-        data-testid={`kpi-gear-${tile.key}`}
-        title="Configure tile"
-        className="absolute top-3 right-3 z-10 p-1.5 text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
-      >
-        <Gear size={16} />
-      </button>
-      <Wrapper {...wrapperProps} className="flex flex-col text-left w-full h-full p-5 hover:bg-white/[0.02] transition-colors">
-        <div className="flex items-start gap-3 pr-6">
-          <div className="w-7 h-7 flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${tile.color} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${tile.color} 40%, transparent)` }}>
-            <tile.icon size={14} style={{ color: tile.color }} />
+      <Wrapper {...wrapperProps} className="flex flex-col text-left w-full h-full min-h-[180px] p-6 hover:bg-white/[0.02] transition-colors">
+        <div className="flex items-start gap-3">
+          <div className="w-8 h-8 flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${tile.color} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${tile.color} 40%, transparent)` }}>
+            <tile.icon size={16} style={{ color: tile.color }} />
           </div>
           <div className="min-w-0 pt-0.5">
             {/* Wraps rather than truncates, so a narrow tile never shows "COST PER VEH…". */}
@@ -219,15 +294,6 @@ export default function Dashboard() {
   const upcoming = useUpcoming(schedules);
   const healthList = health || [];
 
-  // Loaded once rather than on the polling cycle below: schedules change rarely, and this is the
-  // heaviest call on the page. Gated on the maintenance module, so a narrower profile gets an
-  // explanation in the rail instead of an endless loading state.
-  useEffect(() => {
-    api.get("/maintenance-schedules")
-      .then((r) => setSchedules(r.data || []))
-      .catch((e) => { if (e.response?.status === 403) setCanSeeSchedules(false); setSchedules([]); });
-  }, []);
-
   const loadGroups = () => api.get("/vehicle-groups").then(r => setGroups(r.data || [])).catch(() => {});
 
   const loadKpis = () => {
@@ -258,32 +324,79 @@ export default function Dashboard() {
   const [liveAlerts, setLiveAlerts] = useState(null);
   const [showGroups, setShowGroups] = useState(false);
   const [tileModal, setTileModal] = useState(null); // { mode: "create"|"edit", key: string|null }
-  const [tileConfigs, setTileConfigs] = useState(defaultConfigs());
+  // KPI tiles and panels in the order this user arranged them. null until their saved layout has
+  // loaded, so the default layout doesn't flash up first and then rearrange itself.
+  const [tileConfigs, setTileConfigs] = useState(null);
+  const [tileLimit, setTileLimit] = useState(DEFAULT_TILE_LIMIT);
   const { currency } = useCurrency();
+  const configs = useMemo(() => tileConfigs || [], [tileConfigs]);
 
-  const saveTiles = (configs) => {
-    setTileConfigs(configs);
-    api.put("/users/me/prefs", { dashboard_tiles: configs }).catch(() => {});
+  const applyPrefs = (prefs) => {
+    if (prefs?.dashboard_tile_limit) setTileLimit(prefs.dashboard_tile_limit);
+    const saved = prefs?.dashboard_tiles;
+    // Backward-compat: older prefs stored plain string keys instead of config objects.
+    const normalized = Array.isArray(saved)
+      ? saved.map(t => (typeof t === "string" ? { key: t, threshold: null, view_by: "none", group_id: null } : t))
+          .filter(t => CATALOGUE.some(at => at.key === t.key))
+      : [];
+    setTileConfigs(normalized.length > 0 ? normalized : defaultConfigs());
+  };
+  // Every load and save takes a ticket; a load only lands if nothing newer has happened since it
+  // was sent. Otherwise a slow initial load could arrive after the user's first change and quietly
+  // put the old layout back.
+  const prefsSeq = useRef(0);
+  const loadPrefs = () => {
+    const ticket = ++prefsSeq.current;
+    return api.get("/users/me/prefs")
+      .then(r => { if (ticket === prefsSeq.current) applyPrefs(r.data); })
+      .catch(() => { if (ticket === prefsSeq.current) setTileConfigs(c => c ?? defaultConfigs()); });
+  };
+  useEffect(() => { loadPrefs(); }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, on mount
+
+  const saveTiles = (next) => {
+    prefsSeq.current += 1;
+    setTileConfigs(next);
+    api.put("/users/me/prefs", { dashboard_tiles: next }).catch((e) => {
+      // Put the screen back to what's actually saved rather than leave a layout that will vanish
+      // on the next visit.
+      toast.error(e.response?.data?.detail || "Couldn't save your dashboard layout.");
+      loadPrefs();
+    });
   };
 
-  const cfgMap = useMemo(() => Object.fromEntries(tileConfigs.map(c => [c.key, c])), [tileConfigs]);
-  const activeTiles = ALL_TILES.filter(t => cfgMap[t.key]);
-  const atCap = tileConfigs.length >= MAX_TILES;
+  const cfgMap = useMemo(() => Object.fromEntries(configs.map(c => [c.key, c])), [configs]);
+  const cells = configs.map(c => CATALOGUE.find(t => t.key === c.key)).filter(Boolean);
+  const atCap = configs.length >= tileLimit;
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    // Press and hold 250ms to pick a tile up; moving more than 8px first counts as a scroll.
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const handleDragEnd = ({ active, over }) => {
+    if (!over || active.id === over.id) return;
+    const from = configs.findIndex(c => c.key === active.id);
+    const to = configs.findIndex(c => c.key === over.id);
+    if (from < 0 || to < 0) return;
+    saveTiles(arrayMove(configs, from, to));
+  };
+
+  // Schedules are the heaviest call on the page, so they're only fetched for someone who has a
+  // schedule panel on their dashboard, and once rather than on the polling cycle -- they change
+  // rarely. Gated on the maintenance module: a narrower profile gets an explanation in the panel
+  // instead of an endless loading state.
+  const wantsSchedules = configs.some(c => c.key === "w_calendar" || c.key === "w_scheduled");
+  useEffect(() => {
+    if (!wantsSchedules || schedules != null) return;
+    api.get("/maintenance-schedules")
+      .then((r) => setSchedules(r.data || []))
+      .catch((e) => { if (e.response?.status === 403) setCanSeeSchedules(false); setSchedules([]); });
+  }, [wantsSchedules, schedules]);
 
   const loadLiveAlerts = () => api.get("/alerts").then(r => setLiveAlerts(r.data)).catch(() => {});
   useEffect(() => { loadLiveAlerts(); }, []);
   usePolling(loadLiveAlerts);
-  useEffect(() => {
-    api.get("/users/me/prefs").then(r => {
-      const saved = r.data?.dashboard_tiles;
-      if (Array.isArray(saved) && saved.length > 0) {
-        // Backward-compat: older prefs stored plain string keys instead of config objects.
-        const normalized = saved.map(t => (typeof t === "string" ? { key: t, threshold: null, view_by: "none", group_id: null } : t))
-          .filter(t => ALL_TILES.some(at => at.key === t.key));
-        if (normalized.length > 0) setTileConfigs(normalized);
-      }
-    }).catch(() => {});
-  }, []);
 
   const activeDrivers = drivers.filter(d => d.status === "active").length;
   const partsValue = parts.reduce((s, p) => s + (p.stock || 0) * (p.unit_cost || 0), 0);
@@ -322,16 +435,91 @@ export default function Dashboard() {
 
   const handleTileSave = (config) => {
     if (tileModal?.mode === "edit") {
-      saveTiles(tileConfigs.map(c => (c.key === config.key ? config : c)));
+      saveTiles(configs.map(c => (c.key === config.key ? config : c)));
     } else {
       if (atCap) return;
-      saveTiles([...tileConfigs, config]);
+      saveTiles([...configs, config]);
     }
     setTileModal(null);
   };
 
   const handleTileRemove = (key) => {
-    saveTiles(tileConfigs.filter(c => c.key !== key));
+    saveTiles(configs.filter(c => c.key !== key));
+  };
+
+  const renderWidget = (key) => {
+    switch (key) {
+      case "w_needs_attention":
+        return health == null ? (
+          <div className="bg-[#121214] border border-border p-6"><Pending>Scoring vehicle health…</Pending></div>
+        ) : worstVehicle ? (
+          <FeaturedVehicle item={worstVehicle} vehicle={worstVehicleRecord} />
+        ) : (
+          <div className="bg-[#121214] border border-border p-6 text-sm text-muted-foreground">No vehicles scored yet.</div>
+        );
+      case "w_spend_chart":
+        return <MaintenanceSpendChart trend={trend} currency={currency} />;
+      case "w_cost_by_category":
+        return (
+          <div className="bg-[#121214] border border-border p-6" data-testid="chart-cost-cat">
+            <div className="overline">Cost by category</div>
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie data={byCat} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={2}>
+                  {byCat.map((c, i) => (<Cell key={i} fill={CATEGORY_COLORS[c.name] || "#71717a"} stroke="none" />))}
+                </Pie>
+                <Tooltip contentStyle={{ background: "#0b0b0d", border: "1px solid #27272a", fontSize: 12 }} formatter={(v) => formatMoneyFull(v, currency)} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      case "w_top_spenders":
+        return (
+          <div className="bg-[#121214] border border-border p-6" data-testid="chart-by-vehicle">
+            <div className="overline">Top spending vehicles</div>
+            <div style={{ height: 240 }} className="mt-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={byVehicle.slice(0, 6)} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
+                  <CartesianGrid stroke="#27272a" vertical={false} />
+                  <XAxis dataKey="vehicle" tick={{ fill: "#71717a", fontSize: 10 }} axisLine={false} tickLine={false} interval={0} />
+                  <YAxis tick={{ fill: "#71717a", fontSize: 10 }} axisLine={false} tickLine={false} width={48} tickFormatter={(v) => formatMoney(v, currency)} />
+                  <Tooltip cursor={{ fill: "#ffffff08" }} contentStyle={{ background: "#0b0b0d", border: "1px solid #27272a", fontSize: 12 }} formatter={(v) => [formatMoneyFull(v, currency), "Cost"]} />
+                  {/* Neutral: being the biggest spender isn't by itself a problem. Red stays reserved for real alerts. */}
+                  <Bar dataKey="cost" fill="#71717a" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        );
+      case "w_recent_jobs":
+        return (
+          <div className="bg-[#121214] border border-border p-6" data-testid="recent-jobs">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div className="overline">Recent maintenance jobs</div>
+              <Link to="/maintenance" className="overline text-primary hover:underline whitespace-nowrap">View all</Link>
+            </div>
+            <div>
+              {maint.slice(0, 6).map(m => (
+                <div key={m.id} className="flex items-center justify-between gap-3 border-b border-border/50 py-2">
+                  <div className="min-w-0">
+                    <div className="text-sm truncate">{m.title}</div>
+                    <div className="overline mt-1">{String(m.status).replace(/_/g, " ")} · {m.priority}</div>
+                  </div>
+                  <div className="mono text-sm shrink-0">{formatMoneyFull(m.actual_cost || m.estimated_cost, currency)}</div>
+                </div>
+              ))}
+              {maint.length === 0 && <div className="text-sm text-muted-foreground py-6 text-center">No maintenance jobs yet.</div>}
+            </div>
+          </div>
+        );
+      case "w_calendar":
+        return <MonthCalendar month={calendarMonth} setMonth={setCalendarMonth} upcoming={upcoming} />;
+      case "w_scheduled":
+        return <ScheduledList items={upcoming.slice(0, 6)} canSee={canSeeSchedules} loading={schedules == null} />;
+      default:
+        return null;
+    }
   };
 
   return (
@@ -344,16 +532,16 @@ export default function Dashboard() {
         </div>
         <div className="flex gap-2">
           <button onClick={() => setTileModal({ mode: "create", key: null })} disabled={atCap} data-testid="add-tile-btn" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed">
-            <Gear size={14} /> {atCap ? `${tileConfigs.length}/${MAX_TILES} tiles` : "Add tile"}
+            <Gear size={14} /> {atCap ? "Dashboard full" : "Add tile"}
+            {tileConfigs && <span className="mono text-muted-foreground" data-testid="tile-count">{configs.length}/{tileLimit}</span>}
           </button>
           <Link to="/maintenance" className="bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors" data-testid="link-maintenance">Maintenance board</Link>
         </div>
       </header>
 
-      {/* Main column plus a schedule rail on wide screens; below xl the rail stacks after the main
-          column. Everything the dashboard did before is still here -- configurable tiles,
-          thresholds, investigate drill-downs, forecast, alerts. */}
-      <div className="p-8 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-6">
+      {/* Alerts and the forecast always show at the top. Below them is one grid of whatever this user
+          chose -- KPI tiles, charts, the schedule calendar -- in the order they dragged them into. */}
+      <div className="p-4 sm:p-8">
         <div className="space-y-6 min-w-0">
         {anomalies.length > 0 && (
           <div className="bg-primary/10 border border-primary/40 p-4" data-testid="anomaly-alert">
@@ -405,101 +593,68 @@ export default function Dashboard() {
             <Link to="/reports" className="overline hover:text-primary">See full forecast →</Link>
           </div>
         )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4" data-testid="kpi-grid">
-          {activeTiles.map(t => {
-            const cfg = cfgMap[t.key];
-            return (
-              <KpiTile
-                key={t.key}
-                tile={t}
-                kpi={metrics}
-                cfg={cfg}
-                trend={trend}
-                currency={currency}
-                anomaly={anomalies[0]}
-                onClick={() => t.investigate && setInvestigate({ key: t.key, label: t.label, groupBy: cfg?.view_by !== "none" ? cfg?.view_by : null })}
-                onGear={() => setTileModal({ mode: "edit", key: t.key })}
-              />
-            );
-          })}
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-6">
-          {health == null ? (
-            <div className="bg-[#121214] border border-border p-6"><Pending>Scoring vehicle health…</Pending></div>
-          ) : worstVehicle ? (
-            <FeaturedVehicle item={worstVehicle} vehicle={worstVehicleRecord} />
-          ) : (
-            <div className="bg-[#121214] border border-border p-6 text-sm text-muted-foreground">No vehicles scored yet.</div>
-          )}
-          <MaintenanceSpendChart trend={trend} currency={currency} />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-6">
-          <div className="bg-[#121214] border border-border p-6" data-testid="chart-cost-cat">
-            <div className="overline">Cost breakdown</div>
-            <h3 className="font-display text-2xl font-bold tracking-tight mt-1 mb-4">By category</h3>
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Pie data={byCat} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={90} paddingAngle={2}>
-                  {byCat.map((_, i) => (<Cell key={i} fill={COLORS[i % COLORS.length]} stroke="none" />))}
-                </Pie>
-                <Tooltip contentStyle={{ background: "#0b0b0d", border: "1px solid #27272a", fontSize: 12 }} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="bg-[#121214] border border-border p-6" data-testid="chart-by-vehicle">
-            <div className="overline">Cost per vehicle</div>
-            <h3 className="font-display text-2xl font-bold tracking-tight mt-1 mb-4">Top spenders</h3>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={byVehicle.slice(0, 6)}>
-                <CartesianGrid stroke="#27272a" strokeDasharray="3 3" />
-                <XAxis dataKey="vehicle" stroke="#636366" tick={{ fontSize: 11 }} />
-                <YAxis stroke="#636366" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }} />
-                <Tooltip contentStyle={{ background: "#0b0b0d", border: "1px solid #27272a", fontSize: 12 }} />
-                <Bar dataKey="cost" fill={CHART.red} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="bg-[#121214] border border-border p-6 lg:col-span-2 2xl:col-span-1" data-testid="recent-jobs">
-            <div className="flex items-end justify-between mb-4">
-              <div>
-                <div className="overline">Recent activity</div>
-                <h3 className="font-display text-2xl font-bold tracking-tight mt-1">Maintenance jobs</h3>
+        {tileConfigs == null ? (
+          <div className="py-10"><Pending>Loading your dashboard…</Pending></div>
+        ) : (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={cells.map(c => c.key)} strategy={rectSortingStrategy}>
+              {/* items-start: a KPI tile sharing a row with a tall chart keeps its own height
+                  instead of stretching into a mostly empty box. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-6 items-start pt-2" data-testid="kpi-grid">
+                {cells.map(t => {
+                  const cfg = cfgMap[t.key];
+                  const wide = t.widget ? (cfg?.size || t.span) === "lg" : cfg?.size === "lg";
+                  return (
+                    <SortableCell
+                      key={t.key}
+                      id={t.key}
+                      label={t.label}
+                      className={wide ? "sm:col-span-2" : ""}
+                      onGear={() => setTileModal({ mode: "edit", key: t.key })}
+                    >
+                      {t.widget ? renderWidget(t.key) : (
+                        <KpiTile
+                          tile={t}
+                          kpi={metrics}
+                          cfg={cfg}
+                          trend={trend}
+                          currency={currency}
+                          anomaly={anomalies[0]}
+                          onClick={() => t.investigate && setInvestigate({ key: t.key, label: t.label, groupBy: cfg?.view_by !== "none" ? cfg?.view_by : null })}
+                        />
+                      )}
+                    </SortableCell>
+                  );
+                })}
+                {!atCap && (
+                  <button
+                    type="button"
+                    onClick={() => setTileModal({ mode: "create", key: null })}
+                    data-testid="add-tile-cell"
+                    className="min-h-[180px] border border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors flex flex-col items-center justify-center gap-2 p-6 text-center"
+                  >
+                    <Gear size={18} />
+                    <span className="overline">Add a KPI or chart</span>
+                    <span className="text-xs">
+                      {tileLimit - configs.length} of {tileLimit} spaces left ·{" "}
+                      <span className="[@media(hover:none)]:hidden">drag tiles to rearrange</span>
+                      <span className="hidden [@media(hover:none)]:inline">press and hold a tile to move it</span>
+                    </span>
+                  </button>
+                )}
               </div>
-              <Link to="/maintenance" className="overline hover:text-primary">View all →</Link>
-            </div>
-            <div className="space-y-2">
-              {maint.slice(0, 6).map(m => (
-                <div key={m.id} className="flex items-center justify-between border-b border-border/50 py-2">
-                  <div className="min-w-0">
-                    <div className="text-sm truncate">{m.title}</div>
-                    <div className="overline mt-1">{m.status} · {m.priority}</div>
-                  </div>
-                  <div className="mono text-sm">{formatMoneyFull(m.actual_cost || m.estimated_cost, currency)}</div>
-                </div>
-              ))}
-              {maint.length === 0 && <div className="text-sm text-muted-foreground py-6 text-center">No maintenance jobs yet.</div>}
-            </div>
-          </div>
+            </SortableContext>
+          </DndContext>
+        )}
         </div>
-        </div>
-
-        <aside className="space-y-6 min-w-0" data-testid="dashboard-rail">
-          <MonthCalendar month={calendarMonth} setMonth={setCalendarMonth} upcoming={upcoming} />
-          <ScheduledList items={upcoming.slice(0, 6)} canSee={canSeeSchedules} loading={schedules == null} />
-        </aside>
       </div>
       <InvestigationHub root={investigate} groups={groups} onClose={() => setInvestigate(null)} />
 
       <CreateTileModal
         open={!!tileModal}
         mode={tileModal?.mode || "create"}
-        allTiles={ALL_TILES}
-        activeKeys={tileConfigs.map(c => c.key)}
+        allTiles={CATALOGUE}
+        activeKeys={configs.map(c => c.key)}
         initialConfig={editingConfig}
         groups={groups}
         currency={currency}
