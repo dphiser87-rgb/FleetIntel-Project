@@ -14,6 +14,7 @@ import json
 import os
 import re
 import uuid
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -152,6 +153,45 @@ async def execute_many(query: str, rows: list[dict]) -> None:
         pool = await _get_pool()
         await pool.executemany(sql, arg_rows)
     await _with_retry(_do)
+
+
+class Tx:
+    """The same fetch_one / fetch_all / execute surface as the module-level helpers, bound to one
+    connection inside one transaction. Obtained only through `transaction()`."""
+
+    def __init__(self, conn: asyncpg.Connection):
+        self._conn = conn
+
+    async def fetch_one(self, query: str, **params) -> dict | None:
+        sql, args = _translate(query, params)
+        row = await self._conn.fetchrow(sql, *args)
+        return dict(row) if row else None
+
+    async def fetch_all(self, query: str, **params) -> list[dict]:
+        sql, args = _translate(query, params)
+        return [dict(r) for r in await self._conn.fetch(sql, *args)]
+
+    async def execute(self, query: str, **params) -> None:
+        sql, args = _translate(query, params)
+        await self._conn.execute(sql, *args)
+
+
+@asynccontextmanager
+async def transaction():
+    """All-or-nothing: every statement run through the yielded Tx commits together, or none do.
+
+    The module-level helpers each borrow their own pooled connection, so two consecutive
+    `execute` calls are two independent commits -- a state change could land while the audit
+    record written next to it fails. Anything that must not half-apply belongs in here.
+
+    Safe under Supavisor transaction-mode pooling, which pins one server connection for the life of
+    a BEGIN..COMMIT -- the case that mode is built for. Deliberately NOT wrapped in _with_retry:
+    re-running a partly-applied block is exactly the partial success this exists to prevent, so a
+    dropped connection surfaces as an error and the whole block rolls back."""
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            yield Tx(conn)
 
 
 async def update_row(table: str, row_id: str, workspace_id: str, patch: dict, allowed_cols: set) -> None:

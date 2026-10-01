@@ -2538,29 +2538,75 @@ async def _replace_schedule_children(schedule_id: str, ws: str, vehicle_ids: Lis
             id=str(uuid.uuid4()), sid=schedule_id, tt=r.trigger_type, n=r.threshold_n,
         )
 
+async def _schedule_details(ws: str, scheds: list) -> list:
+    """Detail for many schedules in a fixed number of queries, however many schedules or assets.
+
+    The previous shape issued four queries per schedule and one more per assigned asset, strictly in
+    sequence: six schedules took ~11s, and the count grows linearly toward the 30s function limit.
+    Here every child table is read once for the whole batch, then grouped in memory."""
+    if not scheds:
+        return []
+    sids = [s["id"] for s in scheds]
+    interval_rows, reminder_rows, assigned_rows, due_state_rows = await asyncio.gather(
+        fetch_all("select * from schedule_intervals where schedule_id = any(:sids)", sids=sids),
+        fetch_all("select * from schedule_reminders where schedule_id = any(:sids)", sids=sids),
+        fetch_all("select * from schedule_assets where schedule_id = any(:sids)", sids=sids),
+        fetch_all("select * from schedule_due_state where schedule_id = any(:sids)", sids=sids),
+    )
+    vids = list({r["vehicle_id"] for r in assigned_rows if r["vehicle_id"]})
+    aids = list({r["asset_id"] for r in assigned_rows if r["asset_id"]})
+    # Scoped to the workspace, which the per-asset lookups this replaces were not; the ids come from
+    # the workspace's own schedules, so the only thing this changes is a would-be cross-tenant read.
+    vehicles, assets = await asyncio.gather(
+        fetch_all("select id, name, plate, odometer, engine_hours from vehicles where workspace_id = :ws and id = any(:ids)",
+                  ws=ws, ids=vids) if vids else asyncio.sleep(0, result=[]),
+        fetch_all("select id, name, identifier, engine_hours from assets where workspace_id = :ws and id = any(:ids)",
+                  ws=ws, ids=aids) if aids else asyncio.sleep(0, result=[]),
+    )
+
+    def group(rows):
+        out = {}
+        for r in rows:
+            out.setdefault(r["schedule_id"], []).append(r)
+        return out
+
+    by_interval, by_reminder, by_assigned, by_due = (group(interval_rows), group(reminder_rows),
+                                                     group(assigned_rows), group(due_state_rows))
+    vehicles_by_id = {v["id"]: v for v in vehicles}
+    assets_by_id = {a["id"]: a for a in assets}
+    ref_date = datetime.now(timezone.utc).date()
+    return [
+        _build_schedule_detail(
+            dict(s), by_interval.get(s["id"], []), by_reminder.get(s["id"], []), by_assigned.get(s["id"], []),
+            {(r["vehicle_id"], r["asset_id"]): r for r in by_due.get(s["id"], [])},
+            vehicles_by_id, assets_by_id, ref_date,
+        )
+        for s in scheds
+    ]
+
+
 async def _schedule_detail(ws: str, schedule_id: str) -> Optional[dict]:
     sched = await fetch_one("select * from maintenance_schedules where id = :id and workspace_id = :ws", id=schedule_id, ws=ws)
     if not sched:
         return None
-    interval_rows = await fetch_all("select * from schedule_intervals where schedule_id = :sid", sid=schedule_id)
-    reminder_rows = await fetch_all("select * from schedule_reminders where schedule_id = :sid", sid=schedule_id)
-    assigned = await fetch_all("select * from schedule_assets where schedule_id = :sid", sid=schedule_id)
-    due_rows = {
-        (r["vehicle_id"], r["asset_id"]): r
-        for r in await fetch_all("select * from schedule_due_state where schedule_id = :sid", sid=schedule_id)
-    }
+    return (await _schedule_details(ws, [sched]))[0]
+
+
+def _build_schedule_detail(sched: dict, interval_rows: list, reminder_rows: list, assigned: list, due_rows: dict,
+                           vehicles_by_id: dict, assets_by_id: dict, ref_date) -> dict:
+    """Pure assembly of one schedule's detail. Shared by the single and list endpoints so the two
+    can't drift apart."""
     intervals = [Interval(r["trigger_type"], float(r["every_n"]), r["unit"]) for r in interval_rows]
     reminders = [(r["trigger_type"], float(r["threshold_n"])) for r in reminder_rows]
-    ref_date = datetime.now(timezone.utc).date()
 
     assets_out = []
     for sa in assigned:
         due_row = due_rows.get((sa["vehicle_id"], sa["asset_id"]))
         if sa["vehicle_id"]:
-            target = await fetch_one("select id, name, plate, odometer, engine_hours from vehicles where id = :id", id=sa["vehicle_id"])
+            target = vehicles_by_id.get(sa["vehicle_id"])
             kind, target_id, target_name, target_ref = "vehicle", sa["vehicle_id"], target["name"] if target else None, target
         else:
-            target = await fetch_one("select id, name, identifier, engine_hours from assets where id = :id", id=sa["asset_id"])
+            target = assets_by_id.get(sa["asset_id"])
             kind, target_id, target_name, target_ref = "asset", sa["asset_id"], target["name"] if target else None, target
         entry = {"kind": kind, "id": target_id, "name": target_name, "status": "awaiting_telematics", "remaining_days": None,
                  "next_due_date": None, "next_due_distance": None, "next_due_hours": None}
@@ -2589,10 +2635,10 @@ async def _schedule_detail(ws: str, schedule_id: str) -> Optional[dict]:
 
 @api.get("/maintenance-schedules")
 async def list_maintenance_schedules(user: dict = Depends(require_module("maintenance", "read"))):
-    rows = await fetch_all(
-        "select id from maintenance_schedules where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
+    scheds = await fetch_all(
+        "select * from maintenance_schedules where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
     )
-    return [await _schedule_detail(user["workspace_id"], r["id"]) for r in rows]
+    return await _schedule_details(user["workspace_id"], scheds)
 
 @api.post("/maintenance-schedules")
 async def create_maintenance_schedule(s: MaintenanceScheduleIn, user: dict = Depends(require_module("maintenance", "full"))):
