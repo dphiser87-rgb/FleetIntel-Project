@@ -172,49 +172,54 @@ export default function Layout() {
 
   const sidebarProps = { user, visibleNav, topLevel, collapsed, setCollapsed, onLogout: handleLogout };
 
-  if (!isDesktop) {
-    return (
-      <div className="min-h-screen bg-background text-foreground">
-        <header className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b border-border bg-[#0b0b0d] px-4 py-3" data-testid="mobile-topbar">
-          <button
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Open navigation"
-            data-testid="mobile-nav-toggle"
-            className="w-9 h-9 flex items-center justify-center border border-border hover:border-primary hover:text-primary"
-          >
-            <List size={18} />
-          </button>
-          <Brand />
-          <div className="flex items-center gap-1">
-            <HelpMenu />
-            <NotificationCenter />
-          </div>
-        </header>
-        <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
-          <SheetContent side="left" className="w-72 max-w-[85vw] p-0 bg-[#0b0b0d] border-border flex flex-col" data-testid="mobile-drawer">
-            <SheetTitle className="sr-only">Navigation</SheetTitle>
-            <SheetDescription className="sr-only">FleetIntel sections</SheetDescription>
-            <SidebarContent {...sidebarProps} utilities={false} />
-          </SheetContent>
-        </Sheet>
-        <main className="min-w-0 overflow-x-hidden">
-          <GlobalAlertBar />
-          <Outlet />
-        </main>
-      </div>
-    );
-  }
-
+  // One tree for both shells. Only the navigation chrome in the first slot changes with width; the
+  // <main> holding the page stays the same element in the same position, so React keeps the page
+  // mounted when the width crosses the breakpoint. Returning two separate trees remounted the whole
+  // page instead -- rotating a tablet (820px upright, 1180px sideways) closed open dialogs and wiped
+  // half-filled forms.
   return (
-    <div className="min-h-screen bg-background text-foreground flex">
-      <aside className="w-64 shrink-0 border-r border-border bg-[#0b0b0d] flex flex-col h-screen sticky top-0" data-testid="sidebar">
-        <SidebarContent {...sidebarProps} utilities />
-      </aside>
+    <div className={`min-h-screen bg-background text-foreground ${isDesktop ? "flex" : ""}`}>
+      {isDesktop ? (
+        <aside key="sidebar" className="w-64 shrink-0 border-r border-border bg-[#0b0b0d] flex flex-col h-screen sticky top-0" data-testid="sidebar">
+          <SidebarContent {...sidebarProps} utilities />
+        </aside>
+      ) : (
+        <MobileChrome key="mobile" drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} sidebarProps={sidebarProps} />
+      )}
 
-      <main className="flex-1 min-w-0 overflow-x-hidden">
+      <main className={`min-w-0 overflow-x-hidden ${isDesktop ? "flex-1" : ""}`}>
         <GlobalAlertBar />
         <Outlet />
       </main>
     </div>
+  );
+}
+
+function MobileChrome({ drawerOpen, setDrawerOpen, sidebarProps }) {
+  return (
+    <>
+      <header className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b border-border bg-[#0b0b0d] px-4 py-3" data-testid="mobile-topbar">
+        <button
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Open navigation"
+          data-testid="mobile-nav-toggle"
+          className="w-9 h-9 flex items-center justify-center border border-border hover:border-primary hover:text-primary"
+        >
+          <List size={18} />
+        </button>
+        <Brand />
+        <div className="flex items-center gap-1">
+          <HelpMenu />
+          <NotificationCenter />
+        </div>
+      </header>
+      <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+        <SheetContent side="left" className="w-72 max-w-[85vw] p-0 bg-[#0b0b0d] border-border flex flex-col" data-testid="mobile-drawer">
+          <SheetTitle className="sr-only">Navigation</SheetTitle>
+          <SheetDescription className="sr-only">FleetIntel sections</SheetDescription>
+          <SidebarContent {...sidebarProps} utilities={false} />
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }

@@ -68,6 +68,8 @@ function App() {
             <Route path="/public/incident/:token" element={<PublicIncident />} />
             <Route path="/" element={<Protected><CurrencyProvider><Layout /></CurrencyProvider></Protected>}>
               <Route index element={<Dashboard />} />
+              {/* The standalone layout preview was folded into the dashboard; keep its old address working. */}
+              <Route path="dashboard-preview" element={<Navigate to="/" replace />} />
               <Route path="executive-dashboard" element={<ExecutiveDashboard />} />
               <Route path="fleet" element={<Fleet />} />
               <Route path="fleet/:id" element={<VehicleDetail />} />
