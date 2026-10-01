@@ -22,13 +22,17 @@ const PERIODS = [
 // "Gauge" and "Bar" drew the value against a fixed maximum that was a guess, not a target, so they
 // were retired; tiles saved with either now show as "Trend".
 // `requires` hides a style the selected KPI can't honestly draw: ranked bars need a per-vehicle
-// breakdown, a dial needs a real 0-100 scale (a percentage or a score), not a guessed maximum.
+// breakdown, a dial needs a real 0-100 scale (a percentage or a score), not a guessed maximum, and a
+// line needs a monthly history -- offered without one it looked exactly like the default (checked
+// across all 32 KPIs: only 2 have history). The default is called "Trend" only where there's a
+// trend to show; elsewhere it's "Standard".
 const CHART_TYPES = [
-  { value: "trend", label: "Trend", desc: "The value, with six months of history where it exists" },
+  { value: "trend", label: "Trend", desc: "The value, with six months of history",
+    labelFor: t => (t?.series ? null : { label: "Standard", desc: "The value and what it covers" }) },
   { value: "ranked", label: "Ranked bars", desc: "The vehicles, groups or drivers behind the number, worst first", requires: t => !!t?.rank },
   { value: "number", label: "Big number", desc: "Just the value, large" },
   { value: "dial", label: "Dial", desc: "The value on its 0–100 scale", requires: t => !!t?.scale },
-  { value: "line", label: "Line", desc: "Trend sparkline where available" },
+  { value: "line", label: "Line", desc: "Six months of history as a line", requires: t => !!t?.spark },
 ];
 const normalizeChartType = (t, tile) => {
   const def = CHART_TYPES.find(c => c.value === t);
@@ -214,6 +218,7 @@ export default function CreateTileModal({
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                   {CHART_TYPES.filter(c => !c.requires || c.requires(selectedTile)).map(c => {
                     const on = chartType === c.value;
+                    const { label, desc } = c.labelFor?.(selectedTile) || c;
                     return (
                       <button type="button" key={c.value} onClick={() => setChartType(c.value)} data-testid={`chart-type-${c.value}`}
                         className={`w-full text-left flex items-center gap-3 border rounded-xl px-4 py-3 transition-colors ${on ? "bg-emerald-50 border-emerald-500" : "bg-white border-gray-200 hover:border-gray-300"}`}>
@@ -221,8 +226,8 @@ export default function CreateTileModal({
                           {on && <span className="w-2 h-2 rounded-full bg-emerald-600" />}
                         </span>
                         <span>
-                          <div className={`text-sm font-bold ${on ? "text-emerald-700" : "text-gray-900"}`}>{c.label}</div>
-                          <div className="text-xs text-gray-500 mt-0.5">{c.desc}</div>
+                          <div className={`text-sm font-bold ${on ? "text-emerald-700" : "text-gray-900"}`}>{label}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">{desc}</div>
                         </span>
                       </button>
                     );
