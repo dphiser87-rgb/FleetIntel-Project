@@ -15,7 +15,7 @@ import InvestigationHub from "@/components/investigation/InvestigationHub";
 import GroupManager from "@/components/GroupManager";
 import CreateTileModal from "@/components/tile-config/CreateTileModal";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { toast } from "sonner";
@@ -161,11 +161,20 @@ const tileState = (tile, kpi, cfg, anomaly) => {
 function SortableCell({ id, label, className = "", onGear, children }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
   const reveal = "[@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-within:opacity-100";
+  // Touch screens get bigger controls: a 26px handle on a tile's edge is too small to hit with a finger.
+  const control = "p-1.5 [@media(hover:none)]:p-2.5 text-muted-foreground hover:text-primary";
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 30 : undefined }}
-      className={`relative group min-w-0 ${isDragging ? "opacity-80 ring-1 ring-primary" : ""} ${className}`}
+      // On a touch screen the whole tile is a drag handle after a press-and-hold (see the
+      // TouchSensor delay), which is how people expect to move things on a phone. A quick swipe
+      // still scrolls the page and a tap still opens the tile. Mouse dragging stays on the handle
+      // only, so clicks and text selection on desktop are untouched.
+      onTouchStart={listeners?.onTouchStart}
+      // Stop the long-press link menu / iOS preview from opening over a drag.
+      onContextMenu={(e) => { if (e.nativeEvent.pointerType !== "mouse" && window.matchMedia("(hover: none)").matches) e.preventDefault(); }}
+      style={{ transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 30 : undefined, WebkitTouchCallout: "none" }}
+      className={`relative group min-w-0 [@media(hover:none)]:select-none ${isDragging ? "opacity-80 ring-1 ring-primary shadow-2xl" : ""} ${className}`}
       data-testid={`cell-${id}`}
     >
       {children}
@@ -174,11 +183,15 @@ function SortableCell({ id, label, className = "", onGear, children }) {
           type="button"
           ref={setActivatorNodeRef}
           {...attributes}
-          {...listeners}
+          // The handle picks up straight away -- mouse, pen or finger -- with no hold. Its touches
+          // stop here so the tile's press-and-hold below doesn't also start on them.
+          onPointerDown={listeners?.onPointerDown}
+          onKeyDown={listeners?.onKeyDown}
+          onTouchStart={(e) => e.stopPropagation()}
           aria-label={`Move ${label}`}
           title="Drag to move"
           data-testid={`drag-${id}`}
-          className="p-1.5 text-muted-foreground hover:text-primary cursor-grab active:cursor-grabbing touch-none"
+          className={`${control} cursor-grab active:cursor-grabbing touch-none`}
         >
           <DotsSixVertical size={14} />
         </button>
@@ -188,7 +201,7 @@ function SortableCell({ id, label, className = "", onGear, children }) {
           aria-label={`Configure ${label}`}
           title="Configure"
           data-testid={`kpi-gear-${id}`}
-          className="p-1.5 text-muted-foreground hover:text-primary border-l border-border"
+          className={`${control} border-l border-border`}
         >
           <Gear size={14} />
         </button>
@@ -357,6 +370,8 @@ export default function Dashboard() {
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    // Press and hold 250ms to pick a tile up; moving more than 8px first counts as a scroll.
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const handleDragEnd = ({ active, over }) => {
@@ -620,7 +635,11 @@ export default function Dashboard() {
                   >
                     <Gear size={18} />
                     <span className="overline">Add a KPI or chart</span>
-                    <span className="text-xs">{tileLimit - configs.length} of {tileLimit} spaces left · drag tiles to rearrange</span>
+                    <span className="text-xs">
+                      {tileLimit - configs.length} of {tileLimit} spaces left ·{" "}
+                      <span className="[@media(hover:none)]:hidden">drag tiles to rearrange</span>
+                      <span className="hidden [@media(hover:none)]:inline">press and hold a tile to move it</span>
+                    </span>
                   </button>
                 )}
               </div>
