@@ -95,8 +95,13 @@ const ALL_TILES = [
   { key: "failed_checklists", label: "Failed Checklists", icon: Warning, color: CHART.red, get: k => k?.failed_checklists ?? 0, sub: () => "Inspections with 1+ failed items", higher_better: false, breakdown: null, investigate: false, riskMode: "binary" },
 ];
 
-const DEFAULT_TILES = ["total_monthly_cost", "total_fleet_cost", "total_maintenance_cost", "cost_per_vehicle", "downtime_cost", "utilization", "fuel_cost", "driver_performance"];
-const defaultConfigs = () => DEFAULT_TILES.map(key => ({ key, threshold: null, view_by: "none", group_id: null }));
+// A new user's starting layout: eight KPIs plus the two panels most people want, leaving room under
+// the limit for their own choices. Migration 0053 gave existing layouts the same two panels.
+const DEFAULT_TILES = ["total_monthly_cost", "total_fleet_cost", "total_maintenance_cost", "cost_per_vehicle", "downtime_cost", "utilization", "fuel_cost", "driver_performance", "w_needs_attention", "w_spend_chart"];
+const defaultConfigs = () => DEFAULT_TILES.map(key => {
+  const widget = WIDGETS.find(w => w.key === key);
+  return { key, threshold: null, view_by: "none", group_id: null, ...(widget ? { size: widget.span } : {}) };
+});
 // Everything a user can place on their dashboard grid.
 const CATALOGUE = [...ALL_TILES, ...WIDGETS];
 
