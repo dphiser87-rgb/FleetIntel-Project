@@ -57,7 +57,7 @@ const CATEGORY_COLORS = { Parts: "#FFCC00", Labor: "#3B82F6", Labour: "#3B82F6",
 // breakdown: "both" (vehicle + group), "group" (group only), "driver" (driver only), or null (no drill-down breakdown)
 const ALL_TILES = [
   // --- The 14-item "Create New Tile" KPI catalog, in spec order ---
-  { key: "total_monthly_cost", rank: "value", label: "Total Monthly Cost", icon: Wallet, color: CHART.gold, get: k => k?.total_monthly_cost ?? 0, sub: () => "This calendar month", money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "total_monthly_cost", rank: "value", emptyRank: "No completed jobs this month yet.", label: "Total Monthly Cost", icon: Wallet, color: CHART.gold, get: k => k?.total_monthly_cost ?? 0, sub: () => "This calendar month", money: true, higher_better: false, breakdown: "both", investigate: true },
   { key: "cost_per_vehicle", rank: "cost", label: "Cost per Vehicle", icon: CurrencyDollar, color: CHART.gold, get: k => k?.cost_per_vehicle ?? 0, sub: () => "Lifetime average", money: true, higher_better: false, breakdown: null, investigate: true },
   { key: "emergency_repairs", label: "Emergency Repairs", icon: Siren, color: CHART.red, get: k => k?.emergency_repairs ?? 0, sub: () => "Critical jobs still open", higher_better: false, breakdown: null, investigate: false, link: "/maintenance", riskMode: "alert" },
   { key: "cost_efficiency_pct", scale: 100, label: "Cost Efficiency", icon: Gauge, color: CHART.green, get: k => k?.cost_efficiency_pct ?? 0, sub: () => "Jobs completed at/under estimate", suffix: "%", higher_better: true, breakdown: null, investigate: false },
@@ -112,7 +112,8 @@ const CATALOGUE = [...ALL_TILES, ...WIDGETS];
 // "ranked" needs a per-vehicle breakdown (tile.rank) and "dial" a real 0-100 scale (tile.scale); a
 // saved style the tile can't support falls back to "trend" rather than drawing something made up.
 const normalizeChartType = (t, tile) => {
-  if (t === "line" || t === "number") return t;
+  if (t === "number") return t;
+  if (t === "line" && tile?.spark) return t;
   if (t === "ranked" && tile?.rank) return t;
   if (t === "dial" && tile?.scale) return t;
   return "trend";
@@ -143,7 +144,7 @@ function RankedBars({ tile, cfg, currency, color, limit }) {
     .filter((r) => tile.higher_better || r.v > 0)
     .sort((a, b) => (tile.higher_better ? a.v - b.v : b.v - a.v))
     .slice(0, limit);
-  if (ranked.length === 0) return <div className="text-xs text-muted-foreground mt-3">Nothing to rank yet.</div>;
+  if (ranked.length === 0) return <div className="text-xs text-muted-foreground mt-3">{tile.emptyRank || "Nothing to rank yet."}</div>;
   const max = Math.max(...ranked.map((r) => r.v), tile.scale || 0) || 1;
   const fmt = (v) => (tile.money ? formatMoney(v, currency) : `${Math.round(v * 10) / 10}`);
   return (
@@ -335,7 +336,7 @@ const KpiTile = ({ tile, kpi, cfg, trend, currency, anomaly, onClick }) => {
         )}
         {chartType === "trend" && series && series.length > 1 && <MiniBars values={series} color={accent} />}
         {chartType === "line" && sparkData && sparkData.length > 1 && (
-          <div className="mt-3" style={{ height: 44 }}>
+          <div className="mt-3" style={{ height: 44 }} data-testid="sparkline">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={sparkData.map(v => ({ v }))}>
                 <Line type="monotone" dataKey="v" stroke={accent} strokeWidth={2} dot={false} />

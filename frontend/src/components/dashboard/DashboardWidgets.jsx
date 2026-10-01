@@ -33,7 +33,7 @@ export const Pending = ({ children }) => (
 export function MiniBars({ values, color }) {
   const max = Math.max(...values, 1);
   return (
-    <div className="flex items-end gap-[3px] h-9 mt-3" aria-hidden="true">
+    <div className="flex items-end gap-[3px] h-9 mt-3" aria-hidden="true" data-testid="minibars">
       {values.map((v, i) => (
         <div
           key={i}
