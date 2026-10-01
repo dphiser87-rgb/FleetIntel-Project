@@ -29,7 +29,7 @@ const PERIODS = [
 const CHART_TYPES = [
   { value: "trend", label: "Trend", desc: "The value, with six months of history",
     labelFor: t => (t?.series ? null : { label: "Standard", desc: "The value and what it covers" }) },
-  { value: "ranked", label: "Ranked bars", desc: "The vehicles, groups or drivers behind the number, worst first", requires: t => !!t?.rank },
+  { value: "ranked", label: "Ranked bars", desc: "What makes up the number -- vehicles, drivers, parts or suppliers -- worst first", requires: t => !!t?.ranking },
   { value: "number", label: "Big number", desc: "Just the value, large" },
   { value: "dial", label: "Dial", desc: "The value on its 0–100 scale", requires: t => !!t?.scale },
   { value: "line", label: "Line", desc: "Six months of history as a line", requires: t => !!t?.spark },

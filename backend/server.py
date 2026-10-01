@@ -5350,6 +5350,76 @@ async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Opti
             return {"title": f"Defect reports · by {group_by}", "total": len(defect_items), "unit": "defects", "columns": cols, "rows": rows}
         rows = [{"vehicle": vname(x["vehicle_id"]), "plate": vplate(x["vehicle_id"])} for x in defect_items]
         return {"title": "Defect reports", "total": len(rows), "unit": "defects", "columns": ["vehicle", "plate"], "rows": rows}
+
+    # Per-item breakdowns behind KPIs that are a maximum, an average or a count. Each mirrors how its
+    # tile is calculated (/analytics/kpi or /alerts) so a ranked tile adds up to the number on it.
+    def per_vehicle(values, digits=2):
+        return [{"vehicle": vname(vid), "plate": vplate(vid), "value": round(values.get(vid, 0), digits)} for vid in vmap]
+
+    def counts_by_vehicle(items):
+        out = {}
+        for it in items:
+            out[it.get("vehicle_id")] = out.get(it.get("vehicle_id"), 0) + 1
+        return out
+
+    def ranked(title, rows, total, unit, cols=("vehicle", "plate", "value")):
+        rows.sort(key=lambda r: r["value"], reverse=True)
+        return {"title": title, "total": total, "unit": unit, "columns": list(cols), "rows": rows}
+
+    if kpi_key == "vehicle_highest_cost":
+        cost = {}
+        for m in completed:
+            cost[m.get("vehicle_id")] = cost.get(m.get("vehicle_id"), 0) + (m.get("actual_cost", 0) or 0)
+        rows = per_vehicle(cost)
+        return ranked("Maintenance cost by vehicle", rows, max((r["value"] for r in rows), default=0), "$")
+    if kpi_key == "driver_highest_cost":
+        drivers_all = await fetch_all("select id, name from drivers where workspace_id = :ws", ws=user["workspace_id"])
+        names = {d["id"]: d["name"] for d in drivers_all}
+        cost = {}
+        for m in completed:
+            if m.get("driver_id"): cost[m["driver_id"]] = cost.get(m["driver_id"], 0) + (m.get("actual_cost", 0) or 0)
+        for f in fuel_logs:
+            if f.get("driver_id"): cost[f["driver_id"]] = cost.get(f["driver_id"], 0) + (f.get("cost", 0) or 0)
+        rows = [{"vehicle": names.get(did, "Unknown driver"), "value": round(c, 2)} for did, c in cost.items()]
+        return ranked("Maintenance + fuel cost by driver", rows, max((r["value"] for r in rows), default=0), "$", ("vehicle", "value"))
+    if kpi_key == "trips_per_vehicle":
+        trips = _scope_filter(await fetch_all("select vehicle_id from trip_logs where workspace_id = :ws", ws=user["workspace_id"]), allowed_vehicles, None)
+        rows = per_vehicle(counts_by_vehicle(trips), 0)
+        return ranked("Trips by vehicle", rows, round(len(trips) / len(vehicles), 1) if vehicles else 0, "trips avg")
+    if kpi_key == "downtime_per_vehicle":
+        hours = {}
+        for m in completed:
+            hours[m.get("vehicle_id")] = hours.get(m.get("vehicle_id"), 0) + (m.get("downtime_hours", 0) or 0)
+        rows = per_vehicle({vid: h / 24 for vid, h in hours.items()}, 1)
+        return ranked("Downtime days by vehicle", rows, round(sum(hours.values()) / 24 / len(vehicles), 1) if vehicles else 0, "days avg")
+    if kpi_key == "emergency_repairs":
+        critical = [m for m in maint_all if m.get("priority") == "critical" and m.get("status") != "completed"]
+        rows = [r for r in per_vehicle(counts_by_vehicle(critical), 0) if r["value"] > 0]
+        return ranked("Open critical jobs by vehicle", rows, len(critical), "jobs")
+    if kpi_key == "open_incidents":
+        incidents = await fetch_all(
+            "select vehicle_id, severity from incidents where workspace_id = :ws order by occurred_at desc limit 200", ws=user["workspace_id"],
+        )
+        open_inc = _scope_filter([i for i in incidents if i.get("severity") in ("moderate", "severe")], allowed_vehicles, None)
+        rows = [r for r in per_vehicle(counts_by_vehicle(open_inc), 0) if r["value"] > 0]
+        return ranked("Moderate and severe incidents by vehicle", rows, len(open_inc), "incidents")
+    if kpi_key == "failed_checklists":
+        insp = await fetch_all("select vehicle_id, asset_id, fail_count from inspections where workspace_id = :ws", ws=user["workspace_id"])
+        failed = [i for i in _scope_filter(insp, allowed_vehicles, allowed_assets) if (i.get("fail_count") or 0) > 0]
+        by_v = counts_by_vehicle([i for i in failed if i.get("vehicle_id")])
+        rows = [r for r in per_vehicle(by_v, 0) if r["value"] > 0]
+        on_assets = sum(1 for i in failed if not i.get("vehicle_id"))
+        if on_assets: rows.append({"vehicle": "Assets", "plate": "", "value": on_assets})
+        return ranked("Failed checklists by vehicle", rows, len(failed), "checklists")
+    if kpi_key == "license_expiring":
+        ws_row = await fetch_one("select license_warning_days from workspaces where id = :id", id=user["workspace_id"])
+        warn = (ws_row or {}).get("license_warning_days") or 30
+        today = datetime.now(timezone.utc).date()
+        drivers_all = await fetch_all("select name, license_expiry from drivers where workspace_id = :ws", ws=user["workspace_id"])
+        rows = [{"vehicle": d["name"], "value": (d["license_expiry"] - today).days}
+                for d in drivers_all if d.get("license_expiry") and (d["license_expiry"] - today).days <= warn]
+        rows.sort(key=lambda r: r["value"])  # soonest (or already expired) first
+        return {"title": f"Licences expiring within {warn} days", "total": len(rows), "unit": "drivers", "columns": ["vehicle", "value"], "rows": rows}
     raise HTTPException(status_code=404, detail="Unknown KPI key")
 
 # --- Insurance / Public share link ---

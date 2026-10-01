@@ -57,15 +57,15 @@ const CATEGORY_COLORS = { Parts: "#FFCC00", Labor: "#3B82F6", Labour: "#3B82F6",
 // breakdown: "both" (vehicle + group), "group" (group only), "driver" (driver only), or null (no drill-down breakdown)
 const ALL_TILES = [
   // --- The 14-item "Create New Tile" KPI catalog, in spec order ---
-  { key: "total_monthly_cost", rank: "value", emptyRank: "No completed jobs this month yet.", label: "Total Monthly Cost", icon: Wallet, color: CHART.gold, get: k => k?.total_monthly_cost ?? 0, sub: () => "This calendar month", money: true, higher_better: false, breakdown: "both", investigate: true },
-  { key: "cost_per_vehicle", rank: "cost", label: "Cost per Vehicle", icon: CurrencyDollar, color: CHART.gold, get: k => k?.cost_per_vehicle ?? 0, sub: () => "Lifetime average", money: true, higher_better: false, breakdown: null, investigate: true },
+  { key: "total_monthly_cost", label: "Total Monthly Cost", icon: Wallet, color: CHART.gold, get: k => k?.total_monthly_cost ?? 0, sub: () => "This calendar month", money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "cost_per_vehicle", label: "Cost per Vehicle", icon: CurrencyDollar, color: CHART.gold, get: k => k?.cost_per_vehicle ?? 0, sub: () => "Lifetime average", money: true, higher_better: false, breakdown: null, investigate: true },
   { key: "emergency_repairs", label: "Emergency Repairs", icon: Siren, color: CHART.red, get: k => k?.emergency_repairs ?? 0, sub: () => "Critical jobs still open", higher_better: false, breakdown: null, investigate: false, link: "/maintenance", riskMode: "alert" },
   { key: "cost_efficiency_pct", scale: 100, label: "Cost Efficiency", icon: Gauge, color: CHART.green, get: k => k?.cost_efficiency_pct ?? 0, sub: () => "Jobs completed at/under estimate", suffix: "%", higher_better: true, breakdown: null, investigate: false },
   { key: "vehicle_highest_cost", label: "Vehicle — Highest Cost", icon: Car, color: CHART.red, get: k => k?.vehicle_highest_cost ?? 0, sub: () => "Worst single-vehicle spend", money: true, higher_better: false, breakdown: null, investigate: false, link: "/fleet" },
   { key: "driver_highest_cost", label: "Driver — Highest Cost", icon: UsersThree, color: CHART.red, get: k => k?.driver_highest_cost ?? 0, sub: () => "Worst single-driver spend", money: true, higher_better: false, breakdown: null, investigate: false, link: "/drivers" },
   { key: "vehicle_to_sell", label: "Vehicle to Sell", icon: Car, color: CHART.purple, get: k => k?.vehicle_to_sell ?? 0, sub: () => "Highest resale-worthiness score", higher_better: false, breakdown: null, investigate: false, link: "/fleet" },
   { key: "vendor_avg_cost", label: "Vendor Avg Cost", icon: Storefront, color: CHART.gold, get: k => k?.vendor_avg_cost ?? 0, sub: () => "Mean unit cost across suppliers", money: true, higher_better: false, breakdown: null, investigate: false, link: "/parts" },
-  { key: "tyre_cost", rank: "value", label: "Tyre Spend", icon: Tire, color: CHART.gold, get: k => k?.tyre_cost ?? 0, sub: () => "Category: tyres", money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "tyre_cost", label: "Tyre Spend", icon: Tire, color: CHART.gold, get: k => k?.tyre_cost ?? 0, sub: () => "Category: tyres", money: true, higher_better: false, breakdown: "both", investigate: true },
   { key: "parts_spend", label: "Spare Parts Spend", icon: Package, color: CHART.gold, get: k => k?.total_parts_cost ?? 0, sub: () => "Completed job parts cost", money: true, higher_better: false, breakdown: null, investigate: false, series: t => t.map(x => x.parts), spark: t => t.map(x => x.parts) },
   { key: "downtime_per_vehicle", label: "Downtime per Vehicle", icon: ClockCounterClockwise, color: CHART.blue, get: k => k?.avg_downtime_days_per_vehicle ?? 0, sub: () => "Average across fleet", suffix: "d", higher_better: false, breakdown: null, investigate: false },
   { key: "trips_per_vehicle", label: "Trips per Vehicle", icon: Path, color: CHART.blue, get: k => k?.avg_trips_per_vehicle ?? 0, sub: () => "Average across fleet", higher_better: true, breakdown: null, investigate: false },
@@ -73,14 +73,14 @@ const ALL_TILES = [
   { key: "vehicle_age", label: "Vehicle Age", icon: CalendarBlank, color: CHART.purple, get: k => k?.vehicle_age_avg ?? 0, sub: () => "Average fleet age", suffix: " yrs", higher_better: false, breakdown: null, investigate: false, link: "/fleet" },
 
   // --- Existing tiles, kept ---
-  { key: "total_fleet_cost", rank: "value", label: "Total fleet cost", icon: Wallet, color: CHART.gold, get: k => k?.total_fleet_cost ?? 0, sub: () => "Maintenance + fuel + downtime", money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "total_fleet_cost", label: "Total fleet cost", icon: Wallet, color: CHART.gold, get: k => k?.total_fleet_cost ?? 0, sub: () => "Maintenance + fuel + downtime", money: true, higher_better: false, breakdown: "both", investigate: true },
   { key: "total_vehicles", label: "Total vehicles", icon: Truck, color: CHART.green, get: k => k?.total_vehicles ?? 0, sub: k => `${k?.active ?? 0} active · ${k?.in_maintenance ?? 0} in maint`, higher_better: true, breakdown: "group", investigate: true },
-  { key: "total_maintenance_cost", rank: "value", label: "Maintenance cost", icon: Wrench, color: CHART.gold, get: k => k?.total_maintenance_cost ?? 0, sub: (k, currency) => `Parts ${formatMoneyFull(k?.total_parts_cost, currency)} + labor ${formatMoneyFull(k?.total_labor_cost, currency)}`, money: true, higher_better: false, breakdown: "both", investigate: true, spark: t => t.map(x => x.total), series: t => t.map(x => x.total), anomalyFlag: true },
-  { key: "downtime_cost", rank: "value", label: "Downtime cost", icon: ClockCounterClockwise, color: CHART.blue, get: k => k?.total_downtime_cost ?? 0, sub: k => `${k?.total_downtime_hours ?? 0}h across the fleet`, money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "total_maintenance_cost", label: "Maintenance cost", icon: Wrench, color: CHART.gold, get: k => k?.total_maintenance_cost ?? 0, sub: (k, currency) => `Parts ${formatMoneyFull(k?.total_parts_cost, currency)} + labor ${formatMoneyFull(k?.total_labor_cost, currency)}`, money: true, higher_better: false, breakdown: "both", investigate: true, spark: t => t.map(x => x.total), series: t => t.map(x => x.total), anomalyFlag: true },
+  { key: "downtime_cost", label: "Downtime cost", icon: ClockCounterClockwise, color: CHART.blue, get: k => k?.total_downtime_cost ?? 0, sub: k => `${k?.total_downtime_hours ?? 0}h across the fleet`, money: true, higher_better: false, breakdown: "both", investigate: true },
   { key: "utilization", scale: 100, label: "Fleet utilization", icon: TrendUp, color: CHART.green, get: k => k?.utilization_pct ?? 0, sub: k => `${k?.active ?? 0} of ${k?.total_vehicles ?? 0} active`, suffix: "%", higher_better: true, breakdown: null, investigate: true },
-  { key: "fuel_cost", rank: "value", label: "Fuel cost", icon: GasPump, color: CHART.gold, get: k => k?.total_fuel_cost ?? 0, sub: () => "Logged fuel transactions", money: true, higher_better: false, breakdown: "both", investigate: true },
-  { key: "pending_jobs", rank: "jobs", label: "Pending jobs", icon: Warning, color: CHART.red, get: k => k?.pending_jobs ?? 0, sub: () => "Requires action", higher_better: false, breakdown: "both", investigate: true },
-  { key: "completed_jobs", rank: "jobs", label: "Completed jobs", icon: ArrowUpRight, color: CHART.blue, get: k => k?.completed_jobs ?? 0, sub: () => "All time", higher_better: true, breakdown: "both", investigate: true },
+  { key: "fuel_cost", label: "Fuel cost", icon: GasPump, color: CHART.gold, get: k => k?.total_fuel_cost ?? 0, sub: () => "Logged fuel transactions", money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "pending_jobs", label: "Pending jobs", icon: Warning, color: CHART.red, get: k => k?.pending_jobs ?? 0, sub: () => "Requires action", higher_better: false, breakdown: "both", investigate: true },
+  { key: "completed_jobs", label: "Completed jobs", icon: ArrowUpRight, color: CHART.blue, get: k => k?.completed_jobs ?? 0, sub: () => "All time", higher_better: true, breakdown: "both", investigate: true },
   { key: "open_incidents", label: "Open incidents", icon: Siren, color: CHART.red, get: k => k?.open_incidents ?? 0, sub: () => "Moderate or severe severity", higher_better: false, breakdown: null, investigate: false, link: "/incidents", riskMode: "alert" },
   { key: "low_stock_parts", label: "Low stock parts", icon: Package, color: CHART.red, get: k => k?.low_stock_parts ?? 0, sub: () => "At or below reorder point", higher_better: false, breakdown: null, investigate: false, link: "/parts", riskMode: "alert" },
   { key: "license_expiring", label: "Licenses expiring", icon: IdentificationBadge, color: CHART.red, get: k => k?.license_expiring ?? 0, sub: () => "Within 30 days", higher_better: false, breakdown: null, investigate: false, link: "/drivers", riskMode: "alert" },
@@ -90,10 +90,73 @@ const ALL_TILES = [
   { key: "parts_inventory_value", label: "Parts inventory value", icon: Package, color: CHART.gold, get: k => k?.parts_inventory_value ?? 0, sub: () => "Stock on hand × unit cost", money: true, higher_better: true, breakdown: null, investigate: false, link: "/parts" },
 
   // --- Phase 2 backlog: real drill-down tiles ---
-  { key: "driver_performance", rank: "score", scale: 100, label: "Driver Performance", icon: UsersThree, color: CHART.purple, get: k => k?.avg_driver_score ?? 0, sub: () => "Composite score across drivers", suffix: "", higher_better: true, breakdown: "driver", investigate: true },
-  { key: "defect_reporting", rank: "value", label: "Open Defects", icon: Bug, color: CHART.red, get: k => k?.total_defects ?? 0, sub: () => "Failed inspection items", higher_better: false, breakdown: "both", investigate: true, riskMode: "density", densityFn: k => (k?.total_vehicles ? (k.total_defects ?? 0) / k.total_vehicles : 0), densityThresholds: { green: 0.25, red: 0.75 } },
+  { key: "driver_performance", scale: 100, label: "Driver Performance", icon: UsersThree, color: CHART.purple, get: k => k?.avg_driver_score ?? 0, sub: () => "Composite score across drivers", suffix: "", higher_better: true, breakdown: "driver", investigate: true },
+  { key: "defect_reporting", label: "Open Defects", icon: Bug, color: CHART.red, get: k => k?.total_defects ?? 0, sub: () => "Failed inspection items", higher_better: false, breakdown: "both", investigate: true, riskMode: "density", densityFn: k => (k?.total_vehicles ? (k.total_defects ?? 0) / k.total_vehicles : 0), densityThresholds: { green: 0.25, red: 0.75 } },
   { key: "failed_checklists", label: "Failed Checklists", icon: Warning, color: CHART.red, get: k => k?.failed_checklists ?? 0, sub: () => "Inspections with 1+ failed items", higher_better: false, breakdown: null, investigate: false, riskMode: "binary" },
 ];
+
+const thisYear = () => new Date().getFullYear();
+const vehicleAge = (v) => thisYear() - (v.year || thisYear());
+// Resale-worthiness: poor health 50%, high mileage 30%, age 20%. One formula for the "Vehicle to
+// Sell" tile and its ranking, so the two can't disagree.
+const sellScore = (v, h) => Math.round(
+  (100 - (h?.score ?? 100)) * 0.5
+  + Math.min(100, ((v.odometer || 0) / 300000) * 100) * 0.3
+  + Math.min(100, (vehicleAge(v) / 15) * 100) * 0.2,
+);
+
+// Which KPIs can be shown as ranked bars, and where the rows come from. `rank` names the field in the
+// backend's Investigate breakdown for that KPI; `local` ranks data the dashboard has already loaded,
+// for KPIs the dashboard itself calculates. Either way the rows are what the tile's number is made
+// of. By default the worst comes first (biggest for lower-is-better, smallest for higher-is-better);
+// `order` overrides that where "worst" means something else.
+const RANKING = {
+  total_monthly_cost: { rank: "value", empty: "No completed jobs this month yet." },
+  total_fleet_cost: { rank: "value" },
+  total_maintenance_cost: { rank: "value" },
+  cost_per_vehicle: { rank: "cost" },
+  downtime_cost: { rank: "value" },
+  fuel_cost: { rank: "value" },
+  tyre_cost: { rank: "value" },
+  pending_jobs: { rank: "jobs" },
+  completed_jobs: { rank: "jobs", order: "desc" },  // most-serviced vehicles first
+  defect_reporting: { rank: "value" },
+  driver_performance: { rank: "score" },
+  total_vehicles: { rank: "value", order: "desc" },  // biggest groups first
+  vehicle_highest_cost: { rank: "value" },
+  driver_highest_cost: { rank: "value", by: "driver", empty: "No job or fuel costs linked to a driver yet." },
+  trips_per_vehicle: { rank: "value" },
+  downtime_per_vehicle: { rank: "value", suffix: " days" },
+  emergency_repairs: { rank: "value", empty: "No open critical jobs." },
+  open_incidents: { rank: "value", empty: "No open moderate or severe incidents." },
+  failed_checklists: { rank: "value", empty: "No failed checklists." },
+  license_expiring: {
+    rank: "value", by: "driver", order: "asc", heading: "Soonest", empty: "No licences expiring soon.",
+    format: (v) => (v < 0 ? `expired ${-v}d ago` : v === 0 ? "today" : `in ${v}d`),
+  },
+  vehicle_to_sell: { local: (d) => d.vehicles.map(v => ({ label: v.name, plate: v.plate, v: sellScore(v, d.healthByVehicle[v.id]) })) },
+  vehicle_age: { suffix: " yrs", local: (d) => d.vehicles.map(v => ({ label: v.name, plate: v.plate, v: vehicleAge(v) })) },
+  km_per_vehicle: { suffix: " km", local: (d) => d.vehicles.map(v => ({ label: v.name, plate: v.plate, v: v.odometer || 0 })) },
+  fleet_health_avg: { local: (d) => d.health.map(h => ({ label: h.name, plate: h.plate, v: h.score || 0 })) },
+  parts_inventory_value: { by: "part", order: "desc", local: (d) => d.parts.map(p => ({ label: p.name, v: (p.stock || 0) * (p.unit_cost || 0) })) },
+  vendor_avg_cost: {
+    by: "supplier",
+    local: (d) => Object.entries(d.parts.reduce((acc, p) => {
+      const s = p.supplier || "Unknown";
+      (acc[s] = acc[s] || []).push(p.unit_cost || 0);
+      return acc;
+    }, {})).map(([s, costs]) => ({ label: s, v: costs.reduce((a, b) => a + b, 0) / costs.length })),
+  },
+  low_stock_parts: {
+    by: "part", order: "asc", heading: "Lowest stock", empty: "Nothing below its reorder point.",
+    format: (v) => `${v} left`,
+    local: (d) => d.parts.filter(p => (p.stock || 0) <= (p.reorder_point || 0)).map(p => ({ label: p.name, v: p.stock || 0 })),
+  },
+  cost_anomalies: {
+    format: (v) => `+${v}%`, empty: "No cost spikes this month.",
+    local: (d) => d.anomalies.map(a => ({ label: a.vehicle, plate: a.plate, v: a.delta_pct || 0 })),
+  },
+};
 
 // A new user's starting layout: eight KPIs plus the two panels most people want, leaving room under
 // the limit for their own choices. Migration 0053 gave existing layouts the same two panels.
@@ -103,54 +166,61 @@ const defaultConfigs = () => DEFAULT_TILES.map(key => {
   return { key, threshold: null, view_by: "none", group_id: null, ...(widget ? { size: widget.span } : {}) };
 });
 // Everything a user can place on their dashboard grid.
-const CATALOGUE = [...ALL_TILES, ...WIDGETS];
+const CATALOGUE = [...ALL_TILES.map(t => (RANKING[t.key] ? { ...t, ranking: RANKING[t.key] } : t)), ...WIDGETS];
 
 // Chart styles a tile can use. "gauge" and "bar" drew the value as a share of a fixed maximum that was
 // a guess written into the tile definition ("Total fleet cost" counted as full at 15,000), so a bigger
 // fleet showed red permanently whatever its costs were doing. Both now render as "trend", which shows
 // only what's real: the value, and six months of history where a genuine monthly series exists.
-// "ranked" needs a per-vehicle breakdown (tile.rank) and "dial" a real 0-100 scale (tile.scale); a
+// "ranked" needs a breakdown of what makes up the number (tile.ranking) and "dial" a real 0-100 scale (tile.scale); a
 // saved style the tile can't support falls back to "trend" rather than drawing something made up.
 const normalizeChartType = (t, tile) => {
   if (t === "number") return t;
   if (t === "line" && tile?.spark) return t;
-  if (t === "ranked" && tile?.rank) return t;
+  if (t === "ranked" && tile?.ranking) return t;
   if (t === "dial" && tile?.scale) return t;
   return "trend";
 };
 
 // Who is behind a number, worst first: biggest spenders, or for a higher-is-better score the lowest.
-// Uses the same Investigate breakdown the drill-down shows, so the bars always add up to what you
-// see when you click through.
-function RankedBars({ tile, cfg, currency, color, limit }) {
-  const [rows, setRows] = useState(null);
-  const groupBy = cfg?.view_by && cfg.view_by !== "none" ? cfg.view_by
-    : tile.breakdown === "group" ? "group" : tile.breakdown === "driver" ? "driver" : "vehicle";
+// Rows come from the backend's Investigate breakdown (the same one the drill-down shows), or for a
+// KPI the dashboard calculates itself, from the data it already loaded (`localData`). Either way the
+// bars are what the tile's number is made of.
+function RankedBars({ tile, cfg, currency, color, limit, localData }) {
+  const how = tile.ranking;
+  const [fetched, setFetched] = useState(null);
+  const groupBy = how.by || (cfg?.view_by && cfg.view_by !== "none" ? cfg.view_by
+    : tile.breakdown === "group" ? "group" : tile.breakdown === "driver" ? "driver" : "vehicle");
   const load = () => {
+    if (how.local) return;
     const params = new URLSearchParams();
-    if (tile.rank !== "cost" && tile.rank !== "score") params.set("group_by", groupBy);
+    if (how.rank !== "cost" && how.rank !== "score") params.set("group_by", groupBy);
     if (cfg?.period && cfg.period !== "all") params.set("period", cfg.period);
     return api.get(`/investigate/${tile.key}?${params}`)
-      .then((r) => setRows(r.data?.rows || []))
-      .catch(() => setRows((prev) => prev ?? []));
+      .then((r) => setFetched((r.data?.rows || []).map((x) => ({ label: x.vehicle || x.name || "—", plate: x.plate, v: Number(x[how.rank]) || 0 }))))
+      .catch(() => setFetched((prev) => prev ?? []));
   };
   useEffect(() => { load(); }, [tile.key, groupBy, cfg?.period]); // eslint-disable-line react-hooks/exhaustive-deps
   // Each breakdown reads the full job and fuel history, so these refresh less often than the tiles.
   usePolling(load, 120000);
 
+  const rows = how.local ? (localData ? how.local(localData) : null) : fetched;
   if (rows == null) return <div className="mt-3"><Pending>Ranking…</Pending></div>;
+  const ascending = how.order ? how.order === "asc" : tile.higher_better;
   const ranked = rows
-    .map((r) => ({ label: r.vehicle || r.name || "—", plate: r.plate, v: Number(r[tile.rank]) || 0 }))
-    .filter((r) => tile.higher_better || r.v > 0)
-    .sort((a, b) => (tile.higher_better ? a.v - b.v : b.v - a.v))
+    // For a lower-is-better KPI a zero isn't a contender (a vehicle with no incidents isn't "worst").
+    .filter((r) => ascending || r.v > 0)
+    .sort((a, b) => (ascending ? a.v - b.v : b.v - a.v))
     .slice(0, limit);
-  if (ranked.length === 0) return <div className="text-xs text-muted-foreground mt-3">{tile.emptyRank || "Nothing to rank yet."}</div>;
-  const max = Math.max(...ranked.map((r) => r.v), tile.scale || 0) || 1;
-  const fmt = (v) => (tile.money ? formatMoney(v, currency) : `${Math.round(v * 10) / 10}`);
+  if (ranked.length === 0) return <div className="text-xs text-muted-foreground mt-3">{how.empty || "Nothing to rank yet."}</div>;
+  const max = Math.max(...ranked.map((r) => Math.abs(r.v)), tile.scale || 0) || 1;
+  const fmt = (v) => (how.format ? how.format(v)
+    : tile.money ? formatMoney(v, currency)
+    : `${(Math.round(v * 10) / 10).toLocaleString()}${how.suffix ?? tile.suffix ?? ""}`);
   return (
     <div className="mt-3" data-testid={`ranked-${tile.key}`}>
       <div className="text-[10px] mono uppercase tracking-widest text-muted-foreground mb-1.5">
-        {tile.higher_better ? "Lowest" : "Highest"} {ranked.length} · by {groupBy}
+        {how.heading || (ascending ? "Lowest" : "Highest")} {ranked.length} · by {groupBy}
       </div>
       <ul className="space-y-1.5">
         {ranked.map((r, i) => (
@@ -278,7 +348,7 @@ function SortableCell({ id, label, className = "", onGear, children }) {
   );
 }
 
-const KpiTile = ({ tile, kpi, cfg, trend, currency, anomaly, onClick }) => {
+const KpiTile = ({ tile, kpi, cfg, trend, currency, anomaly, onClick, rankData }) => {
   const loading = kpi == null;
   const val = loading ? null : tile.get(kpi);
   const state = loading ? null : tileState(tile, kpi, cfg, anomaly);
@@ -327,7 +397,7 @@ const KpiTile = ({ tile, kpi, cfg, trend, currency, anomaly, onClick }) => {
           <div className="mono text-2xl font-bold mt-3" style={alarming ? { color: accent } : undefined}>{display}</div>
         )}
         {chartType === "ranked" && !loading && (
-          <RankedBars tile={tile} cfg={cfg} currency={currency} color={accent} limit={cfg?.size === "lg" ? 8 : 5} />
+          <RankedBars tile={tile} cfg={cfg} currency={currency} color={accent} limit={cfg?.size === "lg" ? 8 : 5} localData={rankData} />
         )}
         {state?.density != null && (
           <div className="text-xs font-bold mt-1" style={{ color: state.color }} data-testid={`kpi-density-${tile.key}`}>
@@ -370,6 +440,9 @@ export default function Dashboard() {
   const [groups, setGroups] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [schedules, setSchedules] = useState(null);
+  // Vehicles, parts and the rest start as empty lists; this says whether the first load has finished,
+  // so a ranked tile doesn't announce "nothing to rank" before anything has arrived.
+  const [baseLoaded, setBaseLoaded] = useState(false);
   const [canSeeSchedules, setCanSeeSchedules] = useState(true);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const upcoming = useUpcoming(schedules);
@@ -392,7 +465,7 @@ export default function Dashboard() {
       api.get("/analytics/fleet-health").then(r => setHealth(r.data || [])).catch(() => setHealth(h => h ?? [])),
       api.get("/vehicles").then(r => setVehicles(r.data || [])),
       loadGroups(),
-    ]).catch(() => {});
+    ]).catch(() => {}).finally(() => setBaseLoaded(true));
   };
   useEffect(loadKpis, []);
   // Deliberately does NOT include /users/me/prefs (the tile layout below) -- that only ever changes
@@ -487,14 +560,13 @@ export default function Dashboard() {
   const worstVehicle = healthList[0];
   const worstVehicleRecord = worstVehicle ? vehicles.find(v => String(v.id) === String(worstVehicle.vehicle_id)) : null;
   const vehicleHighestCost = byVehicle.length ? Math.max(...byVehicle.map(v => v.cost || 0)) : 0;
-  const vehicleToSell = vehicles.length ? Math.max(...vehicles.map(v => {
-    const h = healthByVehicle[v.id];
-    const healthComponent = 100 - (h?.score ?? 100);
-    const odoComponent = Math.min(100, ((v.odometer || 0) / 300000) * 100);
-    const ageComponent = Math.min(100, ((new Date().getFullYear() - (v.year || new Date().getFullYear())) / 15) * 100);
-    return Math.round(healthComponent * 0.5 + odoComponent * 0.3 + ageComponent * 0.2);
-  })) : 0;
-  const vehicleAgeAvg = vehicles.length ? (vehicles.reduce((s, v) => s + (new Date().getFullYear() - (v.year || new Date().getFullYear())), 0) / vehicles.length) : 0;
+  const vehicleToSell = vehicles.length ? Math.max(...vehicles.map(v => sellScore(v, healthByVehicle[v.id]))) : 0;
+  const vehicleAgeAvg = vehicles.length ? (vehicles.reduce((s, v) => s + vehicleAge(v), 0) / vehicles.length) : 0;
+  // What locally-ranked tiles rank: the same data their numbers above are calculated from.
+  const rankData = useMemo(
+    () => (baseLoaded ? { vehicles, healthByVehicle, health: health || [], parts, anomalies } : null),
+    [baseLoaded, vehicles, healthByVehicle, health, parts, anomalies],
+  );
 
   const metrics = kpi ? {
     ...kpi,
@@ -701,6 +773,7 @@ export default function Dashboard() {
                           trend={trend}
                           currency={currency}
                           anomaly={anomalies[0]}
+                          rankData={rankData}
                           onClick={() => t.investigate && setInvestigate({ key: t.key, label: t.label, groupBy: cfg?.view_by !== "none" ? cfg?.view_by : null })}
                         />
                       )}
