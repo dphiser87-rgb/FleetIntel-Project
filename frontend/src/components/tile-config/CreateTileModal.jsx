@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { ChartBar, X, CaretRight } from "@phosphor-icons/react";
-import { formatMoney } from "@/lib/currency";
 
 const SECTIONS = [
   { key: "kpi", label: "KPI" },
@@ -20,12 +19,14 @@ const PERIODS = [
   { value: "7d", label: "Last 7 days" },
 ];
 
+// "Gauge" and "Bar" drew the value against a fixed maximum that was a guess, not a target, so they
+// were retired; tiles saved with either now show as "Trend".
 const CHART_TYPES = [
-  { value: "gauge", label: "Gauge", desc: "Radial progress against the tile's target" },
-  { value: "bar", label: "Bar", desc: "Single horizontal progress bar" },
+  { value: "trend", label: "Trend", desc: "The value, with six months of history where it exists" },
   { value: "line", label: "Line", desc: "Trend sparkline where available" },
   { value: "number", label: "Number only", desc: "Just the value, no chart" },
 ];
+const normalizeChartType = (t) => (t === "line" || t === "number" ? t : "trend");
 
 const SIZES = [
   { value: "sm", label: "Small", desc: "Compact — fits more tiles on screen" },
@@ -33,11 +34,8 @@ const SIZES = [
   { value: "lg", label: "Large", desc: "Spans two columns" },
 ];
 
-function tileSubtitle(tile, currency) {
-  const dir = tile.higher_better ? "Higher is better" : "Lower is better";
-  const maxVal = typeof tile.max === "function" ? tile.max({}) : tile.max;
-  const maxDisplay = tile.money ? formatMoney(maxVal, currency) : `${(maxVal || 0).toLocaleString()}${tile.suffix || ""}`;
-  return `${dir} · Max ${maxDisplay}`;
+function tileSubtitle(tile) {
+  return tile.higher_better ? "Higher is better" : "Lower is better";
 }
 
 export default function CreateTileModal({
@@ -46,7 +44,7 @@ export default function CreateTileModal({
 }) {
   const [section, setSection] = useState("kpi");
   const [selectedKey, setSelectedKey] = useState(null);
-  const [chartType, setChartType] = useState("gauge");
+  const [chartType, setChartType] = useState("trend");
   const [period, setPeriod] = useState("all");
   const [viewBy, setViewBy] = useState("none");
   const [groupId, setGroupId] = useState(null);
@@ -58,7 +56,7 @@ export default function CreateTileModal({
     setSection("kpi");
     if (mode === "edit" && initialConfig) {
       setSelectedKey(initialConfig.key);
-      setChartType(initialConfig.chart_type || "gauge");
+      setChartType(normalizeChartType(initialConfig.chart_type));
       setPeriod(initialConfig.period || "all");
       setViewBy(initialConfig.view_by || "none");
       setGroupId(initialConfig.group_id || null);
@@ -66,7 +64,7 @@ export default function CreateTileModal({
       setSize(initialConfig.size || "md");
     } else {
       setSelectedKey(null);
-      setChartType("gauge"); setPeriod("all"); setViewBy("none");
+      setChartType("trend"); setPeriod("all"); setViewBy("none");
       setGroupId(null); setThreshold(""); setSize("md");
     }
   }, [open, mode, initialConfig]);
@@ -158,7 +156,7 @@ export default function CreateTileModal({
                         </span>
                         <span className="min-w-0">
                           <div className={`text-sm font-bold ${on ? "text-emerald-700" : "text-gray-900"}`}>{t.label}</div>
-                          <div className="text-xs text-gray-500 mt-0.5">{tileSubtitle(t, currency)}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">{tileSubtitle(t)}</div>
                         </span>
                       </button>
                     );
@@ -263,7 +261,7 @@ export default function CreateTileModal({
                 <h3 className="text-lg font-bold text-gray-900">Thresholds</h3>
                 <div className="border-b border-gray-200 mt-2 mb-2" />
                 <p className="text-sm text-gray-500 mb-3">
-                  When set, this tile's gauge turns red once it crosses the threshold, {selectedTile?.higher_better ? "if the value drops below it" : "if the value rises above it"}.
+                  When set, this tile turns red once it crosses the threshold, {selectedTile?.higher_better ? "if the value drops below it" : "if the value rises above it"}.
                 </p>
                 <div className="flex items-center gap-2">
                   <input
