@@ -21,12 +21,19 @@ const PERIODS = [
 
 // "Gauge" and "Bar" drew the value against a fixed maximum that was a guess, not a target, so they
 // were retired; tiles saved with either now show as "Trend".
+// `requires` hides a style the selected KPI can't honestly draw: ranked bars need a per-vehicle
+// breakdown, a dial needs a real 0-100 scale (a percentage or a score), not a guessed maximum.
 const CHART_TYPES = [
   { value: "trend", label: "Trend", desc: "The value, with six months of history where it exists" },
+  { value: "ranked", label: "Ranked bars", desc: "The vehicles, groups or drivers behind the number, worst first", requires: t => !!t?.rank },
+  { value: "number", label: "Big number", desc: "Just the value, large" },
+  { value: "dial", label: "Dial", desc: "The value on its 0–100 scale", requires: t => !!t?.scale },
   { value: "line", label: "Line", desc: "Trend sparkline where available" },
-  { value: "number", label: "Number only", desc: "Just the value, no chart" },
 ];
-const normalizeChartType = (t) => (t === "line" || t === "number" ? t : "trend");
+const normalizeChartType = (t, tile) => {
+  const def = CHART_TYPES.find(c => c.value === t);
+  return def && (!def.requires || def.requires(tile)) ? t : "trend";
+};
 
 const SIZES = [
   { value: "sm", label: "Small", desc: "Compact — fits more tiles on screen" },
@@ -64,7 +71,7 @@ export default function CreateTileModal({
     setSection("kpi");
     if (mode === "edit" && initialConfig) {
       setSelectedKey(initialConfig.key);
-      setChartType(normalizeChartType(initialConfig.chart_type));
+      setChartType(normalizeChartType(initialConfig.chart_type, allTiles.find(t => t.key === initialConfig.key)));
       setPeriod(initialConfig.period || "all");
       setViewBy(initialConfig.view_by || "none");
       setGroupId(initialConfig.group_id || null);
@@ -75,7 +82,7 @@ export default function CreateTileModal({
       setChartType("trend"); setPeriod("all"); setViewBy("none");
       setGroupId(null); setThreshold(""); setSize("md");
     }
-  }, [open, mode, initialConfig]);
+  }, [open, mode, initialConfig, allTiles]);
 
   if (!open) return null;
 
@@ -126,7 +133,7 @@ export default function CreateTileModal({
     if (!selectedKey) { setSection("kpi"); return; }
     onSave({
       key: selectedKey,
-      chart_type: chartType,
+      chart_type: normalizeChartType(chartType, selectedTile),
       period,
       view_by: viewBy,
       group_id: viewBy === "group" ? groupId : null,
@@ -205,7 +212,7 @@ export default function CreateTileModal({
                 <div className="border-b border-gray-200 mt-2 mb-2" />
                 <p className="text-sm text-gray-500 mb-3">Choose how this tile visualizes its value.</p>
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                  {CHART_TYPES.map(c => {
+                  {CHART_TYPES.filter(c => !c.requires || c.requires(selectedTile)).map(c => {
                     const on = chartType === c.value;
                     return (
                       <button type="button" key={c.value} onClick={() => setChartType(c.value)} data-testid={`chart-type-${c.value}`}

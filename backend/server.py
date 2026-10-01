@@ -700,7 +700,7 @@ class TileConfig(BaseModel):
     group_id: Optional[str] = None
     # "trend" is what the tile dialog saves now; "gauge"/"bar" stay accepted so older saved layouts
     # still load (the dashboard renders both as "trend").
-    chart_type: Literal["trend", "gauge", "bar", "line", "number"] = "trend"
+    chart_type: Literal["trend", "ranked", "number", "dial", "line", "gauge", "bar"] = "trend"
     period: Literal["7d", "30d", "90d", "6m", "12m", "all"] = "all"
     size: Literal["sm", "md", "lg"] = "md"
 
