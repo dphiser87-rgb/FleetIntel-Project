@@ -57,15 +57,15 @@ const CATEGORY_COLORS = { Parts: "#FFCC00", Labor: "#3B82F6", Labour: "#3B82F6",
 // breakdown: "both" (vehicle + group), "group" (group only), "driver" (driver only), or null (no drill-down breakdown)
 const ALL_TILES = [
   // --- The 14-item "Create New Tile" KPI catalog, in spec order ---
-  { key: "total_monthly_cost", label: "Total Monthly Cost", icon: Wallet, color: CHART.gold, get: k => k?.total_monthly_cost ?? 0, sub: () => "This calendar month", money: true, higher_better: false, breakdown: "both", investigate: true },
-  { key: "cost_per_vehicle", label: "Cost per Vehicle", icon: CurrencyDollar, color: CHART.gold, get: k => k?.cost_per_vehicle ?? 0, sub: () => "Lifetime average", money: true, higher_better: false, breakdown: null, investigate: true },
+  { key: "total_monthly_cost", rank: "value", label: "Total Monthly Cost", icon: Wallet, color: CHART.gold, get: k => k?.total_monthly_cost ?? 0, sub: () => "This calendar month", money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "cost_per_vehicle", rank: "cost", label: "Cost per Vehicle", icon: CurrencyDollar, color: CHART.gold, get: k => k?.cost_per_vehicle ?? 0, sub: () => "Lifetime average", money: true, higher_better: false, breakdown: null, investigate: true },
   { key: "emergency_repairs", label: "Emergency Repairs", icon: Siren, color: CHART.red, get: k => k?.emergency_repairs ?? 0, sub: () => "Critical jobs still open", higher_better: false, breakdown: null, investigate: false, link: "/maintenance", riskMode: "alert" },
-  { key: "cost_efficiency_pct", label: "Cost Efficiency", icon: Gauge, color: CHART.green, get: k => k?.cost_efficiency_pct ?? 0, sub: () => "Jobs completed at/under estimate", suffix: "%", higher_better: true, breakdown: null, investigate: false },
+  { key: "cost_efficiency_pct", scale: 100, label: "Cost Efficiency", icon: Gauge, color: CHART.green, get: k => k?.cost_efficiency_pct ?? 0, sub: () => "Jobs completed at/under estimate", suffix: "%", higher_better: true, breakdown: null, investigate: false },
   { key: "vehicle_highest_cost", label: "Vehicle — Highest Cost", icon: Car, color: CHART.red, get: k => k?.vehicle_highest_cost ?? 0, sub: () => "Worst single-vehicle spend", money: true, higher_better: false, breakdown: null, investigate: false, link: "/fleet" },
   { key: "driver_highest_cost", label: "Driver — Highest Cost", icon: UsersThree, color: CHART.red, get: k => k?.driver_highest_cost ?? 0, sub: () => "Worst single-driver spend", money: true, higher_better: false, breakdown: null, investigate: false, link: "/drivers" },
   { key: "vehicle_to_sell", label: "Vehicle to Sell", icon: Car, color: CHART.purple, get: k => k?.vehicle_to_sell ?? 0, sub: () => "Highest resale-worthiness score", higher_better: false, breakdown: null, investigate: false, link: "/fleet" },
   { key: "vendor_avg_cost", label: "Vendor Avg Cost", icon: Storefront, color: CHART.gold, get: k => k?.vendor_avg_cost ?? 0, sub: () => "Mean unit cost across suppliers", money: true, higher_better: false, breakdown: null, investigate: false, link: "/parts" },
-  { key: "tyre_cost", label: "Tyre Spend", icon: Tire, color: CHART.gold, get: k => k?.tyre_cost ?? 0, sub: () => "Category: tyres", money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "tyre_cost", rank: "value", label: "Tyre Spend", icon: Tire, color: CHART.gold, get: k => k?.tyre_cost ?? 0, sub: () => "Category: tyres", money: true, higher_better: false, breakdown: "both", investigate: true },
   { key: "parts_spend", label: "Spare Parts Spend", icon: Package, color: CHART.gold, get: k => k?.total_parts_cost ?? 0, sub: () => "Completed job parts cost", money: true, higher_better: false, breakdown: null, investigate: false, series: t => t.map(x => x.parts), spark: t => t.map(x => x.parts) },
   { key: "downtime_per_vehicle", label: "Downtime per Vehicle", icon: ClockCounterClockwise, color: CHART.blue, get: k => k?.avg_downtime_days_per_vehicle ?? 0, sub: () => "Average across fleet", suffix: "d", higher_better: false, breakdown: null, investigate: false },
   { key: "trips_per_vehicle", label: "Trips per Vehicle", icon: Path, color: CHART.blue, get: k => k?.avg_trips_per_vehicle ?? 0, sub: () => "Average across fleet", higher_better: true, breakdown: null, investigate: false },
@@ -73,25 +73,25 @@ const ALL_TILES = [
   { key: "vehicle_age", label: "Vehicle Age", icon: CalendarBlank, color: CHART.purple, get: k => k?.vehicle_age_avg ?? 0, sub: () => "Average fleet age", suffix: " yrs", higher_better: false, breakdown: null, investigate: false, link: "/fleet" },
 
   // --- Existing tiles, kept ---
-  { key: "total_fleet_cost", label: "Total fleet cost", icon: Wallet, color: CHART.gold, get: k => k?.total_fleet_cost ?? 0, sub: () => "Maintenance + fuel + downtime", money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "total_fleet_cost", rank: "value", label: "Total fleet cost", icon: Wallet, color: CHART.gold, get: k => k?.total_fleet_cost ?? 0, sub: () => "Maintenance + fuel + downtime", money: true, higher_better: false, breakdown: "both", investigate: true },
   { key: "total_vehicles", label: "Total vehicles", icon: Truck, color: CHART.green, get: k => k?.total_vehicles ?? 0, sub: k => `${k?.active ?? 0} active · ${k?.in_maintenance ?? 0} in maint`, higher_better: true, breakdown: "group", investigate: true },
-  { key: "total_maintenance_cost", label: "Maintenance cost", icon: Wrench, color: CHART.gold, get: k => k?.total_maintenance_cost ?? 0, sub: (k, currency) => `Parts ${formatMoneyFull(k?.total_parts_cost, currency)} + labor ${formatMoneyFull(k?.total_labor_cost, currency)}`, money: true, higher_better: false, breakdown: "both", investigate: true, spark: t => t.map(x => x.total), series: t => t.map(x => x.total), anomalyFlag: true },
-  { key: "downtime_cost", label: "Downtime cost", icon: ClockCounterClockwise, color: CHART.blue, get: k => k?.total_downtime_cost ?? 0, sub: k => `${k?.total_downtime_hours ?? 0}h across the fleet`, money: true, higher_better: false, breakdown: "both", investigate: true },
-  { key: "utilization", label: "Fleet utilization", icon: TrendUp, color: CHART.green, get: k => k?.utilization_pct ?? 0, sub: k => `${k?.active ?? 0} of ${k?.total_vehicles ?? 0} active`, suffix: "%", higher_better: true, breakdown: null, investigate: true },
-  { key: "fuel_cost", label: "Fuel cost", icon: GasPump, color: CHART.gold, get: k => k?.total_fuel_cost ?? 0, sub: () => "Logged fuel transactions", money: true, higher_better: false, breakdown: "both", investigate: true },
-  { key: "pending_jobs", label: "Pending jobs", icon: Warning, color: CHART.red, get: k => k?.pending_jobs ?? 0, sub: () => "Requires action", higher_better: false, breakdown: "both", investigate: true },
-  { key: "completed_jobs", label: "Completed jobs", icon: ArrowUpRight, color: CHART.blue, get: k => k?.completed_jobs ?? 0, sub: () => "All time", higher_better: true, breakdown: "both", investigate: true },
+  { key: "total_maintenance_cost", rank: "value", label: "Maintenance cost", icon: Wrench, color: CHART.gold, get: k => k?.total_maintenance_cost ?? 0, sub: (k, currency) => `Parts ${formatMoneyFull(k?.total_parts_cost, currency)} + labor ${formatMoneyFull(k?.total_labor_cost, currency)}`, money: true, higher_better: false, breakdown: "both", investigate: true, spark: t => t.map(x => x.total), series: t => t.map(x => x.total), anomalyFlag: true },
+  { key: "downtime_cost", rank: "value", label: "Downtime cost", icon: ClockCounterClockwise, color: CHART.blue, get: k => k?.total_downtime_cost ?? 0, sub: k => `${k?.total_downtime_hours ?? 0}h across the fleet`, money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "utilization", scale: 100, label: "Fleet utilization", icon: TrendUp, color: CHART.green, get: k => k?.utilization_pct ?? 0, sub: k => `${k?.active ?? 0} of ${k?.total_vehicles ?? 0} active`, suffix: "%", higher_better: true, breakdown: null, investigate: true },
+  { key: "fuel_cost", rank: "value", label: "Fuel cost", icon: GasPump, color: CHART.gold, get: k => k?.total_fuel_cost ?? 0, sub: () => "Logged fuel transactions", money: true, higher_better: false, breakdown: "both", investigate: true },
+  { key: "pending_jobs", rank: "jobs", label: "Pending jobs", icon: Warning, color: CHART.red, get: k => k?.pending_jobs ?? 0, sub: () => "Requires action", higher_better: false, breakdown: "both", investigate: true },
+  { key: "completed_jobs", rank: "jobs", label: "Completed jobs", icon: ArrowUpRight, color: CHART.blue, get: k => k?.completed_jobs ?? 0, sub: () => "All time", higher_better: true, breakdown: "both", investigate: true },
   { key: "open_incidents", label: "Open incidents", icon: Siren, color: CHART.red, get: k => k?.open_incidents ?? 0, sub: () => "Moderate or severe severity", higher_better: false, breakdown: null, investigate: false, link: "/incidents", riskMode: "alert" },
   { key: "low_stock_parts", label: "Low stock parts", icon: Package, color: CHART.red, get: k => k?.low_stock_parts ?? 0, sub: () => "At or below reorder point", higher_better: false, breakdown: null, investigate: false, link: "/parts", riskMode: "alert" },
   { key: "license_expiring", label: "Licenses expiring", icon: IdentificationBadge, color: CHART.red, get: k => k?.license_expiring ?? 0, sub: () => "Within 30 days", higher_better: false, breakdown: null, investigate: false, link: "/drivers", riskMode: "alert" },
   { key: "cost_anomalies", label: "Cost anomalies", icon: TrendUp, color: CHART.red, get: k => k?.cost_anomalies ?? 0, sub: () => "Above normal spend band", higher_better: false, breakdown: null, investigate: false, link: "/reports", riskMode: "alert" },
-  { key: "fleet_health_avg", label: "Avg fleet health", icon: Heartbeat, color: CHART.purple, get: k => k?.fleet_health_avg ?? 0, sub: () => "Composite score across fleet", suffix: "%", higher_better: true, breakdown: null, investigate: false, link: "/fleet" },
+  { key: "fleet_health_avg", scale: 100, label: "Avg fleet health", icon: Heartbeat, color: CHART.purple, get: k => k?.fleet_health_avg ?? 0, sub: () => "Composite score across fleet", suffix: "%", higher_better: true, breakdown: null, investigate: false, link: "/fleet" },
   { key: "active_drivers", label: "Active drivers", icon: UsersThree, color: CHART.green, get: k => k?.active_drivers ?? 0, sub: k => `of ${k?.total_drivers ?? 0} total`, higher_better: true, breakdown: null, investigate: false, link: "/drivers" },
   { key: "parts_inventory_value", label: "Parts inventory value", icon: Package, color: CHART.gold, get: k => k?.parts_inventory_value ?? 0, sub: () => "Stock on hand × unit cost", money: true, higher_better: true, breakdown: null, investigate: false, link: "/parts" },
 
   // --- Phase 2 backlog: real drill-down tiles ---
-  { key: "driver_performance", label: "Driver Performance", icon: UsersThree, color: CHART.purple, get: k => k?.avg_driver_score ?? 0, sub: () => "Composite score across drivers", suffix: "", higher_better: true, breakdown: "driver", investigate: true },
-  { key: "defect_reporting", label: "Open Defects", icon: Bug, color: CHART.red, get: k => k?.total_defects ?? 0, sub: () => "Failed inspection items", higher_better: false, breakdown: "both", investigate: true, riskMode: "density", densityFn: k => (k?.total_vehicles ? (k.total_defects ?? 0) / k.total_vehicles : 0), densityThresholds: { green: 0.25, red: 0.75 } },
+  { key: "driver_performance", rank: "score", scale: 100, label: "Driver Performance", icon: UsersThree, color: CHART.purple, get: k => k?.avg_driver_score ?? 0, sub: () => "Composite score across drivers", suffix: "", higher_better: true, breakdown: "driver", investigate: true },
+  { key: "defect_reporting", rank: "value", label: "Open Defects", icon: Bug, color: CHART.red, get: k => k?.total_defects ?? 0, sub: () => "Failed inspection items", higher_better: false, breakdown: "both", investigate: true, riskMode: "density", densityFn: k => (k?.total_vehicles ? (k.total_defects ?? 0) / k.total_vehicles : 0), densityThresholds: { green: 0.25, red: 0.75 } },
   { key: "failed_checklists", label: "Failed Checklists", icon: Warning, color: CHART.red, get: k => k?.failed_checklists ?? 0, sub: () => "Inspections with 1+ failed items", higher_better: false, breakdown: null, investigate: false, riskMode: "binary" },
 ];
 
@@ -109,7 +109,74 @@ const CATALOGUE = [...ALL_TILES, ...WIDGETS];
 // a guess written into the tile definition ("Total fleet cost" counted as full at 15,000), so a bigger
 // fleet showed red permanently whatever its costs were doing. Both now render as "trend", which shows
 // only what's real: the value, and six months of history where a genuine monthly series exists.
-const normalizeChartType = (t) => (t === "line" || t === "number" ? t : "trend");
+// "ranked" needs a per-vehicle breakdown (tile.rank) and "dial" a real 0-100 scale (tile.scale); a
+// saved style the tile can't support falls back to "trend" rather than drawing something made up.
+const normalizeChartType = (t, tile) => {
+  if (t === "line" || t === "number") return t;
+  if (t === "ranked" && tile?.rank) return t;
+  if (t === "dial" && tile?.scale) return t;
+  return "trend";
+};
+
+// Who is behind a number, worst first: biggest spenders, or for a higher-is-better score the lowest.
+// Uses the same Investigate breakdown the drill-down shows, so the bars always add up to what you
+// see when you click through.
+function RankedBars({ tile, cfg, currency, color, limit }) {
+  const [rows, setRows] = useState(null);
+  const groupBy = cfg?.view_by && cfg.view_by !== "none" ? cfg.view_by
+    : tile.breakdown === "group" ? "group" : tile.breakdown === "driver" ? "driver" : "vehicle";
+  const load = () => {
+    const params = new URLSearchParams();
+    if (tile.rank !== "cost" && tile.rank !== "score") params.set("group_by", groupBy);
+    if (cfg?.period && cfg.period !== "all") params.set("period", cfg.period);
+    return api.get(`/investigate/${tile.key}?${params}`)
+      .then((r) => setRows(r.data?.rows || []))
+      .catch(() => setRows((prev) => prev ?? []));
+  };
+  useEffect(() => { load(); }, [tile.key, groupBy, cfg?.period]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Each breakdown reads the full job and fuel history, so these refresh less often than the tiles.
+  usePolling(load, 120000);
+
+  if (rows == null) return <div className="mt-3"><Pending>Ranking…</Pending></div>;
+  const ranked = rows
+    .map((r) => ({ label: r.vehicle || r.name || "—", plate: r.plate, v: Number(r[tile.rank]) || 0 }))
+    .filter((r) => tile.higher_better || r.v > 0)
+    .sort((a, b) => (tile.higher_better ? a.v - b.v : b.v - a.v))
+    .slice(0, limit);
+  if (ranked.length === 0) return <div className="text-xs text-muted-foreground mt-3">Nothing to rank yet.</div>;
+  const max = Math.max(...ranked.map((r) => r.v), tile.scale || 0) || 1;
+  const fmt = (v) => (tile.money ? formatMoney(v, currency) : `${Math.round(v * 10) / 10}`);
+  return (
+    <div className="mt-3" data-testid={`ranked-${tile.key}`}>
+      <div className="text-[10px] mono uppercase tracking-widest text-muted-foreground mb-1.5">
+        {tile.higher_better ? "Lowest" : "Highest"} {ranked.length} · by {groupBy}
+      </div>
+      <ul className="space-y-1.5">
+        {ranked.map((r, i) => (
+          <li key={`${r.label}${i}`} className="grid grid-cols-[minmax(0,5.5rem)_minmax(0,1fr)] items-center gap-2 text-xs">
+            <span className="truncate text-muted-foreground" title={r.plate ? `${r.label} · ${r.plate}` : r.label}>{r.label}</span>
+            <span className="flex items-center gap-1.5 min-w-0">
+              <span className="h-2.5 shrink-0" style={{ width: `${Math.max(3, (r.v / max) * 70)}%`, background: color }} />
+              <span className="mono shrink-0">{fmt(r.v)}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// A value on its real scale (a percentage or a 0-100 score), drawn as a half-circle.
+function Dial({ value, scale, color }) {
+  const pct = Math.max(0, Math.min(1, (Number(value) || 0) / scale));
+  const r = 40, c = Math.PI * r;
+  return (
+    <svg viewBox="0 0 100 56" className="w-full max-w-[180px] mx-auto mt-3 block" aria-hidden="true">
+      <path d="M10 50 A40 40 0 0 1 90 50" fill="none" stroke="#27272a" strokeWidth="9" />
+      <path d="M10 50 A40 40 0 0 1 90 50" fill="none" stroke={color} strokeWidth="9" strokeDasharray={`${pct * c} ${c}`} />
+    </svg>
+  );
+}
 
 // Some KPIs represent operational risk, not a value to scale against a max — a single failed
 // checklist is always urgent regardless of fleet size, and defect exposure only means something
@@ -219,7 +286,7 @@ const KpiTile = ({ tile, kpi, cfg, trend, currency, anomaly, onClick }) => {
   const display = loading ? "—"
     : tile.money ? formatMoney(val, currency)
     : `${typeof val === "number" ? val.toLocaleString() : val}${tile.suffix || ""}`;
-  const chartType = normalizeChartType(cfg?.chart_type);
+  const chartType = normalizeChartType(cfg?.chart_type, tile);
   const series = tile.series && trend ? tile.series(trend).slice(-6) : null;
   const sparkData = tile.spark && trend ? tile.spark(trend) : null;
   const viewByLabel = cfg?.view_by === "vehicle" ? "By vehicle" : cfg?.view_by === "group" ? "By group" : cfg?.view_by === "driver" ? "By driver" : null;
@@ -247,7 +314,20 @@ const KpiTile = ({ tile, kpi, cfg, trend, currency, anomaly, onClick }) => {
             {viewByLabel && <div className="text-[10px] mono uppercase tracking-widest text-muted-foreground mt-0.5">{viewByLabel}</div>}
           </div>
         </div>
-        <div className="mono text-2xl font-bold mt-3" style={alarming ? { color: accent } : undefined}>{display}</div>
+        {chartType === "number" ? (
+          // Big number: the value is the whole tile.
+          <div className="mono text-5xl font-bold text-center py-5 tracking-tight" style={alarming || state ? { color: accent } : undefined} data-testid={`bignum-${tile.key}`}>{display}</div>
+        ) : chartType === "dial" ? (
+          <div data-testid={`dial-${tile.key}`}>
+            <Dial value={val} scale={tile.scale} color={accent} />
+            <div className="mono text-3xl font-bold text-center -mt-1" style={alarming || state ? { color: accent } : undefined}>{display}</div>
+          </div>
+        ) : (
+          <div className="mono text-2xl font-bold mt-3" style={alarming ? { color: accent } : undefined}>{display}</div>
+        )}
+        {chartType === "ranked" && !loading && (
+          <RankedBars tile={tile} cfg={cfg} currency={currency} color={accent} limit={cfg?.size === "lg" ? 8 : 5} />
+        )}
         {state?.density != null && (
           <div className="text-xs font-bold mt-1" style={{ color: state.color }} data-testid={`kpi-density-${tile.key}`}>
             {state.density.toFixed(2)} per vehicle · {state.label.toUpperCase()}
