@@ -9,7 +9,6 @@ import Register from "@/pages/Register";
 import ResetPassword from "@/pages/ResetPassword";
 import ForgotPassword from "@/pages/ForgotPassword";
 import Dashboard from "@/pages/Dashboard";
-import DashboardPreview from "@/pages/DashboardPreview";
 import ExecutiveDashboard from "@/pages/ExecutiveDashboard";
 import Fleet from "@/pages/Fleet";
 import VehicleDetail from "@/pages/VehicleDetail";
@@ -69,7 +68,6 @@ function App() {
             <Route path="/public/incident/:token" element={<PublicIncident />} />
             <Route path="/" element={<Protected><CurrencyProvider><Layout /></CurrencyProvider></Protected>}>
               <Route index element={<Dashboard />} />
-              <Route path="dashboard-preview" element={<DashboardPreview />} />
               <Route path="executive-dashboard" element={<ExecutiveDashboard />} />
               <Route path="fleet" element={<Fleet />} />
               <Route path="fleet/:id" element={<VehicleDetail />} />
