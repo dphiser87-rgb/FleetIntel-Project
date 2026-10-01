@@ -34,7 +34,15 @@ const SIZES = [
   { value: "lg", label: "Large", desc: "Spans two columns" },
 ];
 
+// Charts and panels have a fixed design: the only thing to choose is how wide they are.
+const WIDGET_SIZES = [
+  { value: "md", label: "One column", desc: "Sits beside other tiles" },
+  { value: "lg", label: "Two columns", desc: "More room for charts and lists" },
+];
+const WIDGET_SECTIONS = new Set(["kpi", "size"]);
+
 function tileSubtitle(tile) {
+  if (tile.widget) return tile.desc;
   return tile.higher_better ? "Higher is better" : "Lower is better";
 }
 
@@ -72,7 +80,47 @@ export default function CreateTileModal({
   if (!open) return null;
 
   const selectedTile = allTiles.find(t => t.key === selectedKey);
-  const availableTiles = mode === "edit" ? allTiles : allTiles.filter(t => !activeKeys.includes(t.key));
+  // Editing keeps the item's kind: a KPI tile can be switched to another KPI, a panel to another panel.
+  const availableTiles = mode === "edit"
+    ? allTiles.filter(t => !!t.widget === !!selectedTile?.widget && (t.key === selectedKey || !activeKeys.includes(t.key)))
+    : allTiles.filter(t => !activeKeys.includes(t.key));
+  const kpiOptions = availableTiles.filter(t => !t.widget);
+  const widgetOptions = availableTiles.filter(t => t.widget);
+  const isWidget = !!selectedTile?.widget;
+  const sections = isWidget ? SECTIONS.filter(s => WIDGET_SECTIONS.has(s.key)) : SECTIONS;
+  const sizes = isWidget ? WIDGET_SIZES : SIZES;
+
+  const choose = (t) => {
+    setSelectedKey(t.key);
+    if (t.widget) {
+      setSize(t.span || "md");
+    } else if (selectedTile?.widget) {
+      setSize("md");
+    }
+  };
+
+  const renderOption = (t) => {
+    const on = selectedKey === t.key;
+    return (
+      <button
+        type="button"
+        key={t.key}
+        onClick={() => choose(t)}
+        data-testid={`kpi-option-${t.key}`}
+        className={`w-full text-left flex items-center gap-3 border rounded-xl px-4 py-3 transition-colors ${
+          on ? "bg-emerald-50 border-emerald-500" : "bg-white border-gray-200 hover:border-gray-300"
+        }`}
+      >
+        <span className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${on ? "border-emerald-600" : "border-gray-300"}`}>
+          {on && <span className="w-2 h-2 rounded-full bg-emerald-600" />}
+        </span>
+        <span className="min-w-0">
+          <div className={`text-sm font-bold ${on ? "text-emerald-700" : "text-gray-900"}`}>{t.label}</div>
+          <div className="text-xs text-gray-500 mt-0.5">{tileSubtitle(t)}</div>
+        </span>
+      </button>
+    );
+  };
 
   const save = () => {
     if (!selectedKey) { setSection("kpi"); return; }
@@ -114,7 +162,7 @@ export default function CreateTileModal({
           <div className="w-[200px] shrink-0 border-r border-gray-200 bg-white py-5 px-3 overflow-y-auto">
             <div className="text-[10px] font-bold tracking-widest uppercase text-gray-400 px-2 mb-2">Sections</div>
             <nav className="space-y-1">
-              {SECTIONS.map(s => (
+              {sections.map(s => (
                 <button
                   key={s.key}
                   onClick={() => setSection(s.key)}
@@ -137,32 +185,15 @@ export default function CreateTileModal({
               <>
                 <h3 className="text-lg font-bold text-gray-900">KPI</h3>
                 <div className="border-b border-gray-200 mt-2 mb-2" />
-                <p className="text-sm text-gray-500 mb-3">Select the metric to display in this tile.</p>
+                <p className="text-sm text-gray-500 mb-3">Select the metric or chart to put on your dashboard.</p>
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1" data-testid="kpi-option-list">
-                  {availableTiles.map(t => {
-                    const on = selectedKey === t.key;
-                    return (
-                      <button
-                        type="button"
-                        key={t.key}
-                        onClick={() => setSelectedKey(t.key)}
-                        data-testid={`kpi-option-${t.key}`}
-                        className={`w-full text-left flex items-center gap-3 border rounded-xl px-4 py-3 transition-colors ${
-                          on ? "bg-emerald-50 border-emerald-500" : "bg-white border-gray-200 hover:border-gray-300"
-                        }`}
-                      >
-                        <span className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${on ? "border-emerald-600" : "border-gray-300"}`}>
-                          {on && <span className="w-2 h-2 rounded-full bg-emerald-600" />}
-                        </span>
-                        <span className="min-w-0">
-                          <div className={`text-sm font-bold ${on ? "text-emerald-700" : "text-gray-900"}`}>{t.label}</div>
-                          <div className="text-xs text-gray-500 mt-0.5">{tileSubtitle(t)}</div>
-                        </span>
-                      </button>
-                    );
-                  })}
+                  {kpiOptions.map(renderOption)}
+                  {widgetOptions.length > 0 && (
+                    <div className="text-[10px] font-bold tracking-widest uppercase text-gray-400 pt-3 pb-1" data-testid="widget-option-heading">Charts &amp; panels</div>
+                  )}
+                  {widgetOptions.map(renderOption)}
                   {availableTiles.length === 0 && (
-                    <div className="text-sm text-gray-400 text-center py-10">Every KPI is already on your dashboard.</div>
+                    <div className="text-sm text-gray-400 text-center py-10">Everything is already on your dashboard.</div>
                   )}
                 </div>
               </>
@@ -287,7 +318,7 @@ export default function CreateTileModal({
                 <div className="border-b border-gray-200 mt-2 mb-2" />
                 <p className="text-sm text-gray-500 mb-3">How much space this tile takes on the dashboard grid.</p>
                 <div className="space-y-2">
-                  {SIZES.map(s => {
+                  {sizes.map(s => {
                     const on = size === s.value;
                     return (
                       <button type="button" key={s.value} onClick={() => setSize(s.value)} data-testid={`size-${s.value}`}

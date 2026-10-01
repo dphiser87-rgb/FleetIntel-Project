@@ -694,15 +694,18 @@ class DefectUpdate(BaseModel):
     resolution_notes: Optional[str] = None
 
 class TileConfig(BaseModel):
-    key: str
+    key: str = Field(max_length=60)
     threshold: Optional[float] = None
     view_by: Literal["none", "vehicle", "group", "driver"] = "none"
     group_id: Optional[str] = None
-    chart_type: Literal["gauge", "bar", "line", "number"] = "gauge"
+    # "trend" is what the tile dialog saves now; "gauge"/"bar" stay accepted so older saved layouts
+    # still load (the dashboard renders both as "trend").
+    chart_type: Literal["trend", "gauge", "bar", "line", "number"] = "trend"
     period: Literal["7d", "30d", "90d", "6m", "12m", "all"] = "all"
     size: Literal["sm", "md", "lg"] = "md"
 
 class UserPrefs(BaseModel):
+    # KPI tiles and chart panels ("w_" keys), in the order the user arranged them.
     dashboard_tiles: Optional[List[TileConfig]] = None
     alert_sound_enabled: Optional[bool] = None
 
@@ -1513,21 +1516,34 @@ async def delete_user(uid: str, user: dict = Depends(get_current_user)):
     await log_event(user, "user.deleted", "user", uid, {"name": target["name"]})
     return {"ok": True}
 
+# KPI tiles a user may keep on their dashboard unless FleetIntel has raised it for them
+# (user_profiles.dashboard_tile_limit, set directly in the database -- never through the API).
+DEFAULT_DASHBOARD_TILE_LIMIT = 10
+
+async def _prefs_response(user_id: str) -> dict:
+    u = await fetch_one("select prefs, dashboard_tile_limit from user_profiles where id = :id", id=user_id) or {}
+    # The limit rides along read-only so the dashboard can show "8/10"; it isn't part of UserPrefs,
+    # so a PUT carrying it is ignored.
+    return {**(u.get("prefs") or {}), "dashboard_tile_limit": u.get("dashboard_tile_limit") or DEFAULT_DASHBOARD_TILE_LIMIT}
+
 @api.get("/users/me/prefs")
 async def get_my_prefs(user: dict = Depends(get_current_user)):
-    u = await fetch_one("select prefs from user_profiles where id = :id", id=user["id"])
-    return (u or {}).get("prefs") or {}
+    return await _prefs_response(user["id"])
 
 @api.put("/users/me/prefs")
 async def put_my_prefs(p: UserPrefs, user: dict = Depends(get_current_user)):
     patch = {k: v for k, v in p.model_dump(exclude_unset=True).items() if v is not None}
+    if "dashboard_tiles" in patch:
+        u = await fetch_one("select dashboard_tile_limit from user_profiles where id = :id", id=user["id"]) or {}
+        limit = u.get("dashboard_tile_limit") or DEFAULT_DASHBOARD_TILE_LIMIT
+        if len(patch["dashboard_tiles"]) > limit:
+            raise HTTPException(400, f"Your dashboard can hold up to {limit} KPI tiles. Contact FleetIntel support to raise this limit.")
     if patch:
         await execute(
             "update user_profiles set prefs = coalesce(prefs, '{}'::jsonb) || :patch ::jsonb where id = :id",
             patch=json_dumps(patch), id=user["id"],
         )
-    u = await fetch_one("select prefs from user_profiles where id = :id", id=user["id"])
-    return (u or {}).get("prefs") or {}
+    return await _prefs_response(user["id"])
 
 VEHICLE_COLS = {"name", "plate", "make", "model", "year", "type", "status", "odometer",
                  "fuel_cost_per_km", "downtime_cost_per_hour", "image_url", "group_id"}
