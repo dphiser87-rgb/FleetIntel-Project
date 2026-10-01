@@ -35,7 +35,7 @@ const CHART = {
 
 // The server enforces the real limit per user and reports it with the prefs; this is only what's
 // assumed until that arrives.
-const DEFAULT_TILE_LIMIT = 10;
+const DEFAULT_TILE_LIMIT = 15;
 
 // Charts and panels a user can put on their dashboard alongside KPI tiles. They're picked from the
 // same dialog, count toward the same limit and sit in the same drag-to-arrange grid. The parts

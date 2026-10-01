@@ -1518,7 +1518,7 @@ async def delete_user(uid: str, user: dict = Depends(get_current_user)):
 
 # KPI tiles a user may keep on their dashboard unless FleetIntel has raised it for them
 # (user_profiles.dashboard_tile_limit, set directly in the database -- never through the API).
-DEFAULT_DASHBOARD_TILE_LIMIT = 10
+DEFAULT_DASHBOARD_TILE_LIMIT = 15
 
 async def _prefs_response(user_id: str) -> dict:
     u = await fetch_one("select prefs, dashboard_tile_limit from user_profiles where id = :id", id=user_id) or {}
@@ -1537,7 +1537,10 @@ async def put_my_prefs(p: UserPrefs, user: dict = Depends(get_current_user)):
         u = await fetch_one("select dashboard_tile_limit from user_profiles where id = :id", id=user["id"]) or {}
         limit = u.get("dashboard_tile_limit") or DEFAULT_DASHBOARD_TILE_LIMIT
         if len(patch["dashboard_tiles"]) > limit:
-            raise HTTPException(400, f"Your dashboard can hold up to {limit} KPI tiles. Contact FleetIntel support to raise this limit.")
+            raise HTTPException(400, f"Your dashboard can hold up to {limit} tiles. Contact FleetIntel support to raise this limit.")
+        tile_keys = [t["key"] for t in patch["dashboard_tiles"]]
+        if len(set(tile_keys)) != len(tile_keys):
+            raise HTTPException(400, "Each tile can only be on your dashboard once.")
     if patch:
         await execute(
             "update user_profiles set prefs = coalesce(prefs, '{}'::jsonb) || :patch ::jsonb where id = :id",

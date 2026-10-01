@@ -1,4 +1,4 @@
--- How many KPI tiles a user may keep on their dashboard. NULL means the platform default (10, see
+-- How many KPI tiles a user may keep on their dashboard. NULL means the platform default (15, see
 -- DEFAULT_DASHBOARD_TILE_LIMIT in server.py). Raised only by FleetIntel staff, directly in the
 -- database -- there is deliberately no API or UI that writes this column, so a customer can't lift
 -- their own limit:
