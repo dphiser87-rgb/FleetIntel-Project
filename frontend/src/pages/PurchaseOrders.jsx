@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plus, Receipt, ArrowSquareOut, CurrencyCircleDollar, DownloadSimple } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { can } from "@/lib/access";
+import { voidRecord, voidedLabel } from "@/lib/void";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 import { usePolling } from "@/hooks/use-polling";
@@ -133,9 +134,10 @@ export default function PurchaseOrders() {
                 <tr key={po.id} className="border-b border-border/50" data-testid={`po-${po.id}`}>
                   <td className="p-3 mono">{po.po_number}</td>
                   <td className="p-3">{po.supplier || "—"}</td>
-                  <td className="p-3 mono">{formatMoneyFull(po.amount, currency, 2)}</td>
+                  <td className={`p-3 mono ${po.voided_at ? "line-through text-muted-foreground" : ""}`}>{formatMoneyFull(po.amount, currency, 2)}</td>
                   <td className="p-3">
-                    <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border ${STATUS_COLOR[po.status] || ""}`}>{(po.status || "").replace("_", " ")}</span>
+                    <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border ${po.voided_at ? "border-border text-muted-foreground" : STATUS_COLOR[po.status] || ""}`}>{po.voided_at ? "voided" : (po.status || "").replace("_", " ")}</span>
+                    {po.voided_at && <div className="text-[11px] text-muted-foreground mt-1 max-w-[16rem]" data-testid={`po-voided-${po.id}`}>{voidedLabel(po)}</div>}
                   </td>
                   <td className="p-3">
                     {po.maintenance_id ? (
@@ -155,12 +157,16 @@ export default function PurchaseOrders() {
                           </a>
                         ))}
                       </div>
-                    ) : po.status === "po_issued" && canMarkPaid ? (
+                    ) : po.status === "po_issued" && canMarkPaid && !po.voided_at ? (
                       <button onClick={() => openPay(po)} data-testid={`mark-paid-${po.id}`}
                         className="flex items-center gap-1 border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-[#34C759] hover:text-[#34C759]">
                         <CurrencyCircleDollar size={12} /> Mark Paid
                       </button>
                     ) : <span className="text-xs text-muted-foreground">—</span>}
+                    {!po.voided_at && canMarkPaid && (
+                      <button onClick={async () => { if (await voidRecord(`/purchase-orders/${po.id}/void`, "purchase order")) load(); }}
+                        data-testid={`void-po-${po.id}`} className="block mt-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary">Void</button>
+                    )}
                   </td>
                 </tr>
               ))}

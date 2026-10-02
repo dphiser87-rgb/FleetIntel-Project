@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { can } from "@/lib/access";
+import { voidRecord, voidedLabel } from "@/lib/void";
 import { toast } from "sonner";
 import { CheckCircle, XCircle, MapPin, Wrench } from "@phosphor-icons/react";
 
@@ -58,6 +59,17 @@ export default function InspectionDetailContent({ id, onActioned }) {
 
   return (
     <div className="space-y-6" data-testid="inspection-detail-content">
+      {insp.voided_at ? (
+        <div className="border border-border bg-[#121214] px-4 py-3 text-sm" data-testid="inspection-voided">
+          <span className="overline mr-2">Voided</span><span className="text-muted-foreground">{insp.void_reason}</span>
+          <div className="text-xs text-muted-foreground mt-1">Kept on record; left out of compliance, health scores and counts.</div>
+        </div>
+      ) : can(user, "vehicle_checklist", "D") && (
+        <div className="flex justify-end">
+          <button onClick={async () => { if (await voidRecord(`/inspections/${insp.id}/void`, "inspection")) load(); }}
+            data-testid="void-inspection" className="border border-border px-3 py-1.5 text-xs uppercase tracking-widest text-muted-foreground hover:border-primary hover:text-primary">Void inspection</button>
+        </div>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-4 border border-border grid-borders">
         {[
           ["Odometer", `${(insp.odometer || 0).toLocaleString()} km`],

@@ -1298,7 +1298,7 @@ MODULE_KEYS = ["dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_
 ACTIONS = "VCEDA"
 MODULE_ACTIONS = {
     "dashboard": "V", "fleet": "VCED", "assets": "VCED", "drivers": "VCED", "incidents": "VCED",
-    "vehicle_checklist": "VC", "templates": "VCED", "maintenance": "VCED", "parts": "VCED",
+    "vehicle_checklist": "VCD", "templates": "VCED", "maintenance": "VCED", "parts": "VCED",
     "team": "VCED", "audit": "V", "reports": "VCED", "security": "VE", "purchase_orders": "VCEA",
     "defects": "VCEDA", "executive_dashboard": "VE", "parts_requisitions": "VCA", "quotes": "VCA",
     "settings": "VE",
@@ -1313,7 +1313,7 @@ ACTION_PRESETS = {
     # Fleet Manager: runs vehicles, drivers, assets, incidents and maintenance. Security policy and
     # user access are Customer Admin only.
     "manager": {**_STAFF_VIEW, "fleet": "VCED", "assets": "VCED", "drivers": "VCED", "incidents": "VCED",
-                "maintenance": "VCED", "vehicle_checklist": "VC", "templates": "VCED", "defects": "VCED",
+                "maintenance": "VCED", "vehicle_checklist": "VCD", "templates": "VCED", "defects": "VCED",
                 "parts": "VCE", "parts_requisitions": "VC", "quotes": "VC", "reports": "VCED",
                 "executive_dashboard": "V", "settings": "VE", "team": "V", "security": "V", "audit": "V"},
     # Daily operations; approves the operations stage of a quote; sees stock and requests parts but
@@ -1783,7 +1783,7 @@ async def vehicle_group_analysis(gid: str, user: dict = Depends(require_any_modu
             "select count(*) as c from drivers where workspace_id = :ws and assigned_vehicle_id = any(:ids)", ws=ws, ids=vids,
         ))["c"]
         fuel_rows = await fetch_all(
-            "select coalesce(sum(cost), 0) as total from fuel_logs where workspace_id = :ws and vehicle_id = any(:ids)", ws=ws, ids=vids,
+            "select coalesce(sum(cost), 0) as total from fuel_logs where workspace_id = :ws and voided_at is null and vehicle_id = any(:ids)", ws=ws, ids=vids,
         )
         fuel_cost = float(fuel_rows[0]["total"] or 0)
         maint_rows = await fetch_all(
@@ -3456,7 +3456,7 @@ async def workshop_queue(user: dict = Depends(require_module("maintenance"))):
         po_rows = await fetch_all(
             "select po.po_number, po.amount, po.maintenance_id, m.title as job_title "
             "from purchase_orders po left join maintenance m on m.id = po.maintenance_id "
-            "where po.workspace_id = :ws and po.status = 'po_issued' order by po.created_at",
+            "where po.workspace_id = :ws and po.voided_at is null and po.status = 'po_issued' order by po.created_at",
             ws=ws,
         )
         for po in po_rows:
@@ -3511,7 +3511,7 @@ async def workshop_cost_rollup(user: dict = Depends(require_module("maintenance"
         left join (
             select mnt.vehicle_id, sum(po.amount) as po_paid
             from purchase_orders po join maintenance mnt on mnt.id = po.maintenance_id
-            where po.workspace_id = :ws and po.status = 'paid'
+            where po.workspace_id = :ws and po.voided_at is null and po.status = 'paid'
             group by mnt.vehicle_id
         ) p on p.vehicle_id = v.id
         where v.workspace_id = :ws and (coalesce(m.job_count, 0) > 0 or coalesce(p.po_paid, 0) > 0)
@@ -3557,7 +3557,7 @@ async def workshop_finance_board(user: dict = Depends(require_role(*FINANCE_ROLE
         "left join vehicles v on v.id = m.vehicle_id "
         "left join quotes q on q.id = po.quote_id "
         "left join suppliers s on s.id = po.supplier_id "
-        "where po.workspace_id = :ws order by po.created_at desc",
+        "where po.workspace_id = :ws and po.voided_at is null order by po.created_at desc",
         ws=ws,
     )
 
@@ -3851,9 +3851,9 @@ async def analytics_kpi(user: dict = Depends(require_any_module("dashboard", "re
     ws_downtime_default = (await fetch_one(
         "select default_downtime_cost_per_hour from workspaces where id = :id", id=ws,
     ) or {}).get("default_downtime_cost_per_hour") or 0
-    fuel_logs = await fetch_all("select * from fuel_logs where workspace_id = :ws", ws=ws)
+    fuel_logs = await fetch_all("select * from fuel_logs where workspace_id = :ws and voided_at is null", ws=ws)
     parts = await fetch_all("select * from parts where workspace_id = :ws", ws=ws)
-    inspections = await fetch_all("select answers, fail_count, vehicle_id, asset_id from inspections where workspace_id = :ws", ws=ws)
+    inspections = await fetch_all("select answers, fail_count, vehicle_id, asset_id from inspections where workspace_id = :ws and voided_at is null", ws=ws)
     # Scope every vehicle/asset-linked source list before aggregating — a KPI summary computed from
     # unscoped sources would leak fleet-wide totals to a user restricted to part of the fleet.
     allowed_vehicles, allowed_assets = await _resolve_full_scope(user)
@@ -3925,7 +3925,7 @@ async def analytics_kpi(user: dict = Depends(require_any_module("dashboard", "re
             driver_cost[f["driver_id"]] = driver_cost.get(f["driver_id"], 0) + (f.get("cost", 0) or 0)
     driver_highest_cost = max(driver_cost.values()) if driver_cost else 0
 
-    trip_logs = await fetch_all("select vehicle_id from trip_logs where workspace_id = :ws", ws=ws)
+    trip_logs = await fetch_all("select vehicle_id from trip_logs where workspace_id = :ws and voided_at is null", ws=ws)
     trip_logs = _scope_filter(trip_logs, allowed_vehicles, None)
     avg_trips_per_vehicle = (len(trip_logs) / total_vehicles) if total_vehicles else 0
 
@@ -3981,7 +3981,7 @@ async def cost_by_category(user: dict = Depends(require_any_module("dashboard", 
     maint = await fetch_all(
         "select * from maintenance where workspace_id = :ws and status = 'completed'", ws=user["workspace_id"],
     )
-    fuel_logs = await fetch_all("select cost, vehicle_id from fuel_logs where workspace_id = :ws", ws=user["workspace_id"])
+    fuel_logs = await fetch_all("select cost, vehicle_id from fuel_logs where workspace_id = :ws and voided_at is null", ws=user["workspace_id"])
     allowed_vehicles, allowed_assets = await _resolve_full_scope(user)
     maint = _scope_filter(maint, allowed_vehicles, allowed_assets)
     fuel_logs = _scope_filter(fuel_logs, allowed_vehicles, None)
@@ -4574,7 +4574,7 @@ async def executive_supplier_drilldown(
 
     pos = await fetch_all(
         "select po.*, mnt.title as job_title from purchase_orders po join maintenance mnt on mnt.id = po.maintenance_id "
-        "where po.workspace_id = :ws and po.status = 'paid' and po.supplier = :s order by po.paid_at desc",
+        "where po.workspace_id = :ws and po.voided_at is null and po.status = 'paid' and po.supplier = :s order by po.paid_at desc",
         ws=ws, s=name if not is_unknown else None,
     ) if not is_unknown else []
 
@@ -5333,7 +5333,7 @@ def _with_delta(rows, prior_items, vmap, gmap, group_by, value_fn, dmap=None):
 async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Optional[str] = None, user: dict = Depends(require_any_module("dashboard", "reports"))):
     vehicles = await fetch_all("select * from vehicles where workspace_id = :ws", ws=user["workspace_id"])
     maint_all = await fetch_all("select * from maintenance where workspace_id = :ws", ws=user["workspace_id"])
-    fuel_logs_all = await fetch_all("select * from fuel_logs where workspace_id = :ws", ws=user["workspace_id"])
+    fuel_logs_all = await fetch_all("select * from fuel_logs where workspace_id = :ws and voided_at is null", ws=user["workspace_id"])
     groups = await fetch_all("select * from vehicle_groups where workspace_id = :ws", ws=user["workspace_id"]) if group_by == "group" else []
     drivers = await fetch_all("select * from drivers where workspace_id = :ws", ws=user["workspace_id"]) if group_by == "driver" else []
     allowed_vehicles, allowed_assets = await _resolve_full_scope(user)
@@ -5549,7 +5549,7 @@ async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Opti
         avg = round(sum(r["score"] for r in rows) / len(rows), 1) if rows else 0
         return {"title": "Driver performance", "total": avg, "unit": "score", "columns": ["vehicle", "score", "status"], "rows": rows}
     if kpi_key == "defect_reporting":
-        inspections = await fetch_all("select vehicle_id, asset_id, answers from inspections where workspace_id = :ws", ws=user["workspace_id"])
+        inspections = await fetch_all("select vehicle_id, asset_id, answers from inspections where workspace_id = :ws and voided_at is null", ws=user["workspace_id"])
         inspections = _scope_filter(inspections, allowed_vehicles, allowed_assets)
         defect_items = []
         for i in inspections:
@@ -5597,7 +5597,7 @@ async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Opti
         rows = [{"vehicle": names.get(did, "Unknown driver"), "value": round(c, 2)} for did, c in cost.items()]
         return ranked("Maintenance + fuel cost by driver", rows, max((r["value"] for r in rows), default=0), "$", ("vehicle", "value"))
     if kpi_key == "trips_per_vehicle":
-        trips = _scope_filter(await fetch_all("select vehicle_id from trip_logs where workspace_id = :ws", ws=user["workspace_id"]), allowed_vehicles, None)
+        trips = _scope_filter(await fetch_all("select vehicle_id from trip_logs where workspace_id = :ws and voided_at is null", ws=user["workspace_id"]), allowed_vehicles, None)
         rows = per_vehicle(counts_by_vehicle(trips), 0)
         return ranked("Trips by vehicle", rows, round(len(trips) / len(vehicles), 1) if vehicles else 0, "trips avg")
     if kpi_key == "downtime_per_vehicle":
@@ -5612,13 +5612,13 @@ async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Opti
         return ranked("Open critical jobs by vehicle", rows, len(critical), "jobs")
     if kpi_key == "open_incidents":
         incidents = await fetch_all(
-            "select vehicle_id, severity from incidents where workspace_id = :ws order by occurred_at desc limit 200", ws=user["workspace_id"],
+            "select vehicle_id, severity from incidents where workspace_id = :ws and voided_at is null order by occurred_at desc limit 200", ws=user["workspace_id"],
         )
         open_inc = _scope_filter([i for i in incidents if i.get("severity") in ("moderate", "severe")], allowed_vehicles, None)
         rows = [r for r in per_vehicle(counts_by_vehicle(open_inc), 0) if r["value"] > 0]
         return ranked("Moderate and severe incidents by vehicle", rows, len(open_inc), "incidents")
     if kpi_key == "failed_checklists":
-        insp = await fetch_all("select vehicle_id, asset_id, fail_count from inspections where workspace_id = :ws", ws=user["workspace_id"])
+        insp = await fetch_all("select vehicle_id, asset_id, fail_count from inspections where workspace_id = :ws and voided_at is null", ws=user["workspace_id"])
         failed = [i for i in _scope_filter(insp, allowed_vehicles, allowed_assets) if (i.get("fail_count") or 0) > 0]
         by_v = counts_by_vehicle([i for i in failed if i.get("vehicle_id")])
         rows = [r for r in per_vehicle(by_v, 0) if r["value"] > 0]
@@ -5669,7 +5669,7 @@ async def public_vehicle(token: str):
     workspace = await fetch_one("select name, currency from workspaces where id = :id", id=workspace_id) or {"name": "Fleet", "currency": "USD"}
     # inspections + safety-relevant maintenance history
     inspections = await fetch_all(
-        "select * from inspections where vehicle_id = :vid order by created_at desc limit 50", vid=v["id"],
+        "select * from inspections where vehicle_id = :vid and voided_at is null order by created_at desc limit 50", vid=v["id"],
     )
     for insp in inspections:
         insp.pop("workspace_id", None); insp.pop("inspector_id", None)
@@ -5716,7 +5716,7 @@ async def unified_alerts(user: dict = Depends(require_any_module("dashboard", "r
     pending = [m for m in maint if m.get("status") in ("pending", "in_progress")]
     critical = [m for m in maint if m.get("priority") == "critical" and m.get("status") != "completed"]
     incidents = await fetch_all(
-        "select * from incidents where workspace_id = :ws order by occurred_at desc limit 200", ws=user["workspace_id"],
+        "select * from incidents where workspace_id = :ws and voided_at is null order by occurred_at desc limit 200", ws=user["workspace_id"],
     )
     open_incidents = _scope_filter([i for i in incidents if i.get("severity") in ("moderate", "severe")], allowed_vehicles, None)
     # anomalies (reuse quick logic)
@@ -5745,7 +5745,7 @@ async def unified_alerts(user: dict = Depends(require_any_module("dashboard", "r
     recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
     recent_insp = await fetch_all(
         "select id, vehicle_id, asset_id, inspector_name, fail_count, created_at from inspections "
-        "where workspace_id = :ws and fail_count > 0 and created_at >= :cutoff order by created_at desc",
+        "where workspace_id = :ws and voided_at is null and fail_count > 0 and created_at >= :cutoff order by created_at desc",
         ws=user["workspace_id"], cutoff=recent_cutoff,
     )
     recent_insp = _scope_filter(recent_insp, allowed_vehicles, allowed_assets)
@@ -5880,7 +5880,7 @@ async def _vehicle_events(vid: str, ws: str):
     vehicle: inspections, defects (failed inspection items, split out from the generic inspection
     event), maintenance jobs, fuel transactions, and incidents."""
     events = []
-    inspections = await fetch_all("select * from inspections where workspace_id = :ws and vehicle_id = :vid", ws=ws, vid=vid)
+    inspections = await fetch_all("select * from inspections where workspace_id = :ws and voided_at is null and vehicle_id = :vid", ws=ws, vid=vid)
     template_ids = list({i["template_id"] for i in inspections if i.get("template_id")})
     tmap = {t["id"]: t for t in await fetch_all(
         "select * from templates where workspace_id = :ws and id = any(:ids)", ws=ws, ids=template_ids,
@@ -5893,9 +5893,9 @@ async def _vehicle_events(vid: str, ws: str):
                 events.append({"type": "defect", "at": i.get("created_at"), "title": _item_label(template, a.get("item_id")), "by": i.get("inspector_name"), "meta": {"id": i["id"], "item_id": a.get("item_id"), "note": a.get("note", "")}})
     for m in await fetch_all("select * from maintenance where workspace_id = :ws and vehicle_id = :vid", ws=ws, vid=vid):
         events.append({"type": "maintenance", "at": m.get("created_at"), "title": m.get("title", ""), "by": None, "meta": {"id": m["id"], "status": m.get("status"), "cost": m.get("actual_cost") or m.get("estimated_cost") or 0, "priority": m.get("priority")}})
-    for f in await fetch_all("select * from fuel_logs where workspace_id = :ws and vehicle_id = :vid", ws=ws, vid=vid):
+    for f in await fetch_all("select * from fuel_logs where workspace_id = :ws and voided_at is null and vehicle_id = :vid", ws=ws, vid=vid):
         events.append({"type": "fuel", "at": f.get("occurred_at"), "title": f"Fuel · {f.get('litres', 0)}L", "by": None, "meta": {"id": f["id"], "cost": f.get("cost", 0), "location": f.get("location", "")}})
-    for inc in await fetch_all("select * from incidents where workspace_id = :ws and vehicle_id = :vid", ws=ws, vid=vid):
+    for inc in await fetch_all("select * from incidents where workspace_id = :ws and voided_at is null and vehicle_id = :vid", ws=ws, vid=vid):
         events.append({"type": "incident", "at": inc.get("occurred_at"), "title": f"{inc.get('kind', '').title()} · {inc.get('severity')}", "by": None, "meta": {"id": inc["id"], "description": inc.get("description", "")[:120], "severity": inc.get("severity")}})
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     events.sort(key=lambda e: e["at"] or epoch, reverse=True)
@@ -5942,7 +5942,9 @@ async def vehicle_investigation(vid: str, period: Optional[str] = None, user: di
     driver = drivers[0] if drivers else None
 
     maint = await fetch_all("select * from maintenance where workspace_id = :ws and vehicle_id = :vid", ws=ws, vid=vid)
-    fuel_logs = await fetch_all("select * from fuel_logs where workspace_id = :ws and vehicle_id = :vid order by occurred_at desc", ws=ws, vid=vid)
+    # The list shows voided entries (marked); totals and the trend below use only the rest.
+    fuel_logs_all = await fetch_all("select * from fuel_logs where workspace_id = :ws and vehicle_id = :vid order by occurred_at desc", ws=ws, vid=vid)
+    fuel_logs = [f for f in fuel_logs_all if not f.get("voided_at")]
 
     cutoff, prior_cutoff = _period_bounds(period)
     def m_date(m): return m.get("completed_at") or m.get("created_at")
@@ -5998,7 +6000,7 @@ async def vehicle_investigation(vid: str, period: Optional[str] = None, user: di
     monthly_trend = sorted(buckets.values(), key=lambda x: x["month"])
 
     # defect history: failed inspection answer items, newest first
-    inspections = await fetch_all("select * from inspections where workspace_id = :ws and vehicle_id = :vid order by created_at desc", ws=ws, vid=vid)
+    inspections = await fetch_all("select * from inspections where workspace_id = :ws and voided_at is null and vehicle_id = :vid order by created_at desc", ws=ws, vid=vid)
     template_ids = list({i["template_id"] for i in inspections if i.get("template_id")})
     tmap = {t["id"]: t for t in await fetch_all(
         "select * from templates where workspace_id = :ws and id = any(:ids)", ws=ws, ids=template_ids,
@@ -6022,7 +6024,7 @@ async def vehicle_investigation(vid: str, period: Optional[str] = None, user: di
         "driver": driver,
         "cost_summary": cur_summary,
         "monthly_trend": monthly_trend,
-        "fuel_logs": fuel_logs[:100],
+        "fuel_logs": fuel_logs_all[:100],
         "maintenance": sorted(maint, key=lambda m: m.get("created_at") or epoch, reverse=True)[:100],
         "defects": defects[:100],
         "utilization": {"status": v.get("status"), "avg_km_per_day": avg_km_per_day, "odometer": v.get("odometer", 0)},
@@ -6360,6 +6362,55 @@ async def create_fuel_log(f: FuelLogIn, user: dict = Depends(require_action("fle
     await log_event(user, "fuel.logged", "fuel_log", lid, {"vehicle_id": doc["vehicle_id"], "cost": doc["cost"]})
     return doc
 
+# --- Voiding: correcting a record without deleting it -------------------------------------------------
+# A voided entry stays on record (who, when, why) and every total, score and count leaves it out.
+# Jobs are voided by cancelling them. D on a module means "void" for these record types.
+class VoidIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+async def _void(user: dict, table: str, kind: str, rid: str, reason: str, extra: str = "", keep: tuple = ()) -> dict:
+    row = await fetch_one(f"select * from {table} where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
+    if not row: raise HTTPException(status_code=404, detail="Not found")
+    if row.get("voided_at"):
+        raise HTTPException(status_code=400, detail=f"This {kind} is already voided")
+    await execute(
+        f"update {table} set voided_at = now(), voided_by = :uid, void_reason = :reason{extra} "
+        "where id = :id and workspace_id = :ws",
+        uid=user["id"], reason=reason.strip(), id=rid, ws=user["workspace_id"])
+    await log_event(user, f"{kind.replace(' ', '_')}.voided", kind.replace(" ", "_"), rid,
+                    {"reason": reason.strip(), **{k: row.get(k) for k in keep if row.get(k) is not None}})
+    return await fetch_one(f"select * from {table} where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
+
+@api.post("/fuel-logs/{lid}/void")
+async def void_fuel_log(lid: str, body: VoidIn, user: dict = Depends(require_action("fleet", "D"))):
+    return await _void(user, "fuel_logs", "fuel entry", lid, body.reason, keep=("cost", "litres", "vehicle_id"))
+
+@api.post("/trip-logs/{tid}/void")
+async def void_trip_log(tid: str, body: VoidIn, user: dict = Depends(require_action("fleet", "D"))):
+    return await _void(user, "trip_logs", "trip entry", tid, body.reason, keep=("vehicle_id", "driver_id"))
+
+@api.post("/incidents/{iid}/void")
+async def void_incident(iid: str, body: VoidIn, user: dict = Depends(require_action("incidents", "D"))):
+    return await _void(user, "incidents", "incident", iid, body.reason, keep=("reported_cost", "severity", "vehicle_id"))
+
+@api.post("/inspections/{iid}/void")
+async def void_inspection(iid: str, body: VoidIn, user: dict = Depends(require_action("vehicle_checklist", "D"))):
+    return await _void(user, "inspections", "inspection", iid, body.reason, keep=("vehicle_id", "asset_id", "fail_count"))
+
+@api.post("/purchase-orders/{poid}/void")
+async def void_purchase_order(poid: str, body: VoidIn, user: dict = Depends(require_action("purchase_orders", "A"))):
+    # Voiding a purchase order is a financial decision, so it takes the same approve permission as
+    # issuing and paying one. A paid order voided here is reversed out of spend totals; the payment
+    # record itself stays on the row.
+    return await _void(user, "purchase_orders", "purchase order", poid, body.reason, keep=("amount", "status", "po_number"))
+
+@api.post("/maintenance/{mid}/void")
+async def void_maintenance(mid: str, body: VoidIn, user: dict = Depends(require_action("maintenance", "D"))):
+    # A job is voided by cancelling it: only completed jobs count towards costs, so its cost leaves
+    # every total while the job, its costs and its history stay on record.
+    return await _void(user, "maintenance", "job", mid, body.reason,
+                       extra=", previous_status = status, status = 'cancelled'", keep=("status", "actual_cost", "vehicle_id"))
+
 @api.delete("/fuel-logs/{lid}")
 async def delete_fuel_log(lid: str, user: dict = Depends(require_action("fleet", "D"))):
     refuse_delete("fuel entry", "Void it with a reason to correct the totals.")
@@ -6427,9 +6478,9 @@ async def vehicle_health_trend(vid: str, days: int = 30, user: dict = Depends(re
     allowed_vehicles, _ = await _resolve_full_scope(user)
     if allowed_vehicles is not None and str(vid) not in allowed_vehicles:
         raise HTTPException(status_code=404, detail="Vehicle not found")
-    insp = await fetch_all("select * from inspections where workspace_id = :ws and vehicle_id = :vid", ws=user["workspace_id"], vid=vid)
+    insp = await fetch_all("select * from inspections where workspace_id = :ws and voided_at is null and vehicle_id = :vid", ws=user["workspace_id"], vid=vid)
     maint = await fetch_all("select * from maintenance where workspace_id = :ws and vehicle_id = :vid", ws=user["workspace_id"], vid=vid)
-    inc = await fetch_all("select * from incidents where workspace_id = :ws and vehicle_id = :vid", ws=user["workspace_id"], vid=vid)
+    inc = await fetch_all("select * from incidents where workspace_id = :ws and voided_at is null and vehicle_id = :vid", ws=user["workspace_id"], vid=vid)
     drivers = await fetch_all("select * from drivers where workspace_id = :ws and assigned_vehicle_id = :vid limit 50", ws=user["workspace_id"], vid=vid)
     driver = drivers[0] if drivers else None
     ws_row = await fetch_one("select license_warning_days from workspaces where id = :id", id=user["workspace_id"])
@@ -6447,9 +6498,9 @@ async def _compute_fleet_health(workspace_id: str):
     ws_row = await fetch_one("select license_warning_days from workspaces where id = :id", id=workspace_id)
     license_warning_days = (ws_row or {}).get("license_warning_days") or 30
     vehicles = await fetch_all("select * from vehicles where workspace_id = :ws and coalesce(status, '') <> 'archived'", ws=workspace_id)
-    all_insp = await fetch_all("select * from inspections where workspace_id = :ws", ws=workspace_id)
+    all_insp = await fetch_all("select * from inspections where workspace_id = :ws and voided_at is null", ws=workspace_id)
     all_maint = await fetch_all("select * from maintenance where workspace_id = :ws", ws=workspace_id)
-    all_inc = await fetch_all("select * from incidents where workspace_id = :ws", ws=workspace_id)
+    all_inc = await fetch_all("select * from incidents where workspace_id = :ws and voided_at is null", ws=workspace_id)
     drivers = await fetch_all("select * from drivers where workspace_id = :ws", ws=workspace_id)
     driver_by_vehicle = {}
     for d in drivers:
@@ -6541,7 +6592,7 @@ async def _compute_driver_performance(workspace_id: str):
     license_warning_days = (ws_row or {}).get("license_warning_days") or 30
     drivers = await fetch_all("select * from drivers where workspace_id = :ws", ws=workspace_id)
     all_maint = await fetch_all("select * from maintenance where workspace_id = :ws", ws=workspace_id)
-    all_inc = await fetch_all("select * from incidents where workspace_id = :ws", ws=workspace_id)
+    all_inc = await fetch_all("select * from incidents where workspace_id = :ws and voided_at is null", ws=workspace_id)
     now = datetime.now(timezone.utc)
     results = [_score_driver(d, all_maint, all_inc, as_of=now, license_warning_days=license_warning_days) for d in drivers]
     results.sort(key=lambda r: r["score"])  # worst first
@@ -6943,7 +6994,7 @@ async def _send_spend_digest(workspace_id: str) -> Optional[str]:
     )
     quotes_total = sum(_f(q.get("total")) for q in quotes)
 
-    pos = await fetch_all("select * from purchase_orders where workspace_id = :ws and status = 'po_issued'", ws=workspace_id)
+    pos = await fetch_all("select * from purchase_orders where workspace_id = :ws and voided_at is null and status = 'po_issued'", ws=workspace_id)
     pos_total = sum(_f(p.get("amount")) for p in pos)
 
     sym = CURRENCY_SYMBOLS.get(ws.get("currency") or "USD", "$")
@@ -7159,7 +7210,7 @@ async def _compute_overdue_checklists(workspace_id: str):
         for target_id, target_name in targets:
             col = "vehicle_id" if ttype == "vehicle" else "asset_id"
             last = await fetch_one(
-                f"select created_at from inspections where template_id = :tid and {col} = :xid order by created_at desc limit 1",
+                f"select created_at from inspections where voided_at is null and template_id = :tid and {col} = :xid order by created_at desc limit 1",
                 tid=t["id"], xid=target_id,
             )
             last_at = last["created_at"] if last else None
@@ -7198,7 +7249,7 @@ async def _compute_checklist_compliance(workspace_id: str):
             targets = [vid for vid in target_ids if vid in vmap]
         for vid in targets:
             last = await fetch_one(
-                "select created_at from inspections where template_id = :tid and vehicle_id = :vid order by created_at desc limit 1",
+                "select created_at from inspections where voided_at is null and template_id = :tid and vehicle_id = :vid order by created_at desc limit 1",
                 tid=t["id"], vid=vid,
             )
             last_at = last["created_at"] if last else None
@@ -8128,7 +8179,7 @@ async def _fetch_report_rows(report_type: str, user: dict, filters: dict) -> lis
         } for m in maint]
 
     if report_type == "fuel":
-        logs = await fetch_all("select * from fuel_logs where workspace_id = :ws", ws=ws)
+        logs = await fetch_all("select * from fuel_logs where workspace_id = :ws and voided_at is null", ws=ws)
         logs = _scope_filter(logs, allowed_vehicles, None)
         if vehicle_id: logs = [f for f in logs if f.get("vehicle_id") == vehicle_id]
         logs = [f for f in logs if _in_date_range(f.get("occurred_at"), start, end)]
@@ -8154,7 +8205,7 @@ async def _fetch_report_rows(report_type: str, user: dict, filters: dict) -> lis
         } for r in rows]
 
     if report_type == "incidents":
-        incs = await fetch_all("select * from incidents where workspace_id = :ws", ws=ws)
+        incs = await fetch_all("select * from incidents where workspace_id = :ws and voided_at is null", ws=ws)
         incs = _scope_filter(incs, allowed_vehicles, None)
         if vehicle_id: incs = [i for i in incs if i.get("vehicle_id") == vehicle_id]
         incs = [i for i in incs if _in_date_range(i.get("occurred_at"), start, end)]
@@ -8212,7 +8263,7 @@ async def _fetch_report_rows(report_type: str, user: dict, filters: dict) -> lis
         } for r in rows]
 
     if report_type == "purchase_orders":
-        rows = await fetch_all("select * from purchase_orders where workspace_id = :ws order by created_at desc", ws=ws)
+        rows = await fetch_all("select * from purchase_orders where workspace_id = :ws and voided_at is null order by created_at desc", ws=ws)
         rows = [r for r in rows if _in_date_range(r.get("created_at"), start, end)]
         return [{
             "po_number": r.get("po_number") or "", "supplier": r.get("supplier") or "",

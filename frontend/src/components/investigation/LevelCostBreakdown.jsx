@@ -8,7 +8,7 @@ export default function LevelCostBreakdown({ category, maintenance, fuelLogs, on
   const { currency } = useCurrency();
   const isFuel = category === "fuel";
   const rows = isFuel
-    ? fuelLogs
+    ? fuelLogs.filter((f) => !f.voided_at)  // matches the category total, which leaves voided entries out
     : category === "downtime"
       ? maintenance.filter((m) => (m.downtime_hours || 0) > 0)
       : maintenance;

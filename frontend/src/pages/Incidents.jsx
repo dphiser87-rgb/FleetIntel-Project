@@ -7,6 +7,7 @@ import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 import { useAuth } from "@/contexts/AuthContext";
 import { can } from "@/lib/access";
+import { voidRecord, voidedLabel } from "@/lib/void";
 
 const SEVERITY_STYLES = {
   severe: "border-primary text-primary bg-primary/10",
@@ -58,9 +59,12 @@ export default function Incidents() {
     return true;
   }), [incidents, severity, kind, driverId, search]);
 
+  // Voided incidents stay listed (marked) but don't count towards any total on this page.
+  const counted = useMemo(() => filtered.filter(i => !i.voided_at), [filtered]);
+
   const breakdown = useMemo(() => {
     const map = {};
-    filtered.forEach(i => {
+    counted.forEach(i => {
       const key = i.driver_id || "unassigned";
       if (!map[key]) map[key] = { name: i.driver_name || "Unassigned", count: 0, cost: 0, severe: 0 };
       map[key].count += 1;
@@ -68,15 +72,15 @@ export default function Incidents() {
       if (i.severity === "severe") map[key].severe += 1;
     });
     return Object.entries(map).map(([id, v]) => ({ id, ...v })).sort((a, b) => b.count - a.count);
-  }, [filtered]);
+  }, [counted]);
 
   const totals = useMemo(() => ({
-    total: filtered.length,
-    severe: filtered.filter(i => i.severity === "severe").length,
-    moderate: filtered.filter(i => i.severity === "moderate").length,
-    minor: filtered.filter(i => i.severity === "minor").length,
-    cost: filtered.reduce((s, i) => s + (i.reported_cost || 0), 0),
-  }), [filtered]);
+    total: counted.length,
+    severe: counted.filter(i => i.severity === "severe").length,
+    moderate: counted.filter(i => i.severity === "moderate").length,
+    minor: counted.filter(i => i.severity === "minor").length,
+    cost: counted.reduce((s, i) => s + (i.reported_cost || 0), 0),
+  }), [counted]);
 
   const exportCsv = () => {
     const csv = toCsv(filtered);
@@ -202,7 +206,8 @@ export default function Incidents() {
                         {i.resolved && <span className="text-[10px] mono uppercase tracking-widest px-2 py-0.5 border border-[#34C759] text-[#34C759] bg-[#34C759]/10">Resolved</span>}
                         <span className="text-xs mono text-muted-foreground">{(i.occurred_at || "").slice(0, 16).replace("T", " ")}</span>
                       </div>
-                      <div className="mt-2 text-sm">{i.description}</div>
+                      {i.voided_at && <div className="mt-2 text-[10px] mono uppercase tracking-widest text-muted-foreground" data-testid={`incident-voided-${i.id}`}>{voidedLabel(i)}</div>}
+                      <div className={`mt-2 text-sm ${i.voided_at ? "line-through text-muted-foreground" : ""}`}>{i.description}</div>
                       <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                         {i.vehicle_id && <Link to={`/fleet/${i.vehicle_id}`} className="hover:text-primary">{i.vehicle_name || "Vehicle"} · {i.vehicle_plate}</Link>}
                         {i.driver_name && <span>Driver: <span className="text-foreground">{i.driver_name}</span></span>}
@@ -226,7 +231,8 @@ export default function Incidents() {
                     <div className="flex flex-col gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
                       {can(user, "incidents", "E") && <button onClick={() => openShare(i)} data-testid={`share-incident-${i.id}`} title="Share with insurance" className="text-muted-foreground hover:text-primary p-1"><ShareNetwork size={14} /></button>}
                       <button onClick={() => downloadFile(`/incidents/${i.id}/pdf`, `incident-${i.id}.pdf`)} data-testid={`pdf-incident-${i.id}`} title="Download insurance PDF" className="text-muted-foreground hover:text-primary p-1"><FilePdf size={14} /></button>
-                      {can(user, "incidents", "E") && <button onClick={() => setEditing({ ...i, driver_id: i.driver_id || "", resolution_notes: i.resolution_notes || "" })} data-testid={`edit-incident-${i.id}`} className="text-muted-foreground hover:text-primary p-1"><PencilSimple size={14} /></button>}
+                      {can(user, "incidents", "E") && !i.voided_at && <button onClick={() => setEditing({ ...i, driver_id: i.driver_id || "", resolution_notes: i.resolution_notes || "" })} data-testid={`edit-incident-${i.id}`} className="text-muted-foreground hover:text-primary p-1"><PencilSimple size={14} /></button>}
+                      {can(user, "incidents", "D") && !i.voided_at && <button onClick={async () => { if (await voidRecord(`/incidents/${i.id}/void`, "incident")) load(); }} data-testid={`void-incident-${i.id}`} title="Void (kept on record, left out of totals)" className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary p-1">Void</button>}
                     </div>
                   </div>
                 </div>

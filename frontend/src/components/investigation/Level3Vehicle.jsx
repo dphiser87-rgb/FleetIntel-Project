@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { can } from "@/lib/access";
+import { voidRecord, voidedLabel } from "@/lib/void";
 import { toast } from "sonner";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -185,9 +186,16 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) 
           )}
           <div className="space-y-1 max-h-56 overflow-y-auto">
             {fuel_logs.slice(0, 10).map((f) => (
-              <div key={f.id} className="flex items-center justify-between text-xs border-b border-border/50 py-1.5">
-                <span className="text-muted-foreground">{(f.occurred_at || "").slice(0, 10)} · {f.location || "—"}</span>
-                <span className="mono">{f.litres}L · {formatMoneyFull(f.cost, currency)}</span>
+              <div key={f.id} className="flex items-center justify-between gap-2 text-xs border-b border-border/50 py-1.5" data-testid={`fuel-row-${f.id}`}>
+                <span className="text-muted-foreground min-w-0">{(f.occurred_at || "").slice(0, 10)} · {f.location || "—"}
+                  {f.voided_at && <span className="block text-[10px] mono uppercase tracking-widest" title={voidedLabel(f)}>{voidedLabel(f)}</span>}</span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <span className={`mono ${f.voided_at ? "line-through text-muted-foreground" : ""}`}>{f.litres}L · {formatMoneyFull(f.cost, currency)}</span>
+                  {!f.voided_at && can(user, "fleet", "D") && (
+                    <button onClick={async () => { if (await voidRecord(`/fuel-logs/${f.id}/void`, "fuel entry")) load(); }}
+                      data-testid={`void-fuel-${f.id}`} className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary">Void</button>
+                  )}
+                </span>
               </div>
             ))}
             {fuel_logs.length === 0 && <div className="text-xs text-muted-foreground text-center py-4">No fuel purchases logged.</div>}
@@ -210,9 +218,16 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) 
           )}
           <div className="space-y-1 max-h-56 overflow-y-auto">
             {tripLogs.slice(0, 10).map((t) => (
-              <div key={t.id} className="flex items-center justify-between text-xs border-b border-border/50 py-1.5">
-                <span className="text-muted-foreground">{(t.occurred_at || "").slice(0, 10)}</span>
-                <span className="mono">{t.distance_km} km</span>
+              <div key={t.id} className="flex items-center justify-between gap-2 text-xs border-b border-border/50 py-1.5" data-testid={`trip-row-${t.id}`}>
+                <span className="text-muted-foreground min-w-0">{(t.occurred_at || "").slice(0, 10)}
+                  {t.voided_at && <span className="block text-[10px] mono uppercase tracking-widest" title={voidedLabel(t)}>{voidedLabel(t)}</span>}</span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <span className={`mono ${t.voided_at ? "line-through text-muted-foreground" : ""}`}>{t.distance_km} km</span>
+                  {!t.voided_at && can(user, "fleet", "D") && (
+                    <button onClick={async () => { if (await voidRecord(`/trip-logs/${t.id}/void`, "trip entry")) load(); }}
+                      data-testid={`void-trip-${t.id}`} className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary">Void</button>
+                  )}
+                </span>
               </div>
             ))}
             {tripLogs.length === 0 && <div className="text-xs text-muted-foreground text-center py-4">No trips logged.</div>}

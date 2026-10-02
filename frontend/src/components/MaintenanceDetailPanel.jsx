@@ -11,6 +11,7 @@ import PartsRequisitionPanel from "@/components/PartsRequisitionPanel";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 import { can, canEditJob } from "@/lib/access";
+import { voidRecord, voidedLabel } from "@/lib/void";
 
 
 export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, onChange }) {
@@ -94,7 +95,14 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
               <div>
                 <div className="overline">{job.vehicle_name} · {job.vehicle_plate}</div>
                 <h2 className="font-display text-2xl font-bold mt-1">{job.title}</h2>
+                {job.voided_at && <div className="text-xs text-muted-foreground mt-1" data-testid="job-voided">{voidedLabel(job)}</div>}
               </div>
+              <div className="flex gap-2 shrink-0">
+              {!job.voided_at && can(currentUser, "maintenance", "D") && (
+                <button onClick={async () => { if (await voidRecord(`/maintenance/${jobId}/void`, "job")) { load(); onChange(); } }}
+                  data-testid="void-job" title="Cancels the job; its costs leave every total and the job stays on record"
+                  className="border border-border px-3 py-2 text-xs uppercase tracking-widest text-muted-foreground hover:border-primary hover:text-primary">Void</button>
+              )}
               <button
                 onClick={() => downloadFile(`/maintenance/${jobId}/pdf`, `job-${jobId}.pdf`)}
                 data-testid="download-job-pdf"
@@ -102,6 +110,7 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
               >
                 <DownloadSimple size={14} /> Download PDF
               </button>
+              </div>
             </div>
             <div className="border-b border-border px-6 flex gap-4 shrink-0">
               {["overview", "parts", "quotation", "activity"].map((t) => (

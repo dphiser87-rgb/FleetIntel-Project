@@ -221,7 +221,7 @@ export default function GroupManager({
     const memberIdSet = new Set(members.map((m) => m.id));
     const openDefects = maintenance.filter((m) => memberIdSet.has(m.vehicle_id) && !["completed", "cancelled"].includes(m.status)).length;
     const maintCost = maintenance.filter((m) => memberIdSet.has(m.vehicle_id) && m.status === "completed").reduce((s, m) => s + Number(m.actual_cost || 0), 0);
-    const fuelCost = fuelLogs.filter((f) => memberIdSet.has(f.vehicle_id)).reduce((s, f) => s + Number(f.cost || 0), 0);
+    const fuelCost = fuelLogs.filter((f) => memberIdSet.has(f.vehicle_id) && !f.voided_at).reduce((s, f) => s + Number(f.cost || 0), 0);  // voided entries leave totals
     const avgCostPerKm = members.length
       ? (members.reduce((s, m) => s + Number(m.fuel_cost_per_km || 0), 0) / members.length)
       : 0;
