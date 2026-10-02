@@ -205,6 +205,20 @@ def require_module(module: str, level: str = "read"):
         return user
     return dep
 
+def require_any_module(*modules: str, level: str = "read"):
+    """Like require_module, for routes several screens share: passes if the user has `level` on any
+    one of `modules`. GET /vehicles/{vid} is fleet data, but a driver's 3D inspection needs it too, and
+    a driver's only grant is vehicle_checklist."""
+    async def dep(user: dict = Depends(get_current_user)):
+        for m in modules:
+            try:
+                _assert_module(user, m, level)
+                return user
+            except HTTPException:
+                continue
+        raise HTTPException(status_code=403, detail=f"Insufficient access to {' or '.join(modules)}")
+    return dep
+
 def _assert_module(user: dict, module: str, level: str = "read") -> None:
     """The module check itself, callable outside the Depends() chain — download routes resolve their
     own user (they accept ?token= because an <a href> can't set an Authorization header) and so can't
@@ -1312,7 +1326,7 @@ async def list_users(user: dict = Depends(require_module("team", "read"))):
     )
 
 @api.get("/users/directory")
-async def users_directory(user: dict = Depends(get_current_user)):
+async def users_directory(user: dict = Depends(require_any_module("maintenance", "templates", "defects", "team"))):
     """Names only, for assignee pickers ("who can I give this job to").
 
     Deliberately separate from GET /users, which returns the full profile -- email, cell,
@@ -1555,11 +1569,11 @@ VEHICLE_GROUP_COLS = {"name", "color", "fleet_type", "branch", "region", "cost_c
 
 # --- Vehicle groups ---
 @api.get("/vehicle-groups")
-async def list_vehicle_groups(user: dict = Depends(get_current_user)):
+async def list_vehicle_groups(user: dict = Depends(require_module("fleet"))):
     return await fetch_all("select * from vehicle_groups where workspace_id = :ws order by name", ws=user["workspace_id"])
 
 @api.post("/vehicle-groups")
-async def create_vehicle_group(g: VehicleGroupIn, user: dict = Depends(get_current_user)):
+async def create_vehicle_group(g: VehicleGroupIn, user: dict = Depends(require_module("fleet"))):
     gid = str(uuid.uuid4())
     await execute(
         "insert into vehicle_groups (id, workspace_id, name, color, fleet_type, branch, region, cost_centre) "
@@ -1571,7 +1585,7 @@ async def create_vehicle_group(g: VehicleGroupIn, user: dict = Depends(get_curre
     return doc
 
 @api.patch("/vehicle-groups/{gid}")
-async def update_vehicle_group(gid: str, patch: dict, user: dict = Depends(get_current_user)):
+async def update_vehicle_group(gid: str, patch: dict, user: dict = Depends(require_module("fleet"))):
     before = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not before: raise HTTPException(status_code=404, detail="Not found")
     await update_row("vehicle_groups", gid, user["workspace_id"], patch, VEHICLE_GROUP_COLS)
@@ -1583,7 +1597,7 @@ async def update_vehicle_group(gid: str, patch: dict, user: dict = Depends(get_c
     return doc
 
 @api.delete("/vehicle-groups/{gid}")
-async def delete_vehicle_group(gid: str, user: dict = Depends(get_current_user)):
+async def delete_vehicle_group(gid: str, user: dict = Depends(require_module("fleet"))):
     g = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     await execute("delete from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if g:
@@ -1591,7 +1605,7 @@ async def delete_vehicle_group(gid: str, user: dict = Depends(get_current_user))
     return {"ok": True}
 
 @api.post("/vehicle-groups/{gid}/assign")
-async def assign_vehicle_group(gid: str, body: GroupAssign, user: dict = Depends(get_current_user)):
+async def assign_vehicle_group(gid: str, body: GroupAssign, user: dict = Depends(require_module("fleet"))):
     g = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not g: raise HTTPException(status_code=404, detail="Not found")
     if body.add_ids:
@@ -1609,7 +1623,7 @@ async def assign_vehicle_group(gid: str, body: GroupAssign, user: dict = Depends
     return {"ok": True}
 
 @api.get("/vehicle-groups/{gid}/analysis")
-async def vehicle_group_analysis(gid: str, user: dict = Depends(get_current_user)):
+async def vehicle_group_analysis(gid: str, user: dict = Depends(require_any_module("dashboard", "reports", "fleet"))):
     ws = user["workspace_id"]
     g = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=ws)
     if not g: raise HTTPException(status_code=404, detail="Not found")
@@ -1650,11 +1664,11 @@ async def vehicle_group_analysis(gid: str, user: dict = Depends(get_current_user
 ASSET_GROUP_COLS = {"name", "color", "category", "branch", "region", "cost_centre"}
 
 @api.get("/asset-groups")
-async def list_asset_groups(user: dict = Depends(get_current_user)):
+async def list_asset_groups(user: dict = Depends(require_module("assets"))):
     return await fetch_all("select * from asset_groups where workspace_id = :ws order by name", ws=user["workspace_id"])
 
 @api.post("/asset-groups")
-async def create_asset_group(g: AssetGroupIn, user: dict = Depends(get_current_user)):
+async def create_asset_group(g: AssetGroupIn, user: dict = Depends(require_module("assets"))):
     gid = str(uuid.uuid4())
     await execute(
         "insert into asset_groups (id, workspace_id, name, color, category, branch, region, cost_centre) "
@@ -1666,7 +1680,7 @@ async def create_asset_group(g: AssetGroupIn, user: dict = Depends(get_current_u
     return doc
 
 @api.patch("/asset-groups/{gid}")
-async def update_asset_group(gid: str, patch: dict, user: dict = Depends(get_current_user)):
+async def update_asset_group(gid: str, patch: dict, user: dict = Depends(require_module("assets"))):
     before = await fetch_one("select * from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not before: raise HTTPException(status_code=404, detail="Not found")
     await update_row("asset_groups", gid, user["workspace_id"], patch, ASSET_GROUP_COLS)
@@ -1678,7 +1692,7 @@ async def update_asset_group(gid: str, patch: dict, user: dict = Depends(get_cur
     return doc
 
 @api.delete("/asset-groups/{gid}")
-async def delete_asset_group(gid: str, user: dict = Depends(get_current_user)):
+async def delete_asset_group(gid: str, user: dict = Depends(require_module("assets"))):
     g = await fetch_one("select * from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     await execute("delete from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if g:
@@ -1686,7 +1700,7 @@ async def delete_asset_group(gid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 @api.post("/asset-groups/{gid}/assign")
-async def assign_asset_group(gid: str, body: GroupAssign, user: dict = Depends(get_current_user)):
+async def assign_asset_group(gid: str, body: GroupAssign, user: dict = Depends(require_module("assets"))):
     g = await fetch_one("select * from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not g: raise HTTPException(status_code=404, detail="Not found")
     if body.add_ids:
@@ -1707,7 +1721,7 @@ async def assign_asset_group(gid: str, body: GroupAssign, user: dict = Depends(g
 ASSET_COLS = {"name", "identifier", "category", "status", "group_id"}
 
 @api.get("/assets")
-async def list_assets(kind: Optional[str] = None, search: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_assets(kind: Optional[str] = None, search: Optional[str] = None, user: dict = Depends(require_module("assets"))):
     q = "select * from assets where workspace_id = :ws"
     params = {"ws": user["workspace_id"]}
     if kind:
@@ -1722,7 +1736,7 @@ async def list_assets(kind: Optional[str] = None, search: Optional[str] = None, 
     return _scope_filter(rows, None, allowed_assets, vehicle_field=None, asset_field="id")
 
 @api.post("/assets")
-async def create_asset(a: AssetIn, user: dict = Depends(get_current_user)):
+async def create_asset(a: AssetIn, user: dict = Depends(require_module("assets"))):
     aid = str(uuid.uuid4())
     await execute(
         "insert into assets (id, workspace_id, kind, name, identifier, category, status, group_id) "
@@ -1734,7 +1748,7 @@ async def create_asset(a: AssetIn, user: dict = Depends(get_current_user)):
     return doc
 
 @api.get("/assets/{aid}")
-async def get_asset(aid: str, user: dict = Depends(get_current_user)):
+async def get_asset(aid: str, user: dict = Depends(require_module("assets"))):
     a = await fetch_one("select * from assets where id = :id and workspace_id = :ws", id=aid, ws=user["workspace_id"])
     if not a: raise HTTPException(status_code=404, detail="Not found")
     allowed_assets = await _resolve_scope(user, "asset")
@@ -1743,18 +1757,18 @@ async def get_asset(aid: str, user: dict = Depends(get_current_user)):
     return a
 
 @api.patch("/assets/{aid}")
-async def update_asset(aid: str, patch: dict, user: dict = Depends(get_current_user)):
+async def update_asset(aid: str, patch: dict, user: dict = Depends(require_module("assets"))):
     await update_row("assets", aid, user["workspace_id"], patch, ASSET_COLS)
     return await fetch_one("select * from assets where id = :id and workspace_id = :ws", id=aid, ws=user["workspace_id"])
 
 @api.delete("/assets/{aid}")
-async def delete_asset(aid: str, user: dict = Depends(get_current_user)):
+async def delete_asset(aid: str, user: dict = Depends(require_module("assets"))):
     await execute("delete from assets where id = :id and workspace_id = :ws", id=aid, ws=user["workspace_id"])
     return {"ok": True}
 
 # --- Vehicles ---
 @api.get("/vehicles")
-async def list_vehicles(search: Optional[str] = None, limit: Optional[int] = None, offset: int = 0, user: dict = Depends(get_current_user)):
+async def list_vehicles(search: Optional[str] = None, limit: Optional[int] = None, offset: int = 0, user: dict = Depends(require_module("fleet"))):
     if search:
         q = "select * from vehicles where workspace_id = :ws and (name ilike :q or plate ilike :q) order by name"
         params = {"ws": user["workspace_id"], "q": f"%{search}%"}
@@ -1772,7 +1786,7 @@ async def list_vehicles(search: Optional[str] = None, limit: Optional[int] = Non
     return rows
 
 @api.post("/vehicles")
-async def create_vehicle(v: VehicleIn, user: dict = Depends(get_current_user)):
+async def create_vehicle(v: VehicleIn, user: dict = Depends(require_module("fleet"))):
     vid = str(uuid.uuid4())
     await execute(
         "insert into vehicles (id, workspace_id, name, plate, make, model, year, type, status, "
@@ -1785,7 +1799,7 @@ async def create_vehicle(v: VehicleIn, user: dict = Depends(get_current_user)):
     return doc
 
 @api.get("/vehicles/{vid}")
-async def get_vehicle(vid: str, user: dict = Depends(get_current_user)):
+async def get_vehicle(vid: str, user: dict = Depends(require_any_module("fleet", "vehicle_checklist"))):
     v = await fetch_one("select * from vehicles where id = :id and workspace_id = :ws", id=vid, ws=user["workspace_id"])
     if not v: raise HTTPException(status_code=404, detail="Not found")
     allowed_vehicles = await _resolve_scope(user, "vehicle")
@@ -1794,12 +1808,12 @@ async def get_vehicle(vid: str, user: dict = Depends(get_current_user)):
     return v
 
 @api.patch("/vehicles/{vid}")
-async def update_vehicle(vid: str, patch: dict, user: dict = Depends(get_current_user)):
+async def update_vehicle(vid: str, patch: dict, user: dict = Depends(require_module("fleet"))):
     await update_row("vehicles", vid, user["workspace_id"], patch, VEHICLE_COLS)
     return await fetch_one("select * from vehicles where id = :id and workspace_id = :ws", id=vid, ws=user["workspace_id"])
 
 @api.delete("/vehicles/{vid}")
-async def delete_vehicle(vid: str, user: dict = Depends(get_current_user)):
+async def delete_vehicle(vid: str, user: dict = Depends(require_module("fleet"))):
     await execute("delete from vehicles where id = :id and workspace_id = :ws", id=vid, ws=user["workspace_id"])
     return {"ok": True}
 
@@ -1808,13 +1822,13 @@ TEMPLATE_COLS = {"name", "description", "sections", "type", "frequency", "assign
 
 # --- Templates ---
 @api.get("/templates")
-async def list_templates(user: dict = Depends(get_current_user)):
+async def list_templates(user: dict = Depends(require_module("templates"))):
     # Only the current version of each template family — superseded versions stay queryable by id
     # (e.g. for historical reports) but drop out of the assignment/picker list.
     return await fetch_all("select * from templates where workspace_id = :ws and active = true", ws=user["workspace_id"])
 
 @api.post("/templates")
-async def create_template(t: TemplateIn, user: dict = Depends(get_current_user)):
+async def create_template(t: TemplateIn, user: dict = Depends(require_module("templates"))):
     tid = str(uuid.uuid4())
     sections = [s.model_dump() for s in t.sections]
     await execute(
@@ -1832,7 +1846,7 @@ async def create_template(t: TemplateIn, user: dict = Depends(get_current_user))
     return doc
 
 @api.post("/templates/{tid}/duplicate")
-async def duplicate_template(tid: str, user: dict = Depends(get_current_user)):
+async def duplicate_template(tid: str, user: dict = Depends(require_module("templates"))):
     src = await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
     if not src: raise HTTPException(status_code=404, detail="Not found")
     new_id = str(uuid.uuid4())
@@ -1852,13 +1866,13 @@ async def duplicate_template(tid: str, user: dict = Depends(get_current_user)):
     return doc
 
 @api.get("/templates/{tid}")
-async def get_template(tid: str, user: dict = Depends(get_current_user)):
+async def get_template(tid: str, user: dict = Depends(require_module("templates"))):
     t = await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
     if not t: raise HTTPException(status_code=404, detail="Not found")
     return t
 
 @api.patch("/templates/{tid}")
-async def update_template(tid: str, patch: dict, user: dict = Depends(get_current_user)):
+async def update_template(tid: str, patch: dict, user: dict = Depends(require_module("templates"))):
     ws = user["workspace_id"]
     current = await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=ws)
     if not current: raise HTTPException(status_code=404, detail="Not found")
@@ -1892,7 +1906,7 @@ async def update_template(tid: str, patch: dict, user: dict = Depends(get_curren
     return await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=ws)
 
 @api.delete("/templates/{tid}")
-async def delete_template(tid: str, user: dict = Depends(get_current_user)):
+async def delete_template(tid: str, user: dict = Depends(require_module("templates"))):
     doc = await fetch_one("select name from templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
     await execute("delete from templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
     if doc:
@@ -1901,7 +1915,7 @@ async def delete_template(tid: str, user: dict = Depends(get_current_user)):
 
 # --- Inspections ---
 @api.get("/inspections")
-async def list_inspections(vehicle_id: Optional[str] = None, asset_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_inspections(vehicle_id: Optional[str] = None, asset_id: Optional[str] = None, user: dict = Depends(require_module("vehicle_checklist"))):
     ws = user["workspace_id"]
     if vehicle_id:
         rows = await fetch_all(
@@ -1955,7 +1969,7 @@ async def _reverse_geocode(lat: float, lon: float) -> Optional[str]:
     return None
 
 @api.post("/inspections")
-async def create_inspection(i: InspectionIn, user: dict = Depends(get_current_user)):
+async def create_inspection(i: InspectionIn, user: dict = Depends(require_module("vehicle_checklist"))):
     if bool(i.vehicle_id) == bool(i.asset_id):
         raise HTTPException(status_code=400, detail="Provide exactly one of vehicle_id or asset_id")
     ws = user["workspace_id"]
@@ -2047,7 +2061,7 @@ async def create_inspection(i: InspectionIn, user: dict = Depends(get_current_us
     return await fetch_one("select * from inspections where id = :id", id=iid)
 
 @api.get("/inspections/{iid}")
-async def get_inspection(iid: str, user: dict = Depends(get_current_user)):
+async def get_inspection(iid: str, user: dict = Depends(require_module("vehicle_checklist"))):
     x = await fetch_one("select * from inspections where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
     if not x: raise HTTPException(status_code=404, detail="Not found")
     if user.get("role") == "driver" and x.get("inspector_id") != user["id"]:
@@ -2085,7 +2099,7 @@ async def _notify_overdue_inspection(user: dict, vehicle: Optional[dict], ws_nam
         logger.error(f"overdue escalation email failed: {e}")
 
 @api.post("/escalations")
-async def create_escalation(req: EscalationIn, user: dict = Depends(get_current_user)):
+async def create_escalation(req: EscalationIn, user: dict = Depends(require_module("vehicle_checklist"))):
     if user.get("role") != "driver" or not user.get("driver_id"):
         raise HTTPException(status_code=400, detail="Not a driver account")
     ws = user["workspace_id"]
@@ -2116,7 +2130,7 @@ async def create_escalation(req: EscalationIn, user: dict = Depends(get_current_
     return {"flagged": True, "created_at": row["created_at"], "reason": row["reason"], "date": today}
 
 @api.get("/escalations/today")
-async def escalation_today(user: dict = Depends(get_current_user)):
+async def escalation_today(user: dict = Depends(require_module("vehicle_checklist"))):
     if user.get("role") != "driver":
         raise HTTPException(status_code=400, detail="Not a driver account")
     row = await fetch_one(
@@ -2133,7 +2147,7 @@ MAINTENANCE_COLS = {"status", "actual_cost", "parts_cost", "labor_cost", "downti
 
 # --- Maintenance jobs ---
 @api.get("/maintenance")
-async def list_maintenance(user: dict = Depends(get_current_user)):
+async def list_maintenance(user: dict = Depends(require_module("maintenance"))):
     ws = user["workspace_id"]
     if user.get("role") == "mechanic":
         # assigned_to is a text column, but user["id"] decodes from Postgres as a uuid.UUID object
@@ -2213,7 +2227,7 @@ async def create_maintenance(m: MaintenanceIn, user: dict = Depends(require_modu
     return doc
 
 @api.get("/maintenance/{mid}")
-async def get_maintenance(mid: str, user: dict = Depends(get_current_user)):
+async def get_maintenance(mid: str, user: dict = Depends(require_module("maintenance"))):
     m = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not m: raise HTTPException(status_code=404, detail="Not found")
     # str() on the right-hand side: assigned_to comes back as text, user["id"] as a uuid.UUID object
@@ -2807,7 +2821,7 @@ async def _notify(ws: str, roles: tuple, ntype: str, message: str, maintenance_i
         )
 
 @api.get("/maintenance/{mid}/quotes")
-async def list_quotes(mid: str, user: dict = Depends(get_current_user)):
+async def list_quotes(mid: str, user: dict = Depends(require_any_module("maintenance", "quotes"))):
     if user.get("role") == "mechanic":
         job = await fetch_one("select assigned_to from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
         if not job or job.get("assigned_to") != str(user["id"]):
@@ -2947,7 +2961,7 @@ async def decide_quote(qid: str, body: QuoteDecision, user: dict = Depends(get_c
 
 # --- Parts requisitions (Technician -> Workshop Manager; shortfall escalates into the quote chain above) ---
 @api.get("/maintenance/{mid}/parts-requisitions")
-async def list_requisitions_for_job(mid: str, user: dict = Depends(get_current_user)):
+async def list_requisitions_for_job(mid: str, user: dict = Depends(require_module("maintenance"))):
     if user.get("role") == "mechanic":
         job = await fetch_one("select assigned_to from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
         # str() -- assigned_to is text, user["id"] decodes as uuid.UUID; see the identical fix on the
@@ -3076,7 +3090,7 @@ async def decide_requisition(rid: str, body: PartRequisitionDecision, user: dict
 
 # --- Purchase orders ---
 @api.get("/purchase-orders")
-async def list_purchase_orders(user: dict = Depends(get_current_user)):
+async def list_purchase_orders(user: dict = Depends(require_module("purchase_orders"))):
     # supplier_name resolves the linked suppliers row (Finance-assigned) and falls back to the legacy
     # free-text `supplier` column for POs from before suppliers existed or created manually.
     select = "select po.*, coalesce(s.name, po.supplier) as supplier_name from purchase_orders po left join suppliers s on s.id = po.supplier_id"
@@ -3188,7 +3202,7 @@ async def create_supplier(body: SupplierIn, user: dict = Depends(require_role(*F
 
 # --- Workshop (mobile: role-scoped queue + per-vehicle cost rollup) ---
 @api.get("/workshop/queue")
-async def workshop_queue(user: dict = Depends(get_current_user)):
+async def workshop_queue(user: dict = Depends(require_module("maintenance"))):
     """Cross-entity 'what's waiting on me' for the mobile Workshop app -- role-scoped the same way
     the individual requisition/quote/PO endpoints already gate writes, just read-only and merged into
     one list. Mirrors the FleetHub-Workshop reference design 1:1, reading our real tables instead of
@@ -3282,7 +3296,7 @@ async def workshop_queue(user: dict = Depends(get_current_user)):
     return {"count": len(items), "items": items, "role": role}
 
 @api.get("/workshop/cost-rollup")
-async def workshop_cost_rollup(user: dict = Depends(get_current_user)):
+async def workshop_cost_rollup(user: dict = Depends(require_module("maintenance"))):
     """Per-vehicle parts spend: stock-deducted cost already attributed to jobs (maintenance.parts_cost)
     plus paid purchase orders, joined in SQL (not the N+1 Python-loop the reference prototype used)."""
     ws = user["workspace_id"]
@@ -3634,7 +3648,7 @@ def _downtime_rate(vehicle: dict, ws_default: float) -> float:
     return vehicle.get("downtime_cost_per_hour") or ws_default or 0
 
 @api.get("/analytics/kpi")
-async def analytics_kpi(user: dict = Depends(get_current_user)):
+async def analytics_kpi(user: dict = Depends(require_any_module("dashboard", "reports"))):
     ws = user["workspace_id"]
     vehicles = await fetch_all("select * from vehicles where workspace_id = :ws", ws=ws)
     maint = await fetch_all("select * from maintenance where workspace_id = :ws", ws=ws)
@@ -3747,7 +3761,7 @@ async def analytics_kpi(user: dict = Depends(get_current_user)):
     }
 
 @api.get("/analytics/cost-trend")
-async def cost_trend(user: dict = Depends(get_current_user)):
+async def cost_trend(user: dict = Depends(require_any_module("dashboard", "reports"))):
     # NOTE: was missing a workspace filter entirely in the Mongo version (cross-tenant leak) — fixed here.
     maint = await fetch_all(
         "select * from maintenance where workspace_id = :ws and status = 'completed'", ws=user["workspace_id"],
@@ -3765,7 +3779,7 @@ async def cost_trend(user: dict = Depends(get_current_user)):
     return sorted(buckets.values(), key=lambda x: x["month"])
 
 @api.get("/analytics/cost-by-category")
-async def cost_by_category(user: dict = Depends(get_current_user)):
+async def cost_by_category(user: dict = Depends(require_any_module("dashboard", "reports"))):
     maint = await fetch_all(
         "select * from maintenance where workspace_id = :ws and status = 'completed'", ws=user["workspace_id"],
     )
@@ -3817,7 +3831,7 @@ async def _budget_summary(ws: str, year: int, allowed_vehicles=None, allowed_ass
     return rows
 
 @api.get("/budgets/summary")
-async def budgets_summary(year: int = None, user: dict = Depends(get_current_user)):
+async def budgets_summary(year: int = None, user: dict = Depends(require_module("reports"))):
     year = year or datetime.now(timezone.utc).year
     allowed_vehicles, allowed_assets = await _resolve_full_scope(user)
     rows = await _budget_summary(user["workspace_id"], year, allowed_vehicles, allowed_assets)
@@ -3858,7 +3872,7 @@ async def set_budgets(rows: List[dict], user: dict = Depends(require_module("rep
     return await _budget_summary(user["workspace_id"], rows[0]["year"] if rows else datetime.now(timezone.utc).year)
 
 @api.get("/analytics/vehicle-cost")
-async def vehicle_cost(user: dict = Depends(get_current_user)):
+async def vehicle_cost(user: dict = Depends(require_any_module("dashboard", "reports"))):
     vehicles = await fetch_all("select * from vehicles where workspace_id = :ws", ws=user["workspace_id"])
     maint = await fetch_all(
         "select * from maintenance where workspace_id = :ws and status = 'completed'", ws=user["workspace_id"],
@@ -4490,18 +4504,18 @@ async def _run_board_email_due_check():
 PART_COLS = {"name", "sku", "category", "stock", "reorder_point", "unit_cost", "supplier", "supplier_email"}
 
 @api.get("/parts")
-async def list_parts(user: dict = Depends(get_current_user)):
+async def list_parts(user: dict = Depends(require_module("parts"))):
     return await fetch_all("select * from parts where workspace_id = :ws order by name", ws=user["workspace_id"])
 
 @api.get("/parts/alerts")
-async def part_alerts(user: dict = Depends(get_current_user)):
+async def part_alerts(user: dict = Depends(require_module("parts"))):
     return await fetch_all(
         "select * from parts where workspace_id = :ws and coalesce(stock, 0) <= coalesce(reorder_point, 0)",
         ws=user["workspace_id"],
     )
 
 @api.post("/parts")
-async def create_part(p: PartIn, user: dict = Depends(get_current_user)):
+async def create_part(p: PartIn, user: dict = Depends(require_module("parts"))):
     pid = str(uuid.uuid4())
     await execute(
         "insert into parts (id, workspace_id, name, sku, category, stock, reorder_point, unit_cost, "
@@ -4512,7 +4526,7 @@ async def create_part(p: PartIn, user: dict = Depends(get_current_user)):
     return await fetch_one("select * from parts where id = :id", id=pid)
 
 @api.patch("/parts/{pid}")
-async def update_part(pid: str, patch: dict, user: dict = Depends(get_current_user)):
+async def update_part(pid: str, patch: dict, user: dict = Depends(require_module("parts"))):
     await update_row("parts", pid, user["workspace_id"], patch, PART_COLS)
     return await fetch_one("select * from parts where id = :id and workspace_id = :ws", id=pid, ws=user["workspace_id"])
 
@@ -4556,7 +4570,7 @@ async def _maybe_reorder_email(part: dict, workspace_id: str) -> Optional[str]:
     return email_id
 
 @api.post("/parts/{pid}/adjust")
-async def adjust_part(pid: str, adj: PartAdjust, user: dict = Depends(get_current_user)):
+async def adjust_part(pid: str, adj: PartAdjust, user: dict = Depends(require_module("parts"))):
     part = await fetch_one("select * from parts where id = :id and workspace_id = :ws", id=pid, ws=user["workspace_id"])
     if not part: raise HTTPException(status_code=404, detail="Not found")
     was_above = (part.get("stock", 0) or 0) > (part.get("reorder_point", 0) or 0)
@@ -4577,7 +4591,7 @@ async def adjust_part(pid: str, adj: PartAdjust, user: dict = Depends(get_curren
     return updated
 
 @api.delete("/parts/{pid}")
-async def delete_part(pid: str, user: dict = Depends(get_current_user)):
+async def delete_part(pid: str, user: dict = Depends(require_module("parts"))):
     await execute("delete from parts where id = :id and workspace_id = :ws", id=pid, ws=user["workspace_id"])
     return {"ok": True}
 
@@ -4715,11 +4729,11 @@ DRIVER_GROUP_COLS = {"name", "color", "description", "department", "region", "co
 
 # --- Driver groups ---
 @api.get("/driver-groups")
-async def list_driver_groups(user: dict = Depends(get_current_user)):
+async def list_driver_groups(user: dict = Depends(require_module("drivers"))):
     return await fetch_all("select * from driver_groups where workspace_id = :ws order by name", ws=user["workspace_id"])
 
 @api.post("/driver-groups")
-async def create_driver_group(g: DriverGroupIn, user: dict = Depends(get_current_user)):
+async def create_driver_group(g: DriverGroupIn, user: dict = Depends(require_module("drivers"))):
     gid = str(uuid.uuid4())
     await execute(
         "insert into driver_groups (id, workspace_id, name, color, description, department, region, cost_centre) "
@@ -4731,7 +4745,7 @@ async def create_driver_group(g: DriverGroupIn, user: dict = Depends(get_current
     return doc
 
 @api.patch("/driver-groups/{gid}")
-async def update_driver_group(gid: str, patch: dict, user: dict = Depends(get_current_user)):
+async def update_driver_group(gid: str, patch: dict, user: dict = Depends(require_module("drivers"))):
     before = await fetch_one("select * from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not before: raise HTTPException(status_code=404, detail="Not found")
     await update_row("driver_groups", gid, user["workspace_id"], patch, DRIVER_GROUP_COLS)
@@ -4743,7 +4757,7 @@ async def update_driver_group(gid: str, patch: dict, user: dict = Depends(get_cu
     return doc
 
 @api.delete("/driver-groups/{gid}")
-async def delete_driver_group(gid: str, user: dict = Depends(get_current_user)):
+async def delete_driver_group(gid: str, user: dict = Depends(require_module("drivers"))):
     g = await fetch_one("select * from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     await execute("delete from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if g:
@@ -4751,7 +4765,7 @@ async def delete_driver_group(gid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 @api.post("/driver-groups/{gid}/assign")
-async def assign_driver_group(gid: str, body: GroupAssign, user: dict = Depends(get_current_user)):
+async def assign_driver_group(gid: str, body: GroupAssign, user: dict = Depends(require_module("drivers"))):
     g = await fetch_one("select * from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not g: raise HTTPException(status_code=404, detail="Not found")
     if body.add_ids:
@@ -4831,7 +4845,7 @@ async def _ensure_driver_account(driver_id: str, workspace_id: str) -> None:
     )
 
 @api.get("/drivers")
-async def list_drivers(search: Optional[str] = None, limit: Optional[int] = None, offset: int = 0, user: dict = Depends(get_current_user)):
+async def list_drivers(search: Optional[str] = None, limit: Optional[int] = None, offset: int = 0, user: dict = Depends(require_module("drivers"))):
     if search:
         q = "select * from drivers where workspace_id = :ws and name ilike :q order by name"
         params = {"ws": user["workspace_id"], "q": f"%{search}%"}
@@ -4845,7 +4859,7 @@ async def list_drivers(search: Optional[str] = None, limit: Optional[int] = None
     return await fetch_all(q, **params)
 
 @api.post("/drivers")
-async def create_driver(d: dict, user: dict = Depends(get_current_user)):
+async def create_driver(d: dict, user: dict = Depends(require_module("drivers"))):
     # Coerce empty-string email to None before Pydantic validation
     if isinstance(d.get("email"), str) and not d["email"].strip():
         d["email"] = None
@@ -4885,13 +4899,13 @@ async def create_driver(d: dict, user: dict = Depends(get_current_user)):
     return doc
 
 @api.get("/drivers/{did}")
-async def get_driver(did: str, user: dict = Depends(get_current_user)):
+async def get_driver(did: str, user: dict = Depends(require_module("drivers"))):
     d = await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
     if not d: raise HTTPException(status_code=404, detail="Not found")
     return d
 
 @api.patch("/drivers/{did}")
-async def update_driver(did: str, patch: dict, user: dict = Depends(get_current_user)):
+async def update_driver(did: str, patch: dict, user: dict = Depends(require_module("drivers"))):
     current = await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
     if not current: raise HTTPException(status_code=404, detail="Not found")
     if "assigned_vehicle_id" in patch and user.get("role") not in (
@@ -4911,12 +4925,12 @@ async def update_driver(did: str, patch: dict, user: dict = Depends(get_current_
     return await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
 
 @api.delete("/drivers/{did}")
-async def delete_driver(did: str, user: dict = Depends(get_current_user)):
+async def delete_driver(did: str, user: dict = Depends(require_module("drivers"))):
     await execute("delete from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
     return {"ok": True}
 
 @api.get("/drivers/{did}/history")
-async def driver_history(did: str, user: dict = Depends(get_current_user)):
+async def driver_history(did: str, user: dict = Depends(require_module("drivers"))):
     d = await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
     if not d: raise HTTPException(status_code=404, detail="Not found")
     if not d.get("assigned_vehicle_id"):
@@ -5116,7 +5130,7 @@ def _with_delta(rows, prior_items, vmap, gmap, group_by, value_fn, dmap=None):
 
 # --- Investigation panel ---
 @api.get("/investigate/{kpi_key}")
-async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Optional[str] = None, user: dict = Depends(require_any_module("dashboard", "reports"))):
     vehicles = await fetch_all("select * from vehicles where workspace_id = :ws", ws=user["workspace_id"])
     maint_all = await fetch_all("select * from maintenance where workspace_id = :ws", ws=user["workspace_id"])
     fuel_logs_all = await fetch_all("select * from fuel_logs where workspace_id = :ws", ws=user["workspace_id"])
@@ -5424,7 +5438,7 @@ async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Opti
 
 # --- Insurance / Public share link ---
 @api.post("/vehicles/{vid}/share")
-async def create_share_link(vid: str, user: dict = Depends(get_current_user)):
+async def create_share_link(vid: str, user: dict = Depends(require_module("fleet"))):
     v = await fetch_one("select * from vehicles where id = :id and workspace_id = :ws", id=vid, ws=user["workspace_id"])
     if not v: raise HTTPException(status_code=404, detail="Not found")
     if not v.get("share_token"):
@@ -5439,7 +5453,7 @@ async def create_share_link(vid: str, user: dict = Depends(get_current_user)):
     return {"token": token, "url": f"/public/vehicle/{token}"}
 
 @api.delete("/vehicles/{vid}/share")
-async def revoke_share_link(vid: str, user: dict = Depends(get_current_user)):
+async def revoke_share_link(vid: str, user: dict = Depends(require_module("fleet"))):
     await execute(
         "update vehicles set share_token = null, share_created_at = null where id = :id and workspace_id = :ws",
         id=vid, ws=user["workspace_id"],
@@ -5481,7 +5495,7 @@ async def public_vehicle(token: str):
 
 # --- Unified alerts + Timeline + Incidents ---
 @api.get("/alerts")
-async def unified_alerts(user: dict = Depends(get_current_user)):
+async def unified_alerts(user: dict = Depends(require_any_module("dashboard", "reports"))):
     ws_row = await fetch_one("select license_warning_days from workspaces where id = :id", id=user["workspace_id"])
     license_warning_days = (ws_row or {}).get("license_warning_days") or 30
     parts = await fetch_all("select * from parts where workspace_id = :ws", ws=user["workspace_id"])
@@ -5494,13 +5508,17 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
             if days <= license_warning_days:
                 expiring.append({"driver_id": d["id"], "name": d["name"], "days": days, "expiry": str(d["license_expiry"])})
         except Exception: pass
-    maint = await fetch_all("select * from maintenance where workspace_id = :ws", ws=user["workspace_id"])
+    # Scope every vehicle/asset-linked list to what this user may see, as /analytics/kpi does --
+    # otherwise a user restricted to part of the fleet saw fleet-wide counts here, and those counts
+    # feed dashboard tiles (Emergency repairs, Open incidents...) and the global alert bar.
+    allowed_vehicles, allowed_assets = await _resolve_full_scope(user)
+    maint = _scope_filter(await fetch_all("select * from maintenance where workspace_id = :ws", ws=user["workspace_id"]), allowed_vehicles, allowed_assets)
     pending = [m for m in maint if m.get("status") in ("pending", "in_progress")]
     critical = [m for m in maint if m.get("priority") == "critical" and m.get("status") != "completed"]
     incidents = await fetch_all(
         "select * from incidents where workspace_id = :ws order by occurred_at desc limit 200", ws=user["workspace_id"],
     )
-    open_incidents = [i for i in incidents if i.get("severity") in ("moderate", "severe")]
+    open_incidents = _scope_filter([i for i in incidents if i.get("severity") in ("moderate", "severe")], allowed_vehicles, None)
     # anomalies (reuse quick logic)
     completed = [m for m in maint if m.get("status") == "completed"]
     by_v = {}
@@ -5519,13 +5537,18 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
         std = (sum((x - mean) ** 2 for x in hist) / len(hist)) ** 0.5
         if std > 0 and latest > mean + 1.5 * std: anomaly_vehicles.append({"vehicle_id": vid, "latest": latest, "mean": mean})
     anomalies = len(anomaly_vehicles)
-    overdue_checklists = await _compute_overdue_checklists(user["workspace_id"])
+    overdue_checklists = [
+        oc for oc in await _compute_overdue_checklists(user["workspace_id"])
+        if (allowed_vehicles is None or oc["target_type"] != "vehicle" or str(oc["target_id"]) in allowed_vehicles)
+        and (allowed_assets is None or oc["target_type"] == "vehicle" or str(oc["target_id"]) in allowed_assets)
+    ]
     recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
     recent_insp = await fetch_all(
-        "select id, vehicle_id, inspector_name, fail_count, created_at from inspections "
+        "select id, vehicle_id, asset_id, inspector_name, fail_count, created_at from inspections "
         "where workspace_id = :ws and fail_count > 0 and created_at >= :cutoff order by created_at desc",
         ws=user["workspace_id"], cutoff=recent_cutoff,
     )
+    recent_insp = _scope_filter(recent_insp, allowed_vehicles, allowed_assets)
     role = user.get("role")
     actionable_stage = "pending_ops" if role in OPS_ROLES else "pending_finance" if role in FINANCE_ROLES else None
     pending_approvals = []
@@ -5533,10 +5556,11 @@ async def unified_alerts(user: dict = Depends(get_current_user)):
         pending_approvals = await fetch_all(
             "select id from quotes where workspace_id = :ws and stage = :stage", ws=user["workspace_id"], stage=actionable_stage,
         )
-    open_defect_reports_rows = await fetch_all(
-        "select * from defects where workspace_id = :ws and status != 'resolved' order by created_at desc limit 10",
+    # No row limit: this list's length is the open-defects count, which a `limit 10` capped at 10.
+    open_defect_reports_rows = _scope_filter(await fetch_all(
+        "select * from defects where workspace_id = :ws and status != 'resolved' order by created_at desc",
         ws=user["workspace_id"],
-    )
+    ), allowed_vehicles, None)
     budget_rows = await _budget_summary(user["workspace_id"], datetime.now(timezone.utc).year)
     budget_overruns = [r for r in budget_rows if r["status"] == "over_budget"]
     approval_jobs = []
@@ -5678,13 +5702,13 @@ async def _vehicle_events(vid: str, ws: str):
     return events
 
 @api.get("/vehicles/{vid}/timeline")
-async def vehicle_timeline(vid: str, user: dict = Depends(get_current_user)):
+async def vehicle_timeline(vid: str, user: dict = Depends(require_module("fleet"))):
     return await _vehicle_events(vid, user["workspace_id"])
 
 _SEVERITY_RANK = {"critical": 2, "warning": 1}
 
 @api.get("/vehicles/{vid}/open-defects")
-async def vehicle_open_defects(vid: str, user: dict = Depends(get_current_user)):
+async def vehicle_open_defects(vid: str, user: dict = Depends(require_any_module("fleet", "defects", "vehicle_checklist"))):
     """Open/acknowledged defects for this vehicle, collapsed to the worst severity per component_node
     -- what the 3D inspection screen pre-colors the model with on load, and (later) what the web
     defect-visualization view will read too. Defects with no component_node (e.g. from the standalone
@@ -5707,7 +5731,7 @@ async def vehicle_open_defects(vid: str, user: dict = Depends(get_current_user))
     return {"by_node": by_node, "unmapped": unmapped}
 
 @api.get("/vehicles/{vid}/investigation")
-async def vehicle_investigation(vid: str, period: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def vehicle_investigation(vid: str, period: Optional[str] = None, user: dict = Depends(require_any_module("dashboard", "reports", "fleet"))):
     """Level 3 aggregation for the drill-down investigation panel: profile, driver, cost summary
     (with period-over-period delta), monthly trend, fuel/maintenance lists, defect history, a
     utilization proxy, and the combined event timeline — everything one vehicle-deep-dive needs."""
@@ -5809,7 +5833,7 @@ INCIDENT_COLS = {"driver_id", "kind", "severity", "occurred_at", "location", "de
                   "reported_cost", "resolution_notes", "resolved", "updated_at", "resolved_at"}
 
 @api.get("/incidents")
-async def list_incidents(vehicle_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_incidents(vehicle_id: Optional[str] = None, user: dict = Depends(require_module("incidents"))):
     if vehicle_id:
         incs = await fetch_all(
             "select * from incidents where workspace_id = :ws and vehicle_id = :vid order by occurred_at desc",
@@ -5840,7 +5864,7 @@ async def list_incidents(vehicle_id: Optional[str] = None, user: dict = Depends(
     return _scope_filter(incs, allowed_vehicles, None)
 
 @api.get("/incidents/{iid}")
-async def get_incident(iid: str, user: dict = Depends(get_current_user)):
+async def get_incident(iid: str, user: dict = Depends(require_module("incidents"))):
     i = await fetch_one("select * from incidents where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
     if not i: raise HTTPException(status_code=404, detail="Not found")
     allowed_vehicles, _ = await _resolve_full_scope(user)
@@ -5854,7 +5878,7 @@ async def get_incident(iid: str, user: dict = Depends(get_current_user)):
     return i
 
 @api.post("/incidents")
-async def create_incident(inc: IncidentIn, user: dict = Depends(get_current_user)):
+async def create_incident(inc: IncidentIn, user: dict = Depends(require_module("incidents"))):
     iid = str(uuid.uuid4())
     fields = inc.model_dump(exclude={"photos"})
     fields["occurred_at"] = _parse_datetime(fields["occurred_at"])
@@ -5871,7 +5895,7 @@ async def create_incident(inc: IncidentIn, user: dict = Depends(get_current_user
     return doc
 
 @api.patch("/incidents/{iid}")
-async def update_incident(iid: str, patch: IncidentUpdate, user: dict = Depends(get_current_user)):
+async def update_incident(iid: str, patch: IncidentUpdate, user: dict = Depends(require_module("incidents"))):
     data = {k: v for k, v in patch.model_dump(exclude_unset=True).items() if v is not None}
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -5887,12 +5911,12 @@ async def update_incident(iid: str, patch: IncidentUpdate, user: dict = Depends(
     return await fetch_one("select * from incidents where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
 
 @api.delete("/incidents/{iid}")
-async def delete_incident(iid: str, user: dict = Depends(get_current_user)):
+async def delete_incident(iid: str, user: dict = Depends(require_module("incidents"))):
     await execute("delete from incidents where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
     return {"ok": True}
 
 @api.post("/incidents/{iid}/share")
-async def create_incident_share_link(iid: str, user: dict = Depends(get_current_user)):
+async def create_incident_share_link(iid: str, user: dict = Depends(require_module("incidents"))):
     inc = await fetch_one("select * from incidents where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
     if not inc: raise HTTPException(status_code=404, detail="Not found")
     if not inc.get("share_token"):
@@ -5907,7 +5931,7 @@ async def create_incident_share_link(iid: str, user: dict = Depends(get_current_
     return {"token": token, "url": f"/public/incident/{token}"}
 
 @api.delete("/incidents/{iid}/share")
-async def revoke_incident_share_link(iid: str, user: dict = Depends(get_current_user)):
+async def revoke_incident_share_link(iid: str, user: dict = Depends(require_module("incidents"))):
     await execute(
         "update incidents set share_token = null, share_created_at = null where id = :id and workspace_id = :ws",
         id=iid, ws=user["workspace_id"],
@@ -5934,7 +5958,7 @@ async def public_incident_pdf(token: str):
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://fleetintel.vercel.app")
 
 @api.post("/incidents/{iid}/email-insurance")
-async def email_incident_to_insurance(iid: str, req: EmailInsuranceReq, user: dict = Depends(get_current_user)):
+async def email_incident_to_insurance(iid: str, req: EmailInsuranceReq, user: dict = Depends(require_module("incidents"))):
     inc = await fetch_one("select * from incidents where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
     if not inc: raise HTTPException(status_code=404, detail="Not found")
     if not inc.get("share_token"):
@@ -5993,7 +6017,7 @@ async def _enrich_defects(ws: str, defs: list) -> list:
     return defs
 
 @api.get("/defects")
-async def list_defects(user: dict = Depends(get_current_user)):
+async def list_defects(user: dict = Depends(require_module("defects"))):
     defs = await fetch_all("select * from defects where workspace_id = :ws order by created_at desc", ws=user["workspace_id"])
     allowed_vehicles, allowed_assets = await _resolve_full_scope(user)
     defs = _scope_filter(defs, allowed_vehicles, allowed_assets)
@@ -6081,7 +6105,7 @@ async def convert_defect_to_maintenance(did: str, user: dict = Depends(require_m
 
 # --- Fuel logs (real transactions, replacing the old odometer-based estimate) ---
 @api.get("/fuel-logs")
-async def list_fuel_logs(vehicle_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_fuel_logs(vehicle_id: Optional[str] = None, user: dict = Depends(require_module("fleet"))):
     if vehicle_id:
         logs = await fetch_all(
             "select * from fuel_logs where workspace_id = :ws and vehicle_id = :vid order by occurred_at desc",
@@ -6102,7 +6126,7 @@ async def list_fuel_logs(vehicle_id: Optional[str] = None, user: dict = Depends(
     return _scope_filter(logs, allowed_vehicles, None)
 
 @api.get("/fuel-logs/{lid}")
-async def get_fuel_log(lid: str, user: dict = Depends(get_current_user)):
+async def get_fuel_log(lid: str, user: dict = Depends(require_module("fleet"))):
     l = await fetch_one("select * from fuel_logs where id = :id and workspace_id = :ws", id=lid, ws=user["workspace_id"])
     if not l: raise HTTPException(status_code=404, detail="Not found")
     allowed_vehicles, _ = await _resolve_full_scope(user)
@@ -6116,7 +6140,7 @@ async def get_fuel_log(lid: str, user: dict = Depends(get_current_user)):
     return l
 
 @api.post("/fuel-logs")
-async def create_fuel_log(f: FuelLogIn, user: dict = Depends(get_current_user)):
+async def create_fuel_log(f: FuelLogIn, user: dict = Depends(require_module("fleet"))):
     lid = str(uuid.uuid4())
     fields = f.model_dump()
     fields["occurred_at"] = _parse_datetime(fields["occurred_at"])
@@ -6131,13 +6155,13 @@ async def create_fuel_log(f: FuelLogIn, user: dict = Depends(get_current_user)):
     return doc
 
 @api.delete("/fuel-logs/{lid}")
-async def delete_fuel_log(lid: str, user: dict = Depends(get_current_user)):
+async def delete_fuel_log(lid: str, user: dict = Depends(require_module("fleet"))):
     await execute("delete from fuel_logs where id = :id and workspace_id = :ws", id=lid, ws=user["workspace_id"])
     return {"ok": True}
 
 # --- Trip logs (real distance-travelled records, for the Trips per Vehicle / Kilometres tiles) ---
 @api.get("/trip-logs")
-async def list_trip_logs(vehicle_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_trip_logs(vehicle_id: Optional[str] = None, user: dict = Depends(require_any_module("fleet", "drivers"))):
     if vehicle_id:
         logs = await fetch_all(
             "select * from trip_logs where workspace_id = :ws and vehicle_id = :vid order by occurred_at desc",
@@ -6158,7 +6182,7 @@ async def list_trip_logs(vehicle_id: Optional[str] = None, user: dict = Depends(
     return _scope_filter(logs, allowed_vehicles, None)
 
 @api.post("/trip-logs")
-async def create_trip_log(t: TripLogIn, user: dict = Depends(get_current_user)):
+async def create_trip_log(t: TripLogIn, user: dict = Depends(require_module("fleet"))):
     tid = str(uuid.uuid4())
     fields = t.model_dump()
     fields["occurred_at"] = _parse_datetime(fields["occurred_at"])
@@ -6172,12 +6196,12 @@ async def create_trip_log(t: TripLogIn, user: dict = Depends(get_current_user)):
     return doc
 
 @api.delete("/trip-logs/{tid}")
-async def delete_trip_log(tid: str, user: dict = Depends(get_current_user)):
+async def delete_trip_log(tid: str, user: dict = Depends(require_module("fleet"))):
     await execute("delete from trip_logs where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
     return {"ok": True}
 
 @api.get("/analytics/fleet-health")
-async def fleet_health(user: dict = Depends(get_current_user)):
+async def fleet_health(user: dict = Depends(require_any_module("dashboard", "reports", "fleet"))):
     """Returns per-vehicle health score (0-100) and contributing factors."""
     results = await _compute_fleet_health(user["workspace_id"])
     allowed_vehicles, _ = await _resolve_full_scope(user)
@@ -6186,7 +6210,7 @@ async def fleet_health(user: dict = Depends(get_current_user)):
     return results
 
 @api.get("/analytics/vehicle/{vid}/health-trend")
-async def vehicle_health_trend(vid: str, days: int = 30, user: dict = Depends(get_current_user)):
+async def vehicle_health_trend(vid: str, days: int = 30, user: dict = Depends(require_any_module("dashboard", "reports", "fleet"))):
     """Backfilled daily health score for a single vehicle across the last N days."""
     days = max(7, min(days, 180))
     v = await fetch_one("select * from vehicles where id = :id and workspace_id = :ws", id=vid, ws=user["workspace_id"])
@@ -6360,7 +6384,7 @@ def _score_driver(d: dict, maint_list: list, inc_list: list, as_of: datetime, li
     return {"driver_id": did, "name": d.get("name"), "score": score, "status": status, "factors": factors}
 
 @api.get("/analytics/driver-performance")
-async def driver_performance(user: dict = Depends(get_current_user)):
+async def driver_performance(user: dict = Depends(require_any_module("dashboard", "reports", "drivers"))):
     """Returns per-driver performance score (0-100) and contributing factors."""
     return await _compute_driver_performance(user["workspace_id"])
 
@@ -6370,7 +6394,7 @@ def _parse_csv(text: str) -> list:
     return [row for row in reader]
 
 @api.post("/import/vehicles")
-async def import_vehicles(payload: dict, user: dict = Depends(get_current_user)):
+async def import_vehicles(payload: dict, user: dict = Depends(require_module("fleet"))):
     text = payload.get("csv", "")
     if not text.strip(): raise HTTPException(status_code=400, detail="Empty CSV")
     rows = list(csvlib.DictReader(text.splitlines()))
@@ -6405,7 +6429,7 @@ async def import_vehicles(payload: dict, user: dict = Depends(get_current_user))
     return {"created": created, "errors": errors}
 
 @api.post("/import/parts")
-async def import_parts(payload: dict, user: dict = Depends(get_current_user)):
+async def import_parts(payload: dict, user: dict = Depends(require_module("parts"))):
     text = payload.get("csv", "")
     if not text.strip(): raise HTTPException(status_code=400, detail="Empty CSV")
     rows = list(csvlib.DictReader(text.splitlines()))
@@ -6439,7 +6463,7 @@ async def import_parts(payload: dict, user: dict = Depends(get_current_user)):
     return {"created": created, "errors": errors}
 
 @api.post("/import/drivers")
-async def import_drivers(payload: dict, user: dict = Depends(get_current_user)):
+async def import_drivers(payload: dict, user: dict = Depends(require_module("drivers"))):
     if user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Only admins/managers can bulk-invite drivers")
     text = payload.get("csv", "")
@@ -6469,7 +6493,7 @@ async def import_drivers(payload: dict, user: dict = Depends(get_current_user)):
     return {"created": created, "errors": errors}
 
 @api.post("/import/driver-records")
-async def import_driver_records(payload: dict, user: dict = Depends(get_current_user)):
+async def import_driver_records(payload: dict, user: dict = Depends(require_module("drivers"))):
     """Bulk-imports fleet driver records (name/license/etc.) into the `drivers` table — distinct from
     /import/drivers above, which invites team-member *users* (email/role) rather than driver records."""
     text = payload.get("csv", "")
@@ -7213,7 +7237,10 @@ async def get_shift_settings(user: dict = Depends(get_current_user)):
 
 @api.patch("/workspace")
 async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_current_user)):
-    guarded = (req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role, req.shift_start_hour, req.overdue_alert_email, req.default_downtime_cost_per_hour, req.finance_email)
+    # Every field here is workspace-wide. `name` and `license_warning_days` used to be missing from
+    # this list, so any signed-in user (a driver included) could rename the workspace or change when
+    # licence alerts fire; the UI already offered both only to admins and managers.
+    guarded = (req.name, req.license_warning_days, req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role, req.shift_start_hour, req.overdue_alert_email, req.default_downtime_cost_per_hour, req.finance_email)
     if any(v is not None for v in guarded) and user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Only admins/managers can change workspace-wide settings")
     if req.name is not None:
@@ -7305,7 +7332,7 @@ async def revoke_invite(iid: str, user: dict = Depends(get_current_user)):
 OCR_MEDIA_TYPES = {"jpeg", "jpg", "png", "gif", "webp"}
 
 @api.post("/ocr")
-async def ocr_image(req: OCRIn, user: dict = Depends(get_current_user)):
+async def ocr_image(req: OCRIn, user: dict = Depends(require_any_module("fleet", "vehicle_checklist"))):
     if anthropic is None:
         raise HTTPException(status_code=503, detail="OCR dependency not installed")
     key = os.environ.get("ANTHROPIC_API_KEY")
@@ -7351,7 +7378,7 @@ async def ocr_image(req: OCRIn, user: dict = Depends(get_current_user)):
 
 # --- Cost anomaly detection ---
 @api.get("/analytics/anomalies")
-async def anomalies(user: dict = Depends(get_current_user)):
+async def anomalies(user: dict = Depends(require_any_module("dashboard", "reports"))):
     """Detect vehicles whose most recent month's spend is > mean + 1.5*std of their history."""
     vehicles = await fetch_all("select * from vehicles where workspace_id = :ws", ws=user["workspace_id"])
     maint = await fetch_all(
@@ -7389,7 +7416,7 @@ async def anomalies(user: dict = Depends(get_current_user)):
 
 # --- Forecast ---
 @api.get("/analytics/forecast")
-async def forecast(user: dict = Depends(get_current_user)):
+async def forecast(user: dict = Depends(require_any_module("dashboard", "reports"))):
     """Linear-regression forecast of maintenance cost for next 3 months."""
     maint = await fetch_all(
         "select * from maintenance where workspace_id = :ws and status = 'completed'", ws=user["workspace_id"],
@@ -8062,17 +8089,17 @@ def _resolve_columns(report_type: str, requested: list) -> list:
     return [all_cols[k] for k in keys if k in all_cols]
 
 @api.get("/reports/types")
-async def list_report_types(user: dict = Depends(get_current_user)):
+async def list_report_types(user: dict = Depends(require_module("reports"))):
     return [{"key": k, **v} for k, v in REPORT_TYPES.items()]
 
 @api.get("/reports/definitions")
-async def list_report_definitions(user: dict = Depends(get_current_user)):
+async def list_report_definitions(user: dict = Depends(require_module("reports"))):
     return await fetch_all(
         "select * from report_definitions where workspace_id = :ws order by created_at desc", ws=user["workspace_id"],
     )
 
 @api.post("/reports/definitions")
-async def create_report_definition(req: ReportDefinitionIn, user: dict = Depends(get_current_user)):
+async def create_report_definition(req: ReportDefinitionIn, user: dict = Depends(require_module("reports"))):
     if req.report_type not in REPORT_TYPES:
         raise HTTPException(status_code=400, detail="Unknown report type")
     rid = str(uuid.uuid4())
@@ -8086,7 +8113,7 @@ async def create_report_definition(req: ReportDefinitionIn, user: dict = Depends
     return await fetch_one("select * from report_definitions where id = :id", id=rid)
 
 @api.patch("/reports/definitions/{rid}")
-async def update_report_definition(rid: str, req: ReportDefinitionUpdate, user: dict = Depends(get_current_user)):
+async def update_report_definition(rid: str, req: ReportDefinitionUpdate, user: dict = Depends(require_module("reports"))):
     existing = await fetch_one("select * from report_definitions where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
     if not existing: raise HTTPException(status_code=404, detail="Not found")
     patch = req.model_dump(exclude_unset=True)
@@ -8097,12 +8124,12 @@ async def update_report_definition(rid: str, req: ReportDefinitionUpdate, user: 
     return await fetch_one("select * from report_definitions where id = :id", id=rid)
 
 @api.delete("/reports/definitions/{rid}")
-async def delete_report_definition(rid: str, user: dict = Depends(get_current_user)):
+async def delete_report_definition(rid: str, user: dict = Depends(require_module("reports"))):
     await execute("delete from report_definitions where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
     return {"ok": True}
 
 @api.post("/reports/preview")
-async def preview_report(req: ReportPreviewIn, user: dict = Depends(get_current_user)):
+async def preview_report(req: ReportPreviewIn, user: dict = Depends(require_module("reports"))):
     if req.report_type not in REPORT_TYPES:
         raise HTTPException(status_code=400, detail="Unknown report type")
     columns = _resolve_columns(req.report_type, req.columns)
@@ -8357,5 +8384,5 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    from db import engine as _pg_engine
-    await _pg_engine.dispose()
+    from db import close_pool
+    await close_pool()
