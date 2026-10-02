@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 import { toast } from "sonner";
 import { Plus, Trash, PencilSimple, Copy, ClipboardText, MagnifyingGlass, X } from "@phosphor-icons/react";
 
@@ -36,6 +38,8 @@ function vehicleGroupLabel(t, groups) {
 // icons). Mirrors the reference design's slide-over: Details / All Items tabs, footer actions.
 function DetailPanel({ template, users, groups, onClose, onEdit, onDelete, onDuplicate }) {
   const [tab, setTab] = useState("details");
+  const { user } = useAuth();
+  const canCreate = can(user, "templates", "C"), canEdit = can(user, "templates", "E"), canDelete = can(user, "templates", "D");
   const enabledCount = itemCountOf(template);
   const createdByName = users.find(u => u.id === template.created_by)?.name || "—";
   const freq = template.frequency;
@@ -117,15 +121,15 @@ function DetailPanel({ template, users, groups, onClose, onEdit, onDelete, onDup
         </div>
 
         <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border flex-shrink-0">
-          <button onClick={() => { onDelete(); onClose(); }} data-testid="detail-delete" className="flex items-center gap-1.5 px-4 py-2 text-xs uppercase tracking-widest font-semibold border border-destructive text-destructive hover:bg-destructive/10 transition-colors">
+          {canDelete && <button onClick={() => { onDelete(); onClose(); }} data-testid="detail-delete" className="flex items-center gap-1.5 px-4 py-2 text-xs uppercase tracking-widest font-semibold border border-destructive text-destructive hover:bg-destructive/10 transition-colors">
             <Trash size={14} /> Delete
-          </button>
-          <button onClick={() => { onDuplicate(); onClose(); }} data-testid="detail-duplicate" className="flex items-center gap-1.5 px-4 py-2 text-xs uppercase tracking-widest font-semibold border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors">
+          </button>}
+          {canCreate && <button onClick={() => { onDuplicate(); onClose(); }} data-testid="detail-duplicate" className="flex items-center gap-1.5 px-4 py-2 text-xs uppercase tracking-widest font-semibold border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors">
             <Copy size={14} /> Duplicate
-          </button>
-          <button onClick={onEdit} data-testid="detail-edit" className="flex items-center gap-1.5 px-4 py-2 text-xs uppercase tracking-widest font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+          </button>}
+          {canEdit && <button onClick={onEdit} data-testid="detail-edit" className="flex items-center gap-1.5 px-4 py-2 text-xs uppercase tracking-widest font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
             <PencilSimple size={14} /> Edit
-          </button>
+          </button>}
         </div>
       </div>
     </div>
@@ -134,6 +138,7 @@ function DetailPanel({ template, users, groups, onClose, onEdit, onDelete, onDup
 
 export default function Templates() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [templates, setTemplates] = useState([]);
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -153,11 +158,15 @@ export default function Templates() {
     return [...list].sort((a, b) => a.name.localeCompare(b.name));
   }, [templates, search]);
 
+  // A template that inspections were completed against can't be deleted (they keep the version they
+  // used); retire it instead. The server explains which applies.
   const del = async (id) => {
     if (!window.confirm("Delete this template?")) return;
-    await api.delete(`/templates/${id}`);
-    toast.success("Template deleted");
-    load();
+    try {
+      await api.delete(`/templates/${id}`);
+      toast.success("Template deleted");
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't delete the template"); }
   };
 
   const duplicate = async (id) => {
@@ -174,9 +183,9 @@ export default function Templates() {
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="templates-title">Checklist Templates</h1>
           <div className="text-sm text-muted-foreground mt-2">Configure inspection templates for vehicles, assets, and trailers — sent to drivers via the mobile app.</div>
         </div>
-        <Link to="/templates/new" data-testid="new-template-btn" className="flex items-center gap-2 bg-primary px-4 py-2.5 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
+        {can(user, "templates", "C") && <Link to="/templates/new" data-testid="new-template-btn" className="flex items-center gap-2 bg-primary px-4 py-2.5 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
           <Plus size={14} weight="bold" /> Create Template
-        </Link>
+        </Link>}
       </header>
 
       <div className="px-8 pt-6 flex items-center justify-between">
@@ -238,15 +247,15 @@ export default function Templates() {
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="flex gap-1.5 justify-end" onClick={(e) => e.stopPropagation()}>
-                        <Link to={`/templates/${t.id}`} data-testid={`edit-template-${t.id}`} title="Edit" className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
+                        {can(user, "templates", "E") && <Link to={`/templates/${t.id}`} data-testid={`edit-template-${t.id}`} title="Edit" className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
                           <PencilSimple size={14} />
-                        </Link>
-                        <button onClick={() => duplicate(t.id)} data-testid={`duplicate-template-${t.id}`} title="Copy" className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
+                        </Link>}
+                        {can(user, "templates", "C") && <button onClick={() => duplicate(t.id)} data-testid={`duplicate-template-${t.id}`} title="Copy" className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
                           <Copy size={14} />
-                        </button>
-                        <button onClick={() => del(t.id)} data-testid={`delete-template-${t.id}`} title="Delete" className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
+                        </button>}
+                        {can(user, "templates", "D") && <button onClick={() => del(t.id)} data-testid={`delete-template-${t.id}`} title="Delete" className="w-8 h-8 border border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary">
                           <Trash size={14} />
-                        </button>
+                        </button>}
                       </div>
                     </td>
                   </tr>

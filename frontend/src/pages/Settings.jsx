@@ -3,6 +3,7 @@ import { api, formatApiErrorDetail } from "@/lib/api";
 import { toast } from "sonner";
 import { UserCircle, CurrencyCircleDollar, BellSimple, EnvelopeSimple, SpeakerHigh, IdentificationCard, Image as ImageIcon, Trash, Wrench, Clock } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { CURRENCIES } from "@/lib/currency";
 
@@ -56,7 +57,8 @@ export default function Settings() {
   }, []);
 
   useEffect(() => {
-    setCanManage(user && ["admin", "manager"].includes(user.role));
+    // Operational settings: Customer Admin and Fleet Manager (settings edit).
+    setCanManage(can(user, "settings", "E"));
   }, [user]);
 
   const saveLicenseWarningDays = async (days) => {
@@ -248,7 +250,7 @@ export default function Settings() {
               <h3 className="font-display text-2xl font-bold tracking-tight">Currency</h3>
               <div className="mt-2 text-sm text-muted-foreground">
                 Applies workspace-wide — every teammate sees costs in this currency.
-                {!canManage && " Only admins and managers can change it."}
+                {!canManage && " Only a Customer Admin or Fleet Manager can change it."}
               </div>
               <select
                 value={currency}
@@ -272,7 +274,7 @@ export default function Settings() {
               <div className="mt-2 text-sm text-muted-foreground">
                 Used for any vehicle that doesn't have its own downtime cost set (Fleet → vehicle →
                 Downtime cost/hour) — so fleet cost and downtime-cost figures aren't {CURRENCIES[currency]?.symbol ?? "$"}0 by default.
-                {!canManage && " Only admins and managers can change it."}
+                {!canManage && " Only a Customer Admin or Fleet Manager can change it."}
               </div>
               <div className="mt-4 flex items-center gap-2">
                 <span className="text-sm text-muted-foreground">{CURRENCIES[currency]?.symbol ?? "$"}</span>
@@ -296,7 +298,7 @@ export default function Settings() {
               <h3 className="font-display text-2xl font-bold tracking-tight">License expiry warning</h3>
               <div className="mt-2 text-sm text-muted-foreground">
                 How many days before a driver's license expires it shows up in Live Alerts and dents that vehicle's health score.
-                {!canManage && " Only admins and managers can change it."}
+                {!canManage && " Only a Customer Admin or Fleet Manager can change it."}
               </div>
               <div className="mt-4 flex items-center gap-2">
                 <input
@@ -320,7 +322,7 @@ export default function Settings() {
               <div className="mt-2 text-sm text-muted-foreground">
                 A driver's pre-trip check is flagged overdue in the mobile app if it isn't done by this
                 time, and the address below is emailed when that happens.
-                {!canManage && " Only admins and managers can change it."}
+                {!canManage && " Only a Customer Admin or Fleet Manager can change it."}
               </div>
               <div className="mt-4 flex items-center gap-2">
                 <input
@@ -354,14 +356,13 @@ export default function Settings() {
               </div>
               <h3 className="font-display text-2xl font-bold tracking-tight">Costing approver</h3>
               <div className="mt-2 text-sm text-muted-foreground">
-                If this workspace has no dedicated Workshop Manager, let this role submit and manage job
-                costing (quotes) instead — applies to everyone in that role now, and automatically to
-                anyone invited into it later.
-                {!canManage && " Only admins and managers can change it."}
+                If this workspace has no dedicated Workshop Manager, let this role submit job costing
+                (quotes) instead. Applies to everyone in that role, including anyone invited into it later.
+                {!can(user, "security", "E") && " Only a Customer Admin can change it: it grants a role extra rights."}
               </div>
               <select
                 value={costingApproverRole}
-                disabled={!canManage}
+                disabled={!can(user, "security", "E")}
                 onChange={(e) => saveCostingApproverRole(e.target.value)}
                 data-testid="costing-approver-role-select"
                 className="mt-4 w-full bg-[#0b0b0d] border border-border px-3 py-2.5 text-sm focus:border-primary focus:outline-none disabled:opacity-50"
@@ -381,7 +382,7 @@ export default function Settings() {
               <h3 className="font-display text-2xl font-bold tracking-tight">Report logo</h3>
               <div className="mt-2 text-sm text-muted-foreground">
                 Shown at the top of every PDF report generated from the Report Center.
-                {!canManage && " Only admins and managers can change it."}
+                {!canManage && " Only a Customer Admin or Fleet Manager can change it."}
               </div>
               <div className="mt-4 flex items-center gap-4">
                 <div className="w-20 h-20 shrink-0 border border-border bg-[#0b0b0d] flex items-center justify-center overflow-hidden">
@@ -416,7 +417,7 @@ export default function Settings() {
                 Controls whether each automated email sends at all, and how often. Checked daily.
                 Recipient is the workspace owner, except the monthly board email which goes to the
                 board email address set on the Executive Dashboard.
-                {!canManage && " Only admins and managers can change these."}
+                {!canManage && " Only a Customer Admin or Fleet Manager can change these."}
               </div>
               <div className="mt-4 divide-y divide-border/50">
                 {DIGESTS.map((d) => {
@@ -442,7 +443,7 @@ export default function Settings() {
                             ))}
                           </select>
                         )}
-                        <button
+                        {canManage && <button
                           type="button"
                           disabled={sending || digestSending !== null}
                           onClick={() => sendDigestNow(d)}
@@ -451,7 +452,7 @@ export default function Settings() {
                           className="p-1.5 border border-border text-muted-foreground hover:text-primary hover:border-primary disabled:opacity-50"
                         >
                           <EnvelopeSimple size={14} />
-                        </button>
+                        </button>}
                         <button
                           type="button"
                           disabled={!canManage || prefs === null}

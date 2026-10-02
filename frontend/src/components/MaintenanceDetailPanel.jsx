@@ -10,11 +10,9 @@ import PartsRequisitionBuilder from "@/components/PartsRequisitionBuilder";
 import PartsRequisitionPanel from "@/components/PartsRequisitionPanel";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
-import { hasAccess } from "@/lib/access";
+import { can, canEditJob } from "@/lib/access";
+import { voidRecord, voidedLabel } from "@/lib/void";
 
-const OPS_ROLES = ["operations_manager", "admin"];
-const FINANCE_ROLES = ["finance", "admin"];
-const REQUISITION_APPROVER_ROLES = ["workshop_manager", "admin"];
 
 export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, onChange }) {
   const { currency } = useCurrency();
@@ -47,8 +45,8 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
 
   const latestQuote = quotes[0];
   const canDecide = latestQuote && (
-    (latestQuote.stage === "pending_ops" && OPS_ROLES.includes(currentUser?.role)) ||
-    (latestQuote.stage === "pending_finance" && FINANCE_ROLES.includes(currentUser?.role))
+    (latestQuote.stage === "pending_ops" && can(currentUser, "quotes", "A")) ||
+    (latestQuote.stage === "pending_finance" && can(currentUser, "purchase_orders", "A"))
   );
 
   const decide = async (decision, reason) => {
@@ -62,16 +60,16 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
     }
   };
 
-  // Gated by the "quotes" System Right rather than a hardcoded role, mirroring the backend's
-  // require_module("quotes", "full") on POST /maintenance/{mid}/quotes -- workshop_manager/admin/manager
-  // get it by default, but a workspace with no Workshop Manager can grant it to Operations or Finance
-  // instead via Team permissions.
-  const canSubmitQuote = (!latestQuote || latestQuote.stage === "rejected") && hasAccess(currentUser, "quotes", "full");
+  // Create on quotes, as the server checks on POST /maintenance/{mid}/quotes.
+  const canSubmitQuote = (!latestQuote || latestQuote.stage === "rejected") && can(currentUser, "quotes", "C");
 
   const latestRequisition = requisitions[0];
   const canDecideRequisition = latestRequisition && latestRequisition.status === "pending_approval"
-    && REQUISITION_APPROVER_ROLES.includes(currentUser?.role);
-  const canSubmitRequisition = !latestRequisition || latestRequisition.status !== "pending_approval";
+    && can(currentUser, "parts_requisitions", "A");
+  // Recording parts used on a job; a mechanic only on jobs assigned to them.
+  const canSubmitRequisition = (!latestRequisition || latestRequisition.status !== "pending_approval")
+    && can(currentUser, "parts_requisitions", "C")
+    && (!currentUser?.own_jobs_only || String(job?.assigned_to || "") === String(currentUser?.id));
 
   const decideRequisition = async (decision, reason) => {
     try {
@@ -97,7 +95,14 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
               <div>
                 <div className="overline">{job.vehicle_name} · {job.vehicle_plate}</div>
                 <h2 className="font-display text-2xl font-bold mt-1">{job.title}</h2>
+                {job.voided_at && <div className="text-xs text-muted-foreground mt-1" data-testid="job-voided">{voidedLabel(job)}</div>}
               </div>
+              <div className="flex gap-2 shrink-0">
+              {!job.voided_at && can(currentUser, "maintenance", "D") && (
+                <button onClick={async () => { if (await voidRecord(`/maintenance/${jobId}/void`, "job")) { load(); onChange(); } }}
+                  data-testid="void-job" title="Cancels the job; its costs leave every total and the job stays on record"
+                  className="border border-border px-3 py-2 text-xs uppercase tracking-widest text-muted-foreground hover:border-primary hover:text-primary">Void</button>
+              )}
               <button
                 onClick={() => downloadFile(`/maintenance/${jobId}/pdf`, `job-${jobId}.pdf`)}
                 data-testid="download-job-pdf"
@@ -105,6 +110,7 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
               >
                 <DownloadSimple size={14} /> Download PDF
               </button>
+              </div>
             </div>
             <div className="border-b border-border px-6 flex gap-4 shrink-0">
               {["overview", "parts", "quotation", "activity"].map((t) => (

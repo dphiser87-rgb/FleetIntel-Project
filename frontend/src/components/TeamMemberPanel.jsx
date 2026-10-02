@@ -3,10 +3,20 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Trash, Prohibit, Key, Copy, PencilSimple } from "@phosphor-icons/react";
-import { ROLE_COLOR } from "@/lib/access";
+import { ROLE_COLOR, can } from "@/lib/access";
+import { useAuth } from "@/contexts/AuthContext";
 
-const LEVELS = ["none", "read", "full"];
-const LEVEL_LABEL = { none: "No access", read: "Read only", full: "Full access" };
+const ACTIONS = ["V", "C", "E", "D", "A"];
+const ACTION_LABEL = { V: "View", C: "Create", E: "Edit", D: "Delete", A: "Approve" };
+const MODULE_LABEL = {
+  dashboard: "Dashboard", fleet: "Vehicles, trips & fuel", assets: "Assets", drivers: "Drivers", incidents: "Incidents",
+  vehicle_checklist: "Inspections (submit)", templates: "Checklist templates", maintenance: "Maintenance jobs",
+  defects: "Defects", parts_requisitions: "Parts used on jobs", parts: "Parts inventory", quotes: "Quotes",
+  purchase_orders: "Purchase orders & payment", reports: "Reports & budgets", executive_dashboard: "Executive dashboard",
+  settings: "Operational settings", team: "Users & role grants", security: "Security policy", audit: "Activity log",
+};
+const moduleLabel = (k) => MODULE_LABEL[k] || k.replace(/_/g, " ");
+const describe = (acts) => (acts ? ACTIONS.filter((a) => acts.includes(a)).map((a) => ACTION_LABEL[a]).join(", ") : "No access");
 const ACCOUNT_TYPES = ["business", "system"];
 const FALLBACK_ROLES = ["admin", "manager", "inspector", "mechanic"];
 
@@ -23,8 +33,10 @@ const scopeSummary = (groupIds, itemIds) => {
   return parts.join(" + ");
 };
 
+// Scope settings only. `actions` is added only when someone customises this person's rights; without
+// it the person follows their role's defaults, including later changes to those defaults.
 const emptyPermissions = {
-  modules: {}, vehicle_group_ids: [], vehicle_ids: [], asset_group_ids: [], asset_ids: [],
+  vehicle_group_ids: [], vehicle_ids: [], asset_group_ids: [], asset_ids: [],
   driver_group_ids: [], trip_data_access: true, address_access: true,
 };
 
@@ -34,12 +46,14 @@ const emptyForm = {
   permissions: emptyPermissions,
 };
 
-export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGroups, driverGroups, assetGroups, vehicles, assets, onClose, onChange }) {
+export default function TeamMemberPanel({ member, moduleKeys, presets, moduleActions = {}, vehicleGroups, driverGroups, assetGroups, vehicles, assets, onClose, onChange }) {
   const [mode, setMode] = useState("view"); // view | edit
   const [tab, setTab] = useState("details");
   const [form, setForm] = useState(emptyForm);
   const [initialSnapshot, setInitialSnapshot] = useState("");
   const [timePeriod, setTimePeriod] = useState("unlimited"); // unlimited | temporary
+  const { user: me } = useAuth();
+  const isSelf = !!member && !!me && member.id === me.id;
 
   useEffect(() => {
     if (!member) return;
@@ -48,10 +62,10 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
   }, [member]);
 
   const startEdit = () => {
-    // Members created before System Rights existed have empty stored permissions — fall back to
-    // their role's preset rather than showing an all-"no access" matrix.
-    const hasStoredPerms = member.permissions?.modules && Object.keys(member.permissions.modules).length > 0;
-    const perms = hasStoredPerms ? member.permissions : JSON.parse(JSON.stringify(presets[member.role] || emptyPermissions));
+    // Scope settings as stored; customised actions only if this person really has them. A stored
+    // `modules` matrix is a leftover copy of an old preset and is dropped.
+    const { modules, ...stored } = member.permissions || {};
+    const perms = { ...emptyPermissions, ...stored };
     const f = {
       name: member.name || "", username: member.username || "", email: member.email || "",
       company_department: member.company_department || "", cell: member.cell || "",
@@ -66,12 +80,24 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
     setMode("edit");
   };
 
-  const applyProfile = (role) => {
-    const preset = presets[role] || { modules: {} };
-    setForm((f) => ({ ...f, role, permissions: JSON.parse(JSON.stringify(preset)) }));
-  };
-
-  const setModuleLevel = (key, level) => setForm((f) => ({ ...f, permissions: { ...f.permissions, modules: { ...f.permissions.modules, [key]: level } } }));
+  // Changing the role goes back to that role's defaults; any custom rights belonged to the old role.
+  const applyProfile = (role) => setForm((f) => {
+    const { actions, ...rest } = f.permissions;
+    return { ...f, role, permissions: rest };
+  });
+  const customised = !!form.permissions.actions;
+  const setCustomised = (on) => setForm((f) => {
+    const { actions, ...rest } = f.permissions;
+    return { ...f, permissions: on ? { ...rest, actions: { ...(presets[f.role]?.actions || {}) } } : rest };
+  });
+  const toggleAction = (key, a) => setForm((f) => {
+    const cur = f.permissions.actions?.[key] || "";
+    let next = cur.includes(a) ? cur.replace(a, "") : cur + a;
+    if (a === "V" && cur.includes("V")) next = "";                 // no view means no other actions either
+    if (a !== "V" && next && !next.includes("V")) next += "V";      // any action needs view
+    next = ACTIONS.filter((x) => next.includes(x)).join("");
+    return { ...f, permissions: { ...f.permissions, actions: { ...f.permissions.actions, [key]: next } } };
+  });
   const toggleScopeId = (field, id) => setForm((f) => {
     const cur = f.permissions[field] || [];
     const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
@@ -89,19 +115,24 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
       toast.error("Name, username, and email are required");
       return;
     }
+    // Role and permissions go to the server only when they changed: they're grants, which are audited
+    // and which nobody may make to themselves.
+    const initial = JSON.parse(initialSnapshot || "{}");
+    const body = {
+      name: form.name, username: form.username, company_department: form.company_department,
+      cell: form.cell, additional_info: form.additional_info,
+      active_from: timePeriod === "temporary" ? (form.active_from || null) : null,
+      active_until: timePeriod === "temporary" ? (form.active_until || null) : null,
+      account_type: form.role === "admin" ? (form.account_type || null) : null,
+    };
+    if (form.role !== initial.role) body.role = form.role;
+    if (JSON.stringify(form.permissions) !== JSON.stringify(initial.permissions)) body.permissions = form.permissions;
     try {
-      await api.patch(`/users/${member.id}`, {
-        name: form.name, username: form.username, company_department: form.company_department,
-        cell: form.cell, additional_info: form.additional_info, role: form.role,
-        active_from: timePeriod === "temporary" ? (form.active_from || null) : null,
-        active_until: timePeriod === "temporary" ? (form.active_until || null) : null,
-        account_type: form.role === "admin" ? (form.account_type || null) : null,
-        permissions: form.permissions,
-      });
+      await api.patch(`/users/${member.id}`, body);
       toast.success("Team member updated");
       setMode("view");
       onChange();
-    } catch { toast.error("Failed to save"); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed to save"); }
   };
 
   const deactivate = async () => {
@@ -136,9 +167,8 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
 
   if (!member) return null;
 
-  const effectivePermissions = (member.permissions?.modules && Object.keys(member.permissions.modules).length > 0)
-    ? member.permissions
-    : (presets[member.role] || emptyPermissions);
+  const effectivePermissions = { ...emptyPermissions, ...(member.permissions || {}) };
+  const effectiveActions = member.permissions?.actions || presets[member.role]?.actions || {};
 
   return (
     <Sheet open={!!member} onOpenChange={(o) => !o && (mode === "edit" ? cancelEdit() : onClose())}>
@@ -150,7 +180,7 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
             <div className="overline">{member.username || member.email}</div>
             <h2 className="font-display text-xl font-bold mt-0.5">{member.name}</h2>
           </div>
-          {mode === "view" && (
+          {mode === "view" && can(me, "team", "E") && (
             <button onClick={startEdit} data-testid="edit-member-btn" className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
               <PencilSimple size={14} /> Edit
             </button>
@@ -207,8 +237,8 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
                       <tbody>
                         {moduleKeys.map((k) => (
                           <tr key={k} className="border-b border-border/50 last:border-b-0">
-                            <td className="p-2 capitalize">{k.replace(/_/g, " ")}</td>
-                            <td className="p-2 text-right text-xs uppercase text-muted-foreground">{LEVEL_LABEL[effectivePermissions.modules?.[k] || "none"]}</td>
+                            <td className="p-2">{moduleLabel(k)}</td>
+                            <td className="p-2 text-right text-xs text-muted-foreground">{describe(effectiveActions[k])}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -231,16 +261,16 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
               )}
             </div>
             <div className="border-t border-border p-4 flex gap-2 flex-wrap shrink-0">
-              <button onClick={deactivate} data-testid="deactivate-member" className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary"><Prohibit size={14} /> Deactivate</button>
-              <button
+              {can(me, "team", "E") && <button onClick={deactivate} data-testid="deactivate-member" className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary"><Prohibit size={14} /> Deactivate</button>}
+              {can(me, "team", "E") && <button
                 onClick={resetPassword}
                 disabled={member.role === "admin"}
                 title={member.role === "admin" ? "Admin password resets must go through the FleetIntel team directly" : undefined}
                 data-testid="reset-password-member"
                 className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-inherit"
-              ><Key size={14} /> Reset password</button>
-              <button onClick={duplicate} data-testid="duplicate-member" className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary"><Copy size={14} /> Duplicate</button>
-              <button onClick={remove} data-testid="delete-member" className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary ml-auto"><Trash size={14} /> Delete</button>
+              ><Key size={14} /> Reset password</button>}
+              {can(me, "team", "C") && <button onClick={duplicate} data-testid="duplicate-member" className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary"><Copy size={14} /> Duplicate</button>}
+              {can(me, "team", "D") && <button onClick={remove} data-testid="delete-member" className="flex items-center gap-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary ml-auto"><Trash size={14} /> Delete</button>}
             </div>
           </div>
         ) : (
@@ -250,7 +280,9 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
                 <div className="overline px-2 mb-2">Details</div>
                 <button onClick={() => setTab("details")} className={`w-full text-left px-2 py-2 text-sm border-l-2 ${tab === "details" ? "border-primary text-primary bg-primary/10" : "border-transparent text-muted-foreground"}`}>User data</button>
                 <div className="overline px-2 mb-2 mt-4">User Rights</div>
-                <button onClick={() => setTab("rights")} className={`w-full text-left px-2 py-2 text-sm border-l-2 ${tab === "rights" ? "border-primary text-primary bg-primary/10" : "border-transparent text-muted-foreground"}`}>Permissions</button>
+                <button onClick={() => setTab("rights")} disabled={isSelf} title={isSelf ? "You can't change your own permissions" : undefined} data-testid="rights-tab"
+                  className={`w-full text-left px-2 py-2 text-sm border-l-2 disabled:opacity-40 disabled:cursor-not-allowed ${tab === "rights" ? "border-primary text-primary bg-primary/10" : "border-transparent text-muted-foreground"}`}>Permissions</button>
+                {isSelf && <p className="px-2 mt-1 text-[11px] text-muted-foreground">Another Customer Admin has to change your own permissions.</p>}
               </div>
               <div className="flex-1 p-6 space-y-4 overflow-y-auto">
               {tab === "details" ? (
@@ -293,7 +325,7 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
               ) : (
                 <>
                   <div className="text-xs text-muted-foreground bg-primary/5 border border-primary/20 px-3 py-2">
-                    Choosing a profile pre-fills recommended rights, which you can then narrow — for security, revoke rights from a profile rather than add to it.
+                    People follow their role's defaults, so a change to a role's defaults reaches everyone in it. Customise only where one person's job needs something different. Every change is recorded in the activity log.
                   </div>
                   <div>
                     <label className="text-xs uppercase tracking-widest text-muted-foreground mb-1.5 block">Profile</label>
@@ -304,16 +336,31 @@ export default function TeamMemberPanel({ member, moduleKeys, presets, vehicleGr
                   </div>
                   <div>
                     <label className="text-xs uppercase tracking-widest text-muted-foreground mb-1.5 block">System rights</label>
-                    <div className="border border-border overflow-hidden">
-                      {moduleKeys.map((k) => (
-                        <div key={k} className="flex items-center justify-between px-3 py-2 border-b border-border/50 last:border-b-0" data-testid={`module-${k}`}>
-                          <span className="text-sm capitalize">{k.replace(/_/g, " ")}</span>
-                          <select value={form.permissions.modules?.[k] || "none"} onChange={(e) => setModuleLevel(k, e.target.value)}
-                            className="bg-[#0b0b0d] border border-border px-2 py-1 text-xs uppercase focus:border-primary focus:outline-none">
-                            {LEVELS.map((l) => <option key={l} value={l}>{LEVEL_LABEL[l]}</option>)}
-                          </select>
-                        </div>
-                      ))}
+                    <label className="flex items-center gap-2 text-sm mb-2">
+                      <input type="checkbox" checked={!customised} onChange={(e) => setCustomised(!e.target.checked)} data-testid="use-role-defaults" />
+                      Use the {form.role.replace(/_/g, " ")} role's defaults
+                    </label>
+                    <div className="border border-border overflow-x-auto">
+                      <div className="grid grid-cols-[minmax(9rem,1fr)_repeat(5,3.2rem)] px-3 py-1.5 border-b border-border text-[10px] mono uppercase tracking-wider text-muted-foreground">
+                        <span>Area</span>{ACTIONS.map((a) => <span key={a} className="text-center">{ACTION_LABEL[a]}</span>)}
+                      </div>
+                      {moduleKeys.map((k) => {
+                        const acts = (customised ? form.permissions.actions?.[k] : presets[form.role]?.actions?.[k]) || "";
+                        const supported = moduleActions[k] || "VCEDA";
+                        return (
+                          <div key={k} className="grid grid-cols-[minmax(9rem,1fr)_repeat(5,3.2rem)] items-center px-3 py-1.5 border-b border-border/50 last:border-b-0" data-testid={`module-${k}`}>
+                            <span className="text-sm min-w-0">{moduleLabel(k)}</span>
+                            {ACTIONS.map((a) => (
+                              <span key={a} className="flex justify-center">
+                                {supported.includes(a) ? (
+                                  <input type="checkbox" aria-label={`${ACTION_LABEL[a]} ${moduleLabel(k)}`} checked={acts.includes(a)}
+                                    disabled={!customised} onChange={() => toggleAction(k, a)} data-testid={`perm-${k}-${a}`} />
+                                ) : <span className="text-muted-foreground/40 text-xs">·</span>}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">

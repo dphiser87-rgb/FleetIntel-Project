@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Plus, MagnifyingGlass, X as XIcon, Wrench } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
-import { hasAccess } from "@/lib/access";
+import { can } from "@/lib/access";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 
@@ -24,14 +24,15 @@ const STATUS_STYLES = {
   resolved: "border-[#34C759] text-[#34C759]",
 };
 
-const PRICING_ROLES = ["workshop_manager", "operations_manager", "finance", "admin"];
 
 export default function DefectReporting() {
   const { user } = useAuth();
   const { currency } = useCurrency();
-  const canManage = hasAccess(user, "defects", "full");
-  const canConvert = hasAccess(user, "maintenance", "full");
-  const canPrice = PRICING_ROLES.includes(user?.role);
+  const canReport = can(user, "defects", "C");
+  // Updating a defect is an edit; pricing it is an approval, so Finance can price without editing.
+  const canManage = can(user, "defects", "E") || can(user, "defects", "A");
+  const canConvert = can(user, "maintenance", "C");
+  const canPrice = can(user, "defects", "A");
   const [defects, setDefects] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [technicians, setTechnicians] = useState([]);
@@ -112,7 +113,7 @@ export default function DefectReporting() {
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="defects-title">Defect Reporting</h1>
           <div className="text-sm text-muted-foreground mt-2">Report and track vehicle defects submitted by drivers and technicians</div>
         </div>
-        {canManage && (
+        {canReport && (
           <button onClick={() => setShowNew(true)} data-testid="new-defect-btn" className="flex items-center gap-2 bg-primary px-4 py-2.5 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
             <Plus size={14} weight="bold" /> Report Defect
           </button>

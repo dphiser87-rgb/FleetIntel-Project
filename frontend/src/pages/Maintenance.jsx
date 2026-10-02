@@ -4,14 +4,12 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { CheckCircle, Play, Plus, Kanban, Table as TableIcon, ClockCounterClockwise } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
-import { hasAccess } from "@/lib/access";
+import { can, canEditJob } from "@/lib/access";
 import MaintenanceDetailPanel from "@/components/MaintenanceDetailPanel";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 import { usePolling } from "@/hooks/use-polling";
 
-const OPS_ROLES = ["operations_manager", "admin"];
-const FINANCE_ROLES = ["finance", "admin"];
 
 const COLUMNS = [
   { key: "pending", label: "Pending", accent: "border-t-[#8E8E93]" },
@@ -57,8 +55,11 @@ export default function Maintenance() {
   const [sortDir, setSortDir] = useState("desc");
   const [audit, setAudit] = useState([]);
 
-  const actionableStage = OPS_ROLES.includes(user?.role) ? "pending_ops" : FINANCE_ROLES.includes(user?.role) ? "pending_finance" : null;
-  const canManageJobs = hasAccess(user, "maintenance", "full");
+  // Which quotes are waiting on this person follows their approve permissions: the operations stage
+  // is approve on quotes, the finance stage is approve on purchase orders.
+  const actionableStage = can(user, "quotes", "A") ? "pending_ops" : can(user, "purchase_orders", "A") ? "pending_finance" : null;
+  const canCreateJob = can(user, "maintenance", "C");
+  const canManageJobs = can(user, "maintenance", "E");
 
   const load = () => api.get("/maintenance").then(r => setJobs(r.data));
   useEffect(() => {
@@ -250,7 +251,7 @@ export default function Maintenance() {
             </button>
           )}
           <div className="mono text-xs text-muted-foreground">{visibleJobs.length} jobs</div>
-          {canManageJobs && (
+          {canCreateJob && (
             <button onClick={() => setShowNew(true)} data-testid="new-job-btn" className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
               <Plus size={14} weight="bold" /> New job
             </button>
@@ -331,12 +332,12 @@ export default function Maintenance() {
                         <div className="text-muted-foreground">{new Date(job.created_at).toLocaleDateString()}</div>
                       </div>
                       <div className="flex gap-2 mt-3 pt-3 border-t border-border/60">
-                        {col.key === "pending" && canManageJobs && (
+                        {col.key === "pending" && canEditJob(user, job) && (
                           <button onClick={(e) => { e.stopPropagation(); move(job, "in_progress"); }} data-testid={`start-${job.id}`} className="flex-1 flex items-center justify-center gap-1 border border-border text-xs uppercase tracking-widest px-2 py-1.5 hover:border-primary hover:text-primary">
                             <Play size={10} /> Start
                           </button>
                         )}
-                        {col.key === "in_progress" && canManageJobs && (
+                        {col.key === "in_progress" && canEditJob(user, job) && (
                           <>
                             <button onClick={(e) => { e.stopPropagation(); setSelected(job); }} data-testid={`complete-${job.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary text-xs uppercase tracking-widest px-2 py-1.5 hover:bg-primary hover:text-primary-foreground">
                               <CheckCircle size={10} /> Complete
@@ -346,7 +347,7 @@ export default function Maintenance() {
                             </button>
                           </>
                         )}
-                        {col.key === "on_hold" && canManageJobs && (
+                        {col.key === "on_hold" && canEditJob(user, job) && (
                           <button onClick={(e) => { e.stopPropagation(); resumeJob(job); }} data-testid={`resume-${job.id}`} className="flex-1 flex items-center justify-center gap-1 border border-border text-xs uppercase tracking-widest px-2 py-1.5 hover:border-primary hover:text-primary">
                             <Play size={10} /> Resume
                           </button>
@@ -388,7 +389,7 @@ export default function Maintenance() {
                     onClick={() => { setDetailJobId(job.id); setSearchParams({ job: job.id }); }}>
                     {canManageJobs && (
                       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={selectedIds.has(job.id)} onChange={() => toggleSelect(job.id)} data-testid={`select-${job.id}`} />
+                        <input type="checkbox" checked={selectedIds.has(job.id)} onChange={() => toggleSelect(job.id)} disabled={!canEditJob(user, job)} data-testid={`select-${job.id}`} />
                       </td>
                     )}
                     <td className="px-4 py-3">

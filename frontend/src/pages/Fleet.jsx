@@ -6,12 +6,15 @@ import { Plus, Truck, ClipboardText, UploadSimple, Heartbeat, FolderSimple, Penc
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import GroupManager from "@/components/GroupManager";
 import VehiclePanel from "@/components/VehiclePanel";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 
 const StatusBadge = ({ status }) => {
   const map = {
     active: { c: "border-[#34C759] text-[#34C759] bg-[#34C759]/10", l: "Active" },
     maintenance: { c: "border-[#FFCC00] text-[#FFCC00] bg-[#FFCC00]/10", l: "In maintenance" },
     idle: { c: "border-muted-foreground text-muted-foreground bg-white/5", l: "Idle" },
+    archived: { c: "border-muted-foreground/60 text-muted-foreground bg-transparent", l: "Archived" },
   };
   const s = map[status] || map.idle;
   return <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 border ${s.c}`}>{s.l}</span>;
@@ -36,17 +39,30 @@ export default function Fleet() {
   const [panelVehicle, setPanelVehicle] = useState(null); // vehicle object | "new" | null
   const [sortBy, setSortBy] = useState("health");
   const [viewMode, setViewMode] = useState("grid"); // "grid" | "list"
+  const [showArchived, setShowArchived] = useState(false);
+  const { user } = useAuth();
 
   const loadGroups = () => api.get("/vehicle-groups").then(r => setGroups(r.data || []));
   const load = async () => {
     const [v, h] = await Promise.all([
-      api.get("/vehicles"),
+      api.get("/vehicles", { params: showArchived ? { include_archived: true } : {} }),
       api.get("/analytics/fleet-health").catch(() => ({ data: [] })),
     ]);
     setVehicles(v.data); setHealth(h.data || []);
     setPanelVehicle((prev) => (prev && prev !== "new" ? v.data.find((x) => x.id === prev.id) || null : prev));
   };
-  useEffect(() => { load(); loadGroups(); }, []);
+  useEffect(() => { load(); loadGroups(); }, [showArchived]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Archived vehicles keep their history; restoring one asks for a reason like archiving does.
+  const restore = async (v) => {
+    const reason = window.prompt(`Why is ${v.name} coming back into the fleet?`);
+    if (!reason || reason.trim().length < 3) return;
+    try {
+      await api.post(`/vehicles/${v.id}/restore`, { reason });
+      toast.success(`${v.name} restored`);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't restore"); }
+  };
 
   const groupMap = useMemo(() => Object.fromEntries(groups.map(g => [g.id, g])), [groups]);
 
@@ -80,6 +96,10 @@ export default function Fleet() {
         <button onClick={() => setShowGroups(true)} data-testid="manage-vehicle-groups-btn" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
           <FolderSimple size={14} /> Manage groups
         </button>
+        <label className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground px-1 cursor-pointer">
+          <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} data-testid="show-archived" /> Show archived
+        </label>
+        {can(user, "fleet", "C") && <>
         <button data-testid="add-vehicle-btn" onClick={() => setPanelVehicle("new")} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
           <Plus size={14} weight="bold" /> Add vehicle
         </button>
@@ -100,6 +120,7 @@ export default function Fleet() {
         <a href={`${API}/import/vehicles/template.csv`} className="text-xs text-muted-foreground hover:text-primary underline" data-testid="download-vehicle-template">
           Download template
         </a>
+        </>}
         </div>
       </header>
 
@@ -154,12 +175,16 @@ export default function Fleet() {
                     <td className="p-3">
                       <div className="flex gap-2">
                         <Link to={`/fleet/${v.id}`} className="border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors" data-testid={`view-${v.plate}`}>View</Link>
-                        <Link to={`/inspection/${v.id}`} className="flex items-center gap-1 bg-primary/10 border border-primary/40 text-primary px-2 py-1.5 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground transition-colors" data-testid={`inspect-${v.plate}`}>
+                        {v.status === "archived" ? (
+                          can(user, "fleet", "D") && <button onClick={() => restore(v)} data-testid={`restore-${v.plate}`} className="border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">Restore</button>
+                        ) : <>
+                        {can(user, "vehicle_checklist", "C") && <Link to={`/inspection/${v.id}`} className="flex items-center gap-1 bg-primary/10 border border-primary/40 text-primary px-2 py-1.5 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground transition-colors" data-testid={`inspect-${v.plate}`}>
                           <ClipboardText size={12} /> Inspect
-                        </Link>
-                        <button onClick={() => setPanelVehicle(v)} data-testid={`edit-vehicle-${v.plate}`} className="border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors" title="Edit vehicle">
+                        </Link>}
+                        {can(user, "fleet", "E") && <button onClick={() => setPanelVehicle(v)} data-testid={`edit-vehicle-${v.plate}`} className="border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors" title="Edit vehicle">
                           <PencilSimple size={12} />
-                        </button>
+                        </button>}
+                        </>}
                       </div>
                     </td>
                   </tr>
@@ -221,12 +246,16 @@ export default function Fleet() {
                 )}
                 <div className="flex gap-2 pt-2">
                   <Link to={`/fleet/${v.id}`} className="flex-1 border border-border px-3 py-2 text-xs uppercase tracking-widest text-center hover:border-primary hover:text-primary transition-colors" data-testid={`view-${v.plate}`}>View</Link>
-                  <Link to={`/inspection/${v.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary px-3 py-2 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground transition-colors" data-testid={`inspect-${v.plate}`}>
+                  {v.status === "archived" ? (
+                    can(user, "fleet", "D") && <button onClick={() => restore(v)} data-testid={`restore-${v.plate}`} className="flex-1 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">Restore</button>
+                  ) : <>
+                  {can(user, "vehicle_checklist", "C") && <Link to={`/inspection/${v.id}`} className="flex-1 flex items-center justify-center gap-1 bg-primary/10 border border-primary/40 text-primary px-3 py-2 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground transition-colors" data-testid={`inspect-${v.plate}`}>
                     <ClipboardText size={12} /> Inspect
-                  </Link>
-                  <button onClick={() => setPanelVehicle(v)} data-testid={`edit-vehicle-${v.plate}`} className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors" title="Edit vehicle">
+                  </Link>}
+                  {can(user, "fleet", "E") && <button onClick={() => setPanelVehicle(v)} data-testid={`edit-vehicle-${v.plate}`} className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary transition-colors" title="Edit vehicle">
                     <PencilSimple size={12} />
-                  </button>
+                  </button>}
+                  </>}
                 </div>
               </div>
             </div>

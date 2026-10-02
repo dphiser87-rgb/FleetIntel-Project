@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 import { Plus, Trash, FloppyDisk, ClipboardText, Car, Package, Truck, Image as ImageIcon, ArrowLeft } from "@phosphor-icons/react";
 import CategorizedItemsEditor from "@/components/CategorizedItemsEditor";
 import ToggleSwitch from "@/components/ToggleSwitch";
@@ -51,6 +53,7 @@ const DEFAULT_SECTIONS = () => [
 ];
 
 export default function TemplateBuilder() {
+  const { user } = useAuth();
   const { id } = useParams();
   const navigate = useNavigate();
   const isNew = !id || id === "new";
@@ -151,7 +154,8 @@ export default function TemplateBuilder() {
   const del = async () => {
     if (isNew) { navigate("/templates"); return; }
     if (!window.confirm("Delete this template?")) return;
-    await api.delete(`/templates/${id}`);
+    try { await api.delete(`/templates/${id}`); }
+    catch (e) { toast.error(e.response?.data?.detail || "Couldn't delete the template"); return; }
     toast.success("Template deleted");
     navigate("/templates");
   };
@@ -365,7 +369,7 @@ export default function TemplateBuilder() {
       </div>
 
       <div className="border-t border-border px-8 py-4 flex justify-between gap-3">
-        {isNew ? <span /> : (
+        {isNew || !can(user, "templates", "D") ? <span /> : (
           <button onClick={del} data-testid="delete-template-btn" className="px-5 py-2.5 text-sm font-bold border border-border text-muted-foreground hover:border-primary hover:text-primary">
             Delete
           </button>
@@ -374,9 +378,9 @@ export default function TemplateBuilder() {
           <Link to="/templates" data-testid="cancel-template" className="px-5 py-2.5 text-sm font-bold border border-border hover:border-primary hover:text-primary">
             Cancel
           </Link>
-          <button onClick={save} data-testid="save-template" className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold bg-primary text-primary-foreground hover:bg-primary/90">
+          {can(user, "templates", isNew ? "C" : "E") && <button onClick={save} data-testid="save-template" className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold bg-primary text-primary-foreground hover:bg-primary/90">
             <FloppyDisk size={14} /> Save
-          </button>
+          </button>}
         </div>
       </div>
     </div>

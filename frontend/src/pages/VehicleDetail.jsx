@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 
 export default function VehicleDetail() {
   const { currency } = useCurrency();
@@ -42,6 +44,19 @@ export default function VehicleDetail() {
       setIncForm(f => ({ ...f, driver_id: assignedDriver.id }));
     }
   }, [showIncident, assignedDriver, incForm.driver_id]);
+
+  const { user } = useAuth();
+
+  // Archiving replaces deleting: the vehicle leaves the fleet and its history stays in every report.
+  const archive = async () => {
+    const reason = window.prompt(`Archive ${v.name}? It leaves the fleet, and its jobs, inspections and costs stay in reports. Reason:`);
+    if (!reason || reason.trim().length < 3) return;
+    try {
+      await api.post(`/vehicles/${v.id}/archive`, { reason });
+      toast.success(`${v.name} archived`);
+      navigate("/fleet");
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't archive"); }
+  };
 
   const openIncidentModal = () => {
     // Auto-assign driver from the vehicle's currently assigned driver
@@ -85,20 +100,24 @@ export default function VehicleDetail() {
             <h1 className="font-display font-black text-4xl tracking-tight mt-1">{v.name}</h1>
             <div className="text-sm text-muted-foreground mt-2">{v.year} · {v.make} {v.model} · {v.type}</div>
           </div>
-          <div className="flex gap-2">
-            <button onClick={openIncidentModal} data-testid="report-incident-btn" className="flex items-center gap-2 border border-primary/40 text-primary px-3 py-2 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground">
+          <div className="flex gap-2 flex-wrap">
+            {v.status === "archived" && <span className="self-center text-[10px] mono uppercase tracking-widest px-2 py-1 border border-border text-muted-foreground" data-testid="archived-badge">Archived</span>}
+            {can(user, "incidents", "C") && <button onClick={openIncidentModal} data-testid="report-incident-btn" className="flex items-center gap-2 border border-primary/40 text-primary px-3 py-2 text-xs uppercase tracking-widest hover:bg-primary hover:text-primary-foreground">
               <WarningIcon size={14} weight="bold" /> Report incident
-            </button>
-            <button onClick={async () => {
+            </button>}
+            {can(user, "fleet", "E") && <button onClick={async () => {
               const { data } = await api.post(`/vehicles/${v.id}/share`);
               const url = window.location.origin + data.url;
               setShareUrl(url); setShowShare(true);
             }} data-testid="share-vehicle-btn" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
               <ShareNetwork size={14} /> Share for insurance
-            </button>
-            <Link to={`/inspection/${v.id}`} className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid="run-inspection-btn">
+            </button>}
+            {can(user, "vehicle_checklist", "C") && v.status !== "archived" && <Link to={`/inspection/${v.id}`} className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid="run-inspection-btn">
               <ClipboardText size={14}/> Run inspection
-            </Link>
+            </Link>}
+            {can(user, "fleet", "D") && v.status !== "archived" && <button onClick={archive} data-testid="archive-vehicle-btn" className="border border-border px-3 py-2 text-xs uppercase tracking-widest text-muted-foreground hover:border-primary hover:text-primary">
+              Archive
+            </button>}
           </div>
         </div>
       </header>

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 import { toast } from "sonner";
 import { CaretLeft, CheckCircle, XCircle, Wrench, Camera, MapPin, Warning } from "@phosphor-icons/react";
 import SignaturePad from "@/components/SignaturePad";
@@ -10,6 +12,10 @@ import SignaturePad from "@/components/SignaturePad";
 const DEFECT_TYPES = ["tyres", "engine", "brakes", "electrical", "bodywork", "general"];
 
 export default function Inspection() {
+  const { user } = useAuth();
+  // Turning failed items into a maintenance job is creating a job. Someone who only submits
+  // inspections (an inspector) hands off here: the failed items are on record for the workshop.
+  const canAllocate = can(user, "maintenance", "C");
   const { targetType = "vehicle", vehicleId: routeVehicleId, id: routeId } = useParams();
   const vehicleId = routeVehicleId || routeId; // both route shapes resolve to the same param name inside this component
   const isVehicle = targetType === "vehicle";
@@ -112,7 +118,7 @@ export default function Inspection() {
       const { data } = await api.post("/inspections", payload);
       setInspection(data);
       toast.success(`Inspection complete · ${failCount} failed items`);
-      if (failCount > 0) {
+      if (failCount > 0 && canAllocate) {
         setAlloc({ ...alloc, title: `Repair from inspection · ${vehicle?.name}`, description: `${failCount} failed items on ${new Date().toLocaleDateString()}` });
         setStep("allocate");
       } else {
@@ -310,9 +316,10 @@ export default function Inspection() {
           <div className="mono text-sm">
             <span className="text-primary text-lg font-bold">{failCount}</span> failed / {Object.keys(answers).length} answered
           </div>
-          <button data-testid="submit-inspection" onClick={submit} disabled={odometerMissing || !signature || defectValidationErrors.length > 0}
+          <button data-testid="submit-inspection" onClick={submit} disabled={!can(user, "vehicle_checklist", "C") || odometerMissing || !signature || defectValidationErrors.length > 0}
+            title={can(user, "vehicle_checklist", "C") ? undefined : "You don't have permission to submit inspections"}
             className="flex items-center gap-2 bg-primary px-6 py-3 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed">
-            Complete inspection{failCount > 0 && " & allocate"}
+            Complete inspection{failCount > 0 && canAllocate && " & allocate"}
           </button>
         </div>
       </div>

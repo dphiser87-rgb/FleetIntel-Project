@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { Plus, Truck, Car, Package, FolderSimple } from "@phosphor-icons/react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import GroupManager from "@/components/GroupManager";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 
 const StatusBadge = ({ status }) => {
   const map = {
@@ -47,11 +49,19 @@ export default function Assets() {
     } catch { toast.error("Failed to add"); }
   };
 
-  const del = async (id) => {
-    if (!window.confirm("Delete this asset?")) return;
-    await api.delete(`/assets/${id}`);
-    toast.success("Deleted");
-    load();
+  const { user } = useAuth();
+
+  // Assets with history are archived rather than deleted, so their inspections and jobs stay in reports.
+  const setArchived = async (a, archive) => {
+    const reason = window.prompt(archive
+      ? `Archive ${a.name}? Its inspections and jobs stay in reports. Reason:`
+      : `Why is ${a.name} coming back into use?`);
+    if (!reason || reason.trim().length < 3) return;
+    try {
+      await api.post(`/assets/${a.id}/${archive ? "archive" : "restore"}`, { reason });
+      toast.success(archive ? "Archived" : "Restored");
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't update the asset"); }
   };
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -76,9 +86,9 @@ export default function Assets() {
           <button onClick={() => setShowGroups(true)} data-testid="manage-asset-groups-btn" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
             <FolderSimple size={14} /> Manage groups
           </button>
-          <button data-testid="add-asset-btn" onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
+          {can(user, "assets", "C") && <button data-testid="add-asset-btn" onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90 transition-colors">
             <Plus size={14} weight="bold" /> Add asset
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -146,14 +156,14 @@ export default function Assets() {
                     </div>
                   )}
                 </div>
-                <div className="text-xs text-muted-foreground">{a.category || "—"} · <span className="capitalize">{a.kind}</span></div>
+                <div className="text-xs text-muted-foreground">{a.category || "—"} · <span className="capitalize">{a.kind}</span>{a.status === "archived" && <span className="ml-2 text-[10px] mono uppercase tracking-widest border border-border px-1.5 py-0.5">Archived</span>}</div>
                 <div className="flex gap-2 pt-3">
-                  <Link to={`/inspection/asset/${a.id}`} className="flex-1 border border-border px-3 py-2 text-xs uppercase tracking-widest text-center hover:border-primary hover:text-primary transition-colors" data-testid={`inspect-asset-${a.id}`}>
+                  {a.status !== "archived" && can(user, "vehicle_checklist", "C") && <Link to={`/inspection/asset/${a.id}`} className="flex-1 border border-border px-3 py-2 text-xs uppercase tracking-widest text-center hover:border-primary hover:text-primary transition-colors" data-testid={`inspect-asset-${a.id}`}>
                     Inspect
-                  </Link>
-                  <button onClick={() => del(a.id)} className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid={`delete-asset-${a.id}`}>
-                    Delete
-                  </button>
+                  </Link>}
+                  {can(user, "assets", "D") && <button onClick={() => setArchived(a, a.status !== "archived")} className="border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary" data-testid={`archive-asset-${a.id}`}>
+                    {a.status === "archived" ? "Restore" : "Archive"}
+                  </button>}
                 </div>
               </div>
             </div>

@@ -1,55 +1,27 @@
-// Client-side mirror of backend/server.py's MODULE_KEYS + PROFILE_PRESETS (_default_permissions).
-// Used only for UI gating (hide/disable) — the backend's require_module() is the real enforcement.
-const MODULE_KEYS = [
-  "dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
-  "templates", "maintenance", "parts", "team", "audit", "reports", "security", "purchase_orders", "defects",
-  "executive_dashboard", "parts_requisitions", "quotes",
-];
+// Permissions for the UI: show or hide what a person can do. The server is the real enforcement
+// (require_action in server.py) and sends each user's effective actions on GET /auth/me, so this file
+// no longer keeps its own copy of the role presets -- that copy drifting from the server is what let
+// the nav offer pages the API then refused.
+//
+// Actions per module: V view, C create/submit, E edit, D delete, A approve.
 
-function defaultPermissions(role) {
-  const full = Object.fromEntries(MODULE_KEYS.map((m) => [m, "full"]));
-  // Mirrors the backend's `oversight` set: the activity log, team directory and security policy are
-  // withheld from the blanket read grant and given out explicitly. Keep in step with
-  // _default_permissions -- if this drifts, the nav offers pages the API then refuses with a 403.
-  const OVERSIGHT = ["audit", "team", "security"];
-  const readAll = Object.fromEntries(
-    MODULE_KEYS.map((m) => [m, OVERSIGHT.includes(m) ? "none" : "read"]),
-  );
-  switch (role) {
-    case "admin":
-      return full;
-    case "manager":
-      return { ...full, security: "read", team: "read" };
-    case "inspector":
-      return { ...readAll, vehicle_checklist: "full", templates: "full", fleet: "read", executive_dashboard: "none" };
-    case "mechanic":
-      return { ...readAll, maintenance: "full", parts: "full", defects: "full", parts_requisitions: "full", executive_dashboard: "none" };
-    case "operations_manager":
-      return { ...readAll, maintenance: "full", parts: "full", fleet: "full", reports: "full", defects: "full", executive_dashboard: "none" };
-    case "finance":
-      return { ...readAll, parts: "full", reports: "full", purchase_orders: "full", executive_dashboard: "read" };
-    case "workshop_manager":
-      return { ...readAll, maintenance: "full", purchase_orders: "read", parts: "read", fleet: "read", defects: "full", parts_requisitions: "full", quotes: "full", executive_dashboard: "none" };
-    case "operations_staff":
-      return { ...readAll, maintenance: "full", vehicle_checklist: "full", templates: "full", parts: "full", purchase_orders: "read", defects: "full", executive_dashboard: "none" };
-    case "finance_staff":
-      return { ...readAll, parts: "read", reports: "read", purchase_orders: "read", maintenance: "read", vehicle_checklist: "read", templates: "read", executive_dashboard: "none" };
-    case "executive":
-      // Oversight role: gets audit/team back from the withheld set (see the backend's executive
-      // branch). security stays out — policy configuration, not visibility.
-      return { ...readAll, audit: "read", team: "read" };
-    default:
-      return Object.fromEntries(MODULE_KEYS.map((m) => [m, "none"]));
-  }
+const actionsOf = (user) => (user && user.actions) || {};
+
+// can(user, "fleet", "D") -- may this person delete vehicles?
+export function can(user, moduleKey, action) {
+  return !!user && (actionsOf(user)[moduleKey] || "").includes(action);
 }
 
-const LEVELS = { none: 0, read: 1, full: 2 };
-
+// The older vocabulary, still used for page access: "read" = can view, "full" = any write action.
 export function hasAccess(user, moduleKey, level = "read") {
-  if (!user) return false;
-  const modules = user.permissions?.modules || defaultPermissions(user.role);
-  const userLevel = modules[moduleKey] ?? defaultPermissions(user.role)[moduleKey] ?? "none";
-  return (LEVELS[userLevel] ?? 0) >= LEVELS[level];
+  const acts = actionsOf(user)[moduleKey] || "";
+  return level === "read" ? acts.includes("V") : /[CEDA]/.test(acts);
+}
+
+// Mechanics edit only jobs assigned to them; the server enforces the same rule.
+export function canEditJob(user, job) {
+  if (!can(user, "maintenance", "E")) return false;
+  return !user.own_jobs_only || String(job?.assigned_to || "") === String(user.id);
 }
 
 export const ROLE_LABEL = {

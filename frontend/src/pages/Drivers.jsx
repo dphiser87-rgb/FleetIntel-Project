@@ -8,6 +8,8 @@ import DriverPanel from "@/components/DriverPanel";
 import LicenseExpiryBadge from "@/components/LicenseExpiryBadge";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 
 const STATUS_COLOR = {
   active: "border-primary text-primary",
@@ -93,10 +95,16 @@ export default function Drivers() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drivers, groupFilter, statusFilter, search, sortKey, sortDir, vehicles, trips30dByDriver]);
 
+  const { user } = useAuth();
+
+  // Only a driver with no trips, fuel, jobs or incidents can be deleted; anyone else is set to
+  // Inactive (Edit), which keeps their history. The server explains which applies.
   const del = async (id) => {
-    if (!window.confirm("Delete this driver?")) return;
-    await api.delete(`/drivers/${id}`);
-    toast.success("Deleted"); load();
+    if (!window.confirm("Delete this driver? Drivers with any history can't be deleted; set them to Inactive instead.")) return;
+    try {
+      await api.delete(`/drivers/${id}`);
+      toast.success("Deleted"); load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't delete the driver"); }
   };
 
   const openDetail = async (id) => {
@@ -157,6 +165,7 @@ export default function Drivers() {
           <button onClick={exportCsv} data-testid="download-drivers-csv" className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
             <DownloadSimple size={14} /> Download
           </button>
+          {can(user, "drivers", "C") && <>
           <label className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary cursor-pointer" data-testid="import-drivers-csv">
             <UploadSimple size={14} /> Import drivers
             <input type="file" accept=".csv" className="hidden" onChange={async (e) => {
@@ -177,6 +186,7 @@ export default function Drivers() {
           <button data-testid="add-driver-btn" onClick={() => setPanelDriver("new")} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
             <Plus size={14} weight="bold" /> New driver
           </button>
+          </>}
         </div>
       </header>
 
@@ -221,8 +231,8 @@ export default function Drivers() {
                   </td>
                   <td className="p-3">
                     <div className="flex gap-1">
-                      <button onClick={() => setPanelDriver(d)} data-testid={`edit-driver-${d.id}`} className="border border-border px-2 py-1 text-[10px] uppercase tracking-widest hover:border-primary hover:text-primary">Edit</button>
-                      <button onClick={() => del(d.id)} className="border border-border px-2 py-1 text-[10px] uppercase tracking-widest hover:border-primary hover:text-primary">Delete</button>
+                      {can(user, "drivers", "E") && <button onClick={() => setPanelDriver(d)} data-testid={`edit-driver-${d.id}`} className="border border-border px-2 py-1 text-[10px] uppercase tracking-widest hover:border-primary hover:text-primary">Edit</button>}
+                      {can(user, "drivers", "D") && <button onClick={() => del(d.id)} data-testid={`delete-driver-${d.id}`} className="border border-border px-2 py-1 text-[10px] uppercase tracking-widest hover:border-primary hover:text-primary">Delete</button>}
                     </div>
                   </td>
                 </tr>

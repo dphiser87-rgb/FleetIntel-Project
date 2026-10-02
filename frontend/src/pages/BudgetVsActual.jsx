@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
 import { FloppyDisk } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
-import { hasAccess } from "@/lib/access";
+import { can } from "@/lib/access";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 import { usePolling } from "@/hooks/use-polling";
@@ -19,7 +19,7 @@ const STATUS_COLOR = {
 export default function BudgetVsActual() {
   const { user } = useAuth();
   const { currency } = useCurrency();
-  const canEdit = hasAccess(user, "reports", "full");
+  const canEdit = can(user, "reports", "E");
   const year = new Date().getFullYear();
   const [data, setData] = useState(null);
   const [edits, setEdits] = useState({});
