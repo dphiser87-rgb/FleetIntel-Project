@@ -5,10 +5,10 @@ import { api, downloadFile } from "@/lib/api";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 import PartsRequisitionPanel from "@/components/PartsRequisitionPanel";
 import { usePolling } from "@/hooks/use-polling";
 
-const REQUISITION_APPROVER_ROLES = ["workshop_manager", "admin"];
 const REQUISITION_STATUS_LABEL = { pending_approval: "Pending", approved: "Approved", rejected: "Rejected" };
 const REQUISITION_STATUS_COLOR = {
   pending_approval: "text-[#FFCC00] border-[#FFCC00]",
@@ -61,11 +61,14 @@ export default function Parts() {
     load();
   };
 
+  // Parts with stock movements or requests keep their history and can't be deleted; the server says so.
   const del = async (id) => {
     if (!window.confirm("Delete this part?")) return;
-    await api.delete(`/parts/${id}`);
-    toast.success("Deleted");
-    load();
+    try {
+      await api.delete(`/parts/${id}`);
+      toast.success("Deleted");
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't delete the part"); }
   };
 
   const lowStock = parts.filter(p => (p.stock || 0) <= (p.reorder_point || 0));
@@ -87,12 +90,15 @@ export default function Parts() {
             <div className="overline">Low stock</div>
             <div className={`mono text-xl font-bold mt-1 ${lowStock.length ? "text-primary" : ""}`}>{lowStock.length}</div>
           </div>
+          {can(user, "parts", "C") && <>
           <button data-testid="add-part-btn" onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
             <Plus size={14} weight="bold" /> Add part
           </button>
+          </>}
           <button data-testid="export-parts-csv" onClick={() => downloadFile("/export/parts.csv", "parts-inventory.csv")} className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
             <DownloadSimple size={14} /> Export CSV
           </button>
+          {can(user, "parts", "C") && <>
           <label className="flex items-center gap-2 border border-border px-3 py-2 text-xs uppercase tracking-widest hover:border-primary hover:text-primary cursor-pointer" data-testid="import-parts-csv">
             <DownloadSimple size={14} className="rotate-180" /> Import CSV
             <input type="file" accept=".csv" className="hidden" onChange={async (e) => {
@@ -106,6 +112,7 @@ export default function Parts() {
               e.target.value = "";
             }} />
           </label>
+          </>}
         </div>
       </header>
 
@@ -181,9 +188,11 @@ export default function Parts() {
                     <td className="p-3 text-right mono">{formatMoneyFull((p.stock || 0) * (p.unit_cost || 0), currency, 2)}</td>
                     <td className="p-3">
                       <div className="flex gap-1">
+                        {can(user, "parts", "E") && <>
                         <button onClick={() => adjust(p, 1)} data-testid={`add-stock-${p.sku}`} className="border border-border p-1 hover:border-[#34C759] hover:text-[#34C759]"><Plus size={12} /></button>
                         <button onClick={() => adjust(p, -1)} data-testid={`sub-stock-${p.sku}`} className="border border-border p-1 hover:border-primary hover:text-primary"><Minus size={12} /></button>
-                        <button onClick={() => del(p.id)} className="border border-border p-1 hover:border-primary hover:text-primary"><Trash size={12} /></button>
+                        </>}
+                        {can(user, "parts", "D") && <button onClick={() => del(p.id)} data-testid={`delete-part-${p.sku}`} className="border border-border p-1 hover:border-primary hover:text-primary"><Trash size={12} /></button>}
                       </div>
                     </td>
                   </tr>
@@ -236,7 +245,7 @@ export default function Parts() {
           <div className="bg-[#0b0b0d] border border-border max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()} data-testid="requisition-modal">
             <PartsRequisitionPanel
               requisition={openRequisition}
-              canDecide={openRequisition.status === "pending_approval" && REQUISITION_APPROVER_ROLES.includes(user?.role)}
+              canDecide={openRequisition.status === "pending_approval" && can(user, "parts_requisitions", "A")}
               onDecide={decideRequisition}
             />
           </div>

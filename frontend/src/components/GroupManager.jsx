@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import {
@@ -25,6 +27,10 @@ export default function GroupManager({
 }) {
   const { currency } = useCurrency();
   const kind = KIND_BY_ENDPOINT[endpoint] || "vehicle";
+  // Groups belong to the module of what they group: vehicle groups to fleet, and so on.
+  const module = { vehicle: "fleet", asset: "assets", driver: "drivers" }[kind] || "fleet";
+  const { user } = useAuth();
+  const canCreate = can(user, module, "C"), canEdit = can(user, module, "E"), canDelete = can(user, module, "D");
   const entityEndpoint = ENTITY_ENDPOINT[kind];
   const entityLabel = ENTITY_LABEL[kind];
 
@@ -399,18 +405,18 @@ export default function GroupManager({
 
   return (
     <div className="space-y-4" data-testid="group-manager">
-      <button onClick={openCreate} data-testid="new-group-btn"
+      {canCreate && <button onClick={openCreate} data-testid="new-group-btn"
         className="w-full flex items-center justify-center gap-1 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
         <Plus size={14} weight="bold" /> New {KIND_LABEL[kind].toLowerCase()} group
-      </button>
+      </button>}
 
       <div className="space-y-2">
         {groups.map((g) => (
           <div key={g.id} className="flex items-center gap-3 border border-border p-3" data-testid={`group-row-${g.id}`}>
             <span className="w-3 h-3 shrink-0 rounded-sm" style={{ background: g.color || "#636366" }} />
             <span className="flex-1 text-sm truncate">{g.name}</span>
-            <button onClick={() => openEdit(g)} className="text-muted-foreground hover:text-primary" data-testid={`edit-group-${g.id}`}><PencilSimple size={16} /></button>
-            <button onClick={() => removeGroup(g.id)} className="text-muted-foreground hover:text-destructive" data-testid={`delete-group-${g.id}`}><Trash size={16} /></button>
+            {canEdit && <button onClick={() => openEdit(g)} className="text-muted-foreground hover:text-primary" data-testid={`edit-group-${g.id}`}><PencilSimple size={16} /></button>}
+            {canDelete && <button onClick={() => removeGroup(g.id)} className="text-muted-foreground hover:text-destructive" data-testid={`delete-group-${g.id}`}><Trash size={16} /></button>}
           </div>
         ))}
         {groups.length === 0 && <div className="text-sm text-muted-foreground py-6 text-center">{emptyHint}</div>}

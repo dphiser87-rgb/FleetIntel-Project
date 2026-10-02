@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 import { toast } from "sonner";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -33,6 +35,7 @@ const DeltaBadge = ({ pct }) => {
 };
 
 export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) {
+  const { user } = useAuth();
   const { currency } = useCurrency();
   const [period, setPeriod] = useState("all");
   const [data, setData] = useState(null);
@@ -167,9 +170,9 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) 
         <div className="bg-[#121214] border border-border p-4">
           <div className="flex items-center justify-between mb-2">
             <div className="overline">Fuel log ({fuel_logs.length})</div>
-            <button onClick={() => setShowFuelForm((s) => !s)} data-testid="log-fuel-toggle" className="flex items-center gap-1 text-xs uppercase tracking-widest text-primary hover:text-primary/80">
+            {can(user, "fleet", "C") && <button onClick={() => setShowFuelForm((s) => !s)} data-testid="log-fuel-toggle" className="flex items-center gap-1 text-xs uppercase tracking-widest text-primary hover:text-primary/80">
               <Plus size={12} /> Log purchase
-            </button>
+            </button>}
           </div>
           {showFuelForm && (
             <form onSubmit={logFuel} className="grid grid-cols-2 gap-2 mb-3 p-3 border border-primary/40 bg-primary/5" data-testid="fuel-log-form">
@@ -194,9 +197,9 @@ export default function Level3Vehicle({ vehicleId, onDrillEvent, onDrillCost }) 
         <div className="bg-[#121214] border border-border p-4">
           <div className="flex items-center justify-between mb-2">
             <div className="overline">Trips ({tripLogs.length})</div>
-            <button onClick={() => setShowTripForm((s) => !s)} data-testid="log-trip-toggle" className="flex items-center gap-1 text-xs uppercase tracking-widest text-primary hover:text-primary/80">
+            {can(user, "fleet", "C") && <button onClick={() => setShowTripForm((s) => !s)} data-testid="log-trip-toggle" className="flex items-center gap-1 text-xs uppercase tracking-widest text-primary hover:text-primary/80">
               <Plus size={12} /> Log trip
-            </button>
+            </button>}
           </div>
           {showTripForm && (
             <form onSubmit={logTrip} className="grid grid-cols-2 gap-2 mb-3 p-3 border border-primary/40 bg-primary/5" data-testid="trip-log-form">

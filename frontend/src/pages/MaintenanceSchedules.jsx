@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Plus, PencilSimple, Wrench, Stack } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
-import { hasAccess } from "@/lib/access";
+import { can } from "@/lib/access";
 import ScheduleFormPanel from "@/components/maintenance/ScheduleFormPanel";
 import ApplyTemplatePanel from "@/components/maintenance/ApplyTemplatePanel";
 import MaintenanceSchedulingHub from "@/components/maintenance/MaintenanceSchedulingHub";
@@ -16,7 +16,8 @@ const STATUS_RANK = { overdue: 0, due_soon: 1, on_track: 2, awaiting_telematics:
 export default function MaintenanceSchedules() {
   const { user } = useAuth();
   const { currency } = useCurrency();
-  const canManage = hasAccess(user, "maintenance", "full");
+  // Workshop configuration: not for roles limited to their own jobs (the server refuses them too).
+  const canManage = can(user, "maintenance", "E") && !user?.own_jobs_only;
   const [schedules, setSchedules] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [assets, setAssets] = useState([]);

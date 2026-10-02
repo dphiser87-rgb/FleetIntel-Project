@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { Warning, DownloadSimple, Trash, PencilSimple, X as XIcon, MagnifyingGlass, CaretLeft, CaretRight, Image as ImageIcon, FilePdf, ShareNetwork, Copy, EnvelopeSimple } from "@phosphor-icons/react";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 
 const SEVERITY_STYLES = {
   severe: "border-primary text-primary bg-primary/10",
@@ -86,11 +88,7 @@ export default function Incidents() {
     toast.success(`Exported ${filtered.length} incident${filtered.length !== 1 ? "s" : ""}`);
   };
 
-  const del = async (id) => {
-    if (!window.confirm("Delete this incident?")) return;
-    try { await api.delete(`/incidents/${id}`); toast.success("Deleted"); load(); }
-    catch { toast.error("Failed to delete"); }
-  };
+  const { user } = useAuth();
 
   const openShare = async (incident) => {
     setSharing(incident);
@@ -226,10 +224,9 @@ export default function Incidents() {
                       )}
                     </div>
                     <div className="flex flex-col gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => openShare(i)} data-testid={`share-incident-${i.id}`} title="Share with insurance" className="text-muted-foreground hover:text-primary p-1"><ShareNetwork size={14} /></button>
+                      {can(user, "incidents", "E") && <button onClick={() => openShare(i)} data-testid={`share-incident-${i.id}`} title="Share with insurance" className="text-muted-foreground hover:text-primary p-1"><ShareNetwork size={14} /></button>}
                       <button onClick={() => downloadFile(`/incidents/${i.id}/pdf`, `incident-${i.id}.pdf`)} data-testid={`pdf-incident-${i.id}`} title="Download insurance PDF" className="text-muted-foreground hover:text-primary p-1"><FilePdf size={14} /></button>
-                      <button onClick={() => setEditing({ ...i, driver_id: i.driver_id || "", resolution_notes: i.resolution_notes || "" })} data-testid={`edit-incident-${i.id}`} className="text-muted-foreground hover:text-primary p-1"><PencilSimple size={14} /></button>
-                      <button onClick={() => del(i.id)} data-testid={`delete-incident-${i.id}`} className="text-muted-foreground hover:text-primary p-1"><Trash size={14} /></button>
+                      {can(user, "incidents", "E") && <button onClick={() => setEditing({ ...i, driver_id: i.driver_id || "", resolution_notes: i.resolution_notes || "" })} data-testid={`edit-incident-${i.id}`} className="text-muted-foreground hover:text-primary p-1"><PencilSimple size={14} /></button>}
                     </div>
                   </div>
                 </div>

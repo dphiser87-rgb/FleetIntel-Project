@@ -220,15 +220,108 @@ def require_any_module(*modules: str, level: str = "read"):
     return dep
 
 def _assert_module(user: dict, module: str, level: str = "read") -> None:
-    """The module check itself, callable outside the Depends() chain — download routes resolve their
-    own user (they accept ?token= because an <a href> can't set an Authorization header) and so can't
-    express the gate as a dependency, but must still enforce the same matrix."""
-    modules = (user.get("permissions") or {}).get("modules") or {}
-    user_level = modules.get(module)
-    if user_level is None:
-        user_level = PROFILE_PRESETS.get(user.get("role"), {}).get("modules", {}).get(module, "none")
-    if _ACCESS_LEVELS.get(user_level, 0) < _ACCESS_LEVELS[level]:
+    """Module-level check in the old vocabulary: "read" means the View action, "full" means any write
+    action. Write routes check a specific action through require_action() instead."""
+    acts = _user_actions(user).get(module, "")
+    ok = ("V" in acts) if level == "read" else any(a in acts for a in "CEDA")
+    if not ok:
         raise HTTPException(status_code=403, detail=f"Insufficient access to {module}")
+
+ACTION_WORDS = {"V": "view", "C": "create", "E": "edit", "D": "delete", "A": "approve"}
+
+async def _has_action(user: dict, module: str, action: str) -> bool:
+    if action in _user_actions(user).get(module, ""):
+        return True
+    # A company without a Workshop Manager can name another role to submit job costing (quotes) in
+    # its place (Settings -> costing approver). Checked here, live, rather than copied into each
+    # user's saved permissions. Deciding a quote still follows the approve permissions.
+    if module == "quotes" and action == "C":
+        ws = await fetch_one("select costing_approver_role from workspaces where id = :id", id=user["workspace_id"])
+        return bool(ws and ws.get("costing_approver_role") and ws["costing_approver_role"] == user.get("role"))
+    return False
+
+async def assert_action(user: dict, module: str, action: str) -> None:
+    if not await _has_action(user, module, action):
+        raise HTTPException(status_code=403, detail=f"You don't have permission to {ACTION_WORDS[action]} {module.replace('_', ' ')}")
+
+def require_action(module: str, action: str):
+    """Route gate for one write action, e.g. require_action("fleet", "D") on DELETE /vehicles/{vid}."""
+    async def dep(user: dict = Depends(get_current_user)):
+        await assert_action(user, module, action)
+        return user
+    return dep
+
+def require_any_action(*pairs: tuple):
+    """Passes if the user has any one of the (module, action) pairs."""
+    async def dep(user: dict = Depends(get_current_user)):
+        for module, action in pairs:
+            if await _has_action(user, module, action):
+                return user
+        raise HTTPException(status_code=403, detail="You don't have permission to do that")
+    return dep
+
+# --- Records with history are never deleted ---------------------------------------------------------
+# Nobody, Customer Admin included, permanently deletes a record that operational or financial history
+# hangs off. Vehicles, drivers and assets are archived or deactivated instead; costs, inspections and
+# jobs are voided with a reason. Only an unused record with nothing attached can be deleted. Several of
+# these deletes used to cascade: deleting a vehicle silently deleted its fuel logs, inspections and trips.
+HISTORY_CHECKS = {
+    "vehicle": ["select 1 from maintenance where workspace_id = :ws and vehicle_id = :id", "select 1 from inspections where workspace_id = :ws and vehicle_id = :id",
+                "select 1 from fuel_logs where workspace_id = :ws and vehicle_id = :id", "select 1 from trip_logs where workspace_id = :ws and vehicle_id = :id",
+                "select 1 from incidents where workspace_id = :ws and vehicle_id = :id", "select 1 from defects where workspace_id = :ws and vehicle_id = :id"],
+    "driver": ["select 1 from maintenance where workspace_id = :ws and driver_id = :id", "select 1 from fuel_logs where workspace_id = :ws and driver_id = :id",
+               "select 1 from trip_logs where workspace_id = :ws and driver_id = :id", "select 1 from incidents where workspace_id = :ws and driver_id = :id",
+               "select 1 from user_profiles where workspace_id = :ws and driver_id = :id"],
+    "asset": ["select 1 from maintenance where workspace_id = :ws and asset_id = :id", "select 1 from inspections where workspace_id = :ws and asset_id = :id",
+              "select 1 from defects where workspace_id = :ws and asset_id = :id"],
+    "job": ["select 1 from maintenance where workspace_id = :ws and id = :id and (status <> 'pending' or coalesce(actual_cost, 0) > 0 "
+            "or coalesce(jsonb_array_length(completion_documents), 0) > 0)",
+            "select 1 from parts_requisitions where workspace_id = :ws and maintenance_id = :id", "select 1 from quotes where workspace_id = :ws and maintenance_id = :id",
+            "select 1 from purchase_orders where workspace_id = :ws and maintenance_id = :id", "select 1 from defects where workspace_id = :ws and maintenance_id = :id"],
+    "part": ["select 1 from parts_history where workspace_id = :ws and part_id = :id",
+             "select 1 from parts_requisitions where workspace_id = :ws and items::text like '%' || :id || '%'"],
+    "template": ["select 1 from inspections where workspace_id = :ws and template_id = :id"],
+    "defect": ["select 1 from defects where workspace_id = :ws and id = :id and (maintenance_id is not null or inspection_id is not null "
+               "or coalesce(estimated_cost, 0) > 0 or status <> 'open')"],
+}
+
+HISTORY_TABLES = {"vehicle": "vehicles", "driver": "drivers", "asset": "assets", "job": "maintenance",
+                  "part": "parts", "template": "templates", "defect": "defects"}
+
+async def refuse_if_history(user: dict, kind: str, rid: str, instead: str) -> None:
+    ws = user["workspace_id"]
+    if not await fetch_one(f"select 1 from {HISTORY_TABLES[kind]} where id = :id and workspace_id = :ws", id=rid, ws=ws):
+        raise HTTPException(status_code=404, detail="Not found")
+    for sql in HISTORY_CHECKS[kind]:
+        if await fetch_one(sql + " limit 1", id=rid, ws=ws):
+            raise HTTPException(status_code=409, detail=f"This {kind} has history attached, so it can't be deleted. {instead}")
+
+def refuse_delete(kind: str, instead: str):
+    """For record types that are history in their own right (fuel and trip entries, incidents)."""
+    raise HTTPException(status_code=409, detail=f"A {kind} is kept on record and can't be deleted. {instead}")
+
+def require_maintenance_config(action: str):
+    """Schedules, maintenance templates and job types share the maintenance module, but they're
+    workshop configuration, not jobs: a role limited to its own jobs (mechanic) can't manage them."""
+    async def dep(user: dict = Depends(get_current_user)):
+        await assert_action(user, "maintenance", action)
+        if user.get("role") in OWN_JOBS_ONLY:
+            raise HTTPException(status_code=403, detail="Maintenance schedules and templates are managed by the workshop managers")
+        return user
+    return dep
+
+async def assert_job_editable(user: dict, job: dict) -> None:
+    """Mechanics edit only jobs assigned to them. 404 rather than 403, so a job's existence isn't
+    confirmed to someone who can't work on it -- the same answer GET /maintenance/{mid}/quotes gives."""
+    if user.get("role") in OWN_JOBS_ONLY and str(job.get("assigned_to") or "") != str(user["id"]):
+        raise HTTPException(status_code=404, detail="Maintenance job not found")
+
+async def effective_actions(user: dict) -> dict:
+    """What the web app shows and hides by: the user's actions plus the costing-approver grant."""
+    acts = dict(_user_actions(user))
+    if "C" not in acts.get("quotes", "") and await _has_action(user, "quotes", "C"):
+        acts["quotes"] = "".join(a for a in ACTIONS if a in acts.get("quotes", "") + "VC")
+    return acts
 
 async def download_user(request: Request, module: str, level: str = "read") -> dict:
     """Auth for file-download routes: normal Authorization header, then the same module gate the JSON
@@ -685,7 +778,6 @@ class EmailInsuranceReq(BaseModel):
     to_email: EmailStr
     note: Optional[str] = ""
 
-DEFECT_PRICING_ROLES = ("workshop_manager", "operations_manager", "finance", "admin")
 
 class DefectIn(BaseModel):
     vehicle_id: Optional[str] = None
@@ -794,16 +886,15 @@ async def register(req: RegisterReq):
         raise HTTPException(status_code=400, detail="Invite email mismatch")
     workspace_id = invite["workspace_id"]
     role = invite.get("role") or req.role
-    invite_permissions = invite.get("permissions") or PROFILE_PRESETS.get(role, {})
+    # Store scope settings only, so the user follows their role's preset as it changes. A copy of the
+    # preset's actions would freeze them on today's defaults. An invite with its own permissions keeps them.
+    invite_permissions = invite.get("permissions") or _preset_scope(role)
     target_ws = await fetch_one(
         "select min_password_length, costing_approver_role from workspaces where id = :id", id=workspace_id
     )
     min_password_length = (target_ws or {}).get("min_password_length") or 8
-    # Workspaces with no dedicated Workshop Manager can designate another role as costing
-    # approver (Settings -> costing_approver_role) -- apply it here so it takes effect on every
-    # new hire automatically, not just the people already on the team when the setting was set.
-    if target_ws and target_ws.get("costing_approver_role") == role:
-        invite_permissions = {**invite_permissions, "modules": {**invite_permissions.get("modules", {}), "quotes": "full"}}
+    # The costing approver setting (Settings) is checked live by _has_action(), so a new hire in that
+    # role can submit quotes without anything being copied into their permissions.
 
     if len(req.password) < min_password_length:
         raise HTTPException(status_code=400, detail=f"Password must be at least {min_password_length} characters")
@@ -868,7 +959,7 @@ async def provision_workspace(req: ProvisionWorkspaceReq, _owner: dict = Depends
             "insert into user_profiles (id, email, name, role, workspace_id, permissions) "
             "values (:id, :email, :name, 'admin', :workspace_id, :permissions ::jsonb)",
             id=user_id, email=email, name=req.admin_name, workspace_id=workspace_id,
-            permissions=json_dumps(PROFILE_PRESETS.get("admin", {})),
+            permissions=json_dumps(_preset_scope("admin")),
         )
     except Exception:
         await auth_supabase.admin_delete_user(user_id)
@@ -1185,7 +1276,7 @@ async def twofa_status(user: dict = Depends(get_current_user)):
 
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    return user
+    return {**user, "actions": await effective_actions(user), "own_jobs_only": user.get("role") in OWN_JOBS_ONLY}
 
 @api.post("/auth/logout")
 async def logout(user: dict = Depends(get_current_user)):
@@ -1193,66 +1284,108 @@ async def logout(user: dict = Depends(get_current_user)):
 
 MODULE_KEYS = ["dashboard", "fleet", "assets", "drivers", "incidents", "vehicle_checklist",
                "templates", "maintenance", "parts", "team", "audit", "reports", "security",
-               "purchase_orders", "defects", "executive_dashboard", "parts_requisitions", "quotes"]
+               "purchase_orders", "defects", "executive_dashboard", "parts_requisitions", "quotes",
+               "settings"]
+
+# --- Permissions: five separate actions per module --------------------------------------------------
+# V view, C create/submit, E edit, D delete, A approve. A role's preset says which of these it has on
+# each module; a user can be given their own set instead (Team -> Permissions). Read access never
+# allows a write: every create/edit/delete/approve route checks its own action.
+#
+# Two distinctions this is built around: submitting an inspection (vehicle_checklist C) never allows
+# editing its template (templates E), and recording parts used on a job (parts_requisitions C) never
+# allows managing stock (parts C/E) or approving costs (quotes/purchase_orders A).
+ACTIONS = "VCEDA"
+MODULE_ACTIONS = {
+    "dashboard": "V", "fleet": "VCED", "assets": "VCED", "drivers": "VCED", "incidents": "VCED",
+    "vehicle_checklist": "VC", "templates": "VCED", "maintenance": "VCED", "parts": "VCED",
+    "team": "VCED", "audit": "V", "reports": "VCED", "security": "VE", "purchase_orders": "VCEA",
+    "defects": "VCEDA", "executive_dashboard": "VE", "parts_requisitions": "VCA", "quotes": "VCA",
+    "settings": "VE",
+}
+# Every staff role sees the operational modules; the activity log, user management, security policy
+# and the executive dashboard are given out explicitly.
+_STAFF_VIEW = {m: "V" for m in MODULE_KEYS if m not in ("team", "security", "audit", "executive_dashboard")}
+ACTION_PRESETS = {
+    # Customer Admin: everything in their own company. Records with history are archived or voided,
+    # never deleted -- that rule lives on the delete routes, not here.
+    "admin": dict(MODULE_ACTIONS),
+    # Fleet Manager: runs vehicles, drivers, assets, incidents and maintenance. Security policy and
+    # user access are Customer Admin only.
+    "manager": {**_STAFF_VIEW, "fleet": "VCED", "assets": "VCED", "drivers": "VCED", "incidents": "VCED",
+                "maintenance": "VCED", "vehicle_checklist": "VC", "templates": "VCED", "defects": "VCED",
+                "parts": "VCE", "parts_requisitions": "VC", "quotes": "VC", "reports": "VCED",
+                "executive_dashboard": "V", "settings": "VE", "team": "V", "security": "V", "audit": "V"},
+    # Daily operations; approves the operations stage of a quote; sees stock and requests parts but
+    # doesn't move stock.
+    "operations_manager": {**_STAFF_VIEW, "fleet": "VCE", "assets": "VCE", "drivers": "VCE", "incidents": "VCE",
+                           "maintenance": "VCE", "vehicle_checklist": "VC", "defects": "VCEA", "quotes": "VA",
+                           "parts_requisitions": "VC", "reports": "VCE"},
+    # Jobs, defects, parts and workshop inspections; approves requisitions.
+    "workshop_manager": {**_STAFF_VIEW, "maintenance": "VCE", "defects": "VCEA", "parts": "VCE",
+                         "parts_requisitions": "VCA", "quotes": "VC", "vehicle_checklist": "VC"},
+    # Creates jobs (the mobile workshop app does) but edits only jobs assigned to them -- see
+    # OWN_JOBS_ONLY. Records parts used, submits inspections, reports defects.
+    "mechanic": {**_STAFF_VIEW, "maintenance": "VCE", "parts_requisitions": "VC", "vehicle_checklist": "VC", "defects": "VC"},
+    # Submits inspections and reports defects. Template editing is a separate grant.
+    "inspector": {**_STAFF_VIEW, "vehicle_checklist": "VC", "defects": "VC"},
+    # Purchase orders and payment, the finance stage of quotes, defect pricing, budgets and reports.
+    "finance": {**_STAFF_VIEW, "purchase_orders": "VCEA", "defects": "VA", "reports": "VCE", "executive_dashboard": "V"},
+    # Sees everything, edits nothing operational. Keeps edit on the executive dashboard itself (its
+    # board email and summary), which the installed executive mobile app relies on.
+    "executive": {**_STAFF_VIEW, "executive_dashboard": "VE", "team": "V", "audit": "V"},
+    "operations_staff": {**_STAFF_VIEW, "maintenance": "VCE", "vehicle_checklist": "VC", "defects": "VC", "parts_requisitions": "VC"},
+    "finance_staff": dict(_STAFF_VIEW),
+    # Mobile app only: submits their own vehicle's checklist.
+    "driver": {"vehicle_checklist": "VC"},
+}
+# Roles whose maintenance edits are limited to jobs assigned to them.
+OWN_JOBS_ONLY = {"mechanic"}
+
+def _legacy_level(acts: str) -> str:
+    """The old none/read/full value for a set of actions. Installed mobile apps and older saved data
+    still read this shape from GET /permissions/presets."""
+    if any(a in acts for a in "CEDA"):
+        return "full"
+    return "read" if "V" in acts else "none"
+
+def _clean_actions(acts: dict) -> dict:
+    """Keeps only real modules and the actions each module supports, in VCEDA order."""
+    out = {}
+    for m in MODULE_KEYS:
+        given = (acts or {}).get(m) or ""
+        out[m] = "".join(a for a in ACTIONS if a in given and a in MODULE_ACTIONS[m])
+    return out
 
 def _default_permissions(role: str) -> dict:
-    """Pre-fills System Rights from a Profile (role). Enforced on routes via require_module()."""
-    full = {m: "full" for m in MODULE_KEYS}
-    # Oversight modules are withheld from the blanket read grant below: the activity log, the team
-    # directory and the security policy expose every user's email and actions, which an operational
-    # role doesn't need to do its job. Roles that should see them are granted them explicitly.
-    # Assignee pickers read GET /users/directory (names only) rather than the full team list.
-    oversight = ("audit", "team", "security")
-    read_all = {m: ("none" if m in oversight else "read") for m in MODULE_KEYS}
-    if role == "admin":
-        modules = full
-    elif role == "manager":
-        modules = {**full, "security": "read", "team": "read"}
-    elif role == "inspector":
-        modules = {**read_all, "vehicle_checklist": "full", "templates": "full", "fleet": "read", "executive_dashboard": "none"}
-    elif role == "mechanic":
-        modules = {**read_all, "maintenance": "full", "parts": "full", "defects": "full", "parts_requisitions": "full", "executive_dashboard": "none"}
-    elif role == "operations_manager":
-        modules = {**read_all, "maintenance": "full", "parts": "full", "fleet": "full", "reports": "full", "defects": "full", "executive_dashboard": "none"}
-    elif role == "finance":
-        # Finance explicitly gets executive_dashboard visibility (per product decision) — it's not
-        # part of read_all's blanket grant since most other roles above are deliberately excluded.
-        modules = {**read_all, "parts": "full", "reports": "full", "purchase_orders": "full", "executive_dashboard": "read"}
-    elif role == "workshop_manager":
-        modules = {**read_all, "maintenance": "full", "purchase_orders": "read", "parts": "read", "fleet": "read", "defects": "full", "parts_requisitions": "full", "quotes": "full", "executive_dashboard": "none"}
-    elif role == "operations_staff":
-        modules = {**read_all, "maintenance": "full", "vehicle_checklist": "full", "templates": "full",
-                   "parts": "full", "purchase_orders": "read", "defects": "full", "executive_dashboard": "none"}
-    elif role == "finance_staff":
-        modules = {**read_all, "parts": "read", "reports": "read", "purchase_orders": "read",
-                   "maintenance": "read", "vehicle_checklist": "read", "templates": "read", "executive_dashboard": "none"}
-    elif role == "executive":
-        # Pure oversight — full visibility everywhere, no write access anywhere. For CEO/COO-level
-        # profiles: they need to see everything to make decisions, but shouldn't be editing records.
-        # That mandate is why this is the one non-admin role handed the audit log and team directory
-        # back after `oversight` withheld them: "see everything" is the whole point of the role.
-        # `security` stays out — that's policy configuration, not visibility.
-        modules = {**read_all, "audit": "read", "team": "read"}
-    elif role == "driver":
-        # The most restrictive preset by design: a driver's whole job in the app is running their
-        # assigned vehicle's checklist -- nothing else. Not even read access elsewhere, unlike every
-        # other role above which defaults to read_all.
-        modules = {**{m: "none" for m in MODULE_KEYS}, "vehicle_checklist": "full"}
-    else:
-        modules = {m: "none" for m in MODULE_KEYS}
+    """A role's preset: per-action permissions, the legacy module levels derived from them, and the
+    data-scope defaults (empty lists mean unrestricted)."""
+    actions = _clean_actions(ACTION_PRESETS.get(role, {}))
     return {
-        "modules": modules,
-        # Data-level scope, orthogonal to the module (none/read/full) permissions above — empty lists
-        # mean unrestricted (the existing "All" fallback the Team panel already displays), matching
-        # every preset's default of full visibility until an admin narrows a specific user down.
+        "actions": actions,
+        "modules": {m: _legacy_level(a) for m, a in actions.items()},
         "vehicle_group_ids": [], "vehicle_ids": [],
         "asset_group_ids": [], "asset_ids": [],
         "driver_group_ids": [], "trip_data_access": True, "address_access": True,
     }
 
+def _user_actions(user: dict) -> dict:
+    """The actions this user has on each module. A user's own saved `actions` replace their role's
+    preset. Saved permissions from before actions existed only hold a `modules` copy of an old preset
+    (the Team panel saved the whole matrix on first edit), so those fall back to the current preset."""
+    saved = (user.get("permissions") or {}).get("actions")
+    if isinstance(saved, dict):
+        return _clean_actions(saved)
+    return _clean_actions(ACTION_PRESETS.get(user.get("role"), {}))
+
 PROFILE_PRESETS = {role: _default_permissions(role) for role in
                     ("admin", "manager", "inspector", "mechanic", "operations_manager", "finance",
                      "workshop_manager", "operations_staff", "finance_staff", "executive", "driver")}
+
+def _preset_scope(role: str) -> dict:
+    """What a new user's saved permissions start as: the role's scope settings only. Their actions come
+    from ACTION_PRESETS live, so a later change to a role's defaults reaches everyone in that role."""
+    return {k: v for k, v in PROFILE_PRESETS.get(role, {}).items() if k not in ("actions", "modules")}
 
 # --- Vehicle/asset visibility scoping ---
 # A second, data-level axis on top of the module (none/read/full) permissions above: which specific
@@ -1340,7 +1473,7 @@ async def users_directory(user: dict = Depends(require_any_module("maintenance",
 
 @api.get("/permissions/presets")
 async def get_permission_presets(user: dict = Depends(get_current_user)):
-    return {"module_keys": MODULE_KEYS, "presets": PROFILE_PRESETS}
+    return {"module_keys": MODULE_KEYS, "module_actions": MODULE_ACTIONS, "presets": PROFILE_PRESETS}
 
 @api.patch("/users/me")
 async def update_my_profile(req: ProfileUpdate, user: dict = Depends(get_current_user)):
@@ -1364,18 +1497,32 @@ async def update_my_profile(req: ProfileUpdate, user: dict = Depends(get_current
     return doc
 
 @api.patch("/users/{uid}")
-async def update_user(uid: str, patch: dict, user: dict = Depends(get_current_user)):
-    if user.get("role") not in ("admin", "manager"):
-        raise HTTPException(status_code=403, detail="Forbidden")
+async def update_user(uid: str, patch: dict, user: dict = Depends(require_action("team", "E"))):
     target = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
     if not target: raise HTTPException(status_code=404, detail="Not found")
+    grants = "role" in patch or "permissions" in patch
+    if grants and uid == user["id"]:
+        raise HTTPException(status_code=403, detail="You can't change your own role or permissions. Ask another Customer Admin.")
+    details = {"name": target["name"], "fields": list(patch.keys())}
+    if "permissions" in patch:
+        perms = dict(patch["permissions"] or {})
+        if "actions" in perms:
+            perms["actions"] = _clean_actions(perms["actions"])
+        perms.pop("modules", None)  # the legacy copy is derived, never stored
+        patch = {**patch, "permissions": perms}
+        before, after = _user_actions(target), _user_actions({**target, "permissions": perms})
+        changed = {m: {"from": before[m], "to": after[m]} for m in MODULE_KEYS if before[m] != after[m]}
+        if changed:
+            details["actions_changed"] = changed
+    if "role" in patch and patch["role"] != target.get("role"):
+        details["role_changed"] = {"from": target.get("role"), "to": patch["role"]}
     await update_row("user_profiles", uid, user["workspace_id"], patch, USER_COLS)
     doc = await fetch_one(f"select {SAFE_USER_COLS} from user_profiles where id = :id", id=uid)
-    await log_event(user, "user.updated", "user", uid, {"name": doc["name"], "fields": list(patch.keys())})
+    await log_event(user, "user.permissions_changed" if grants else "user.updated", "user", uid, details)
     return doc
 
 @api.post("/users/{uid}/deactivate")
-async def deactivate_user(uid: str, user: dict = Depends(get_current_user)):
+async def deactivate_user(uid: str, user: dict = Depends(require_action("team", "E"))):
     if user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Forbidden")
     target = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
@@ -1421,7 +1568,7 @@ async def _recent_reset_exists(user_id: str) -> bool:
     return row is not None
 
 @api.post("/users/{uid}/reset-password")
-async def reset_user_password(uid: str, user: dict = Depends(get_current_user)):
+async def reset_user_password(uid: str, user: dict = Depends(require_action("team", "E"))):
     """Admin/manager-triggered reset: emails the target's address on file (never the caller's) a
     first-party link that expires in PASSWORD_RESET_TTL_MINUTES. Uses our own token table rather than
     Supabase's hosted /recover flow, whose link expiry is a project-level setting we can't override
@@ -1490,7 +1637,7 @@ async def complete_password_reset(req: PasswordResetComplete):
     return {"ok": True}
 
 @api.post("/users/{uid}/unlock")
-async def unlock_user(uid: str, user: dict = Depends(get_current_user)):
+async def unlock_user(uid: str, user: dict = Depends(require_action("team", "E"))):
     if user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Forbidden")
     target = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
@@ -1500,7 +1647,7 @@ async def unlock_user(uid: str, user: dict = Depends(get_current_user)):
     return await fetch_one(f"select {SAFE_USER_COLS} from user_profiles where id = :id", id=uid)
 
 @api.post("/users/{uid}/duplicate")
-async def duplicate_user(uid: str, user: dict = Depends(get_current_user)):
+async def duplicate_user(uid: str, user: dict = Depends(require_action("team", "C"))):
     if user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Forbidden")
     src = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
@@ -1519,7 +1666,7 @@ async def duplicate_user(uid: str, user: dict = Depends(get_current_user)):
     return doc
 
 @api.delete("/users/{uid}")
-async def delete_user(uid: str, user: dict = Depends(get_current_user)):
+async def delete_user(uid: str, user: dict = Depends(require_action("team", "D"))):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Only admins can remove team members")
     target = await fetch_one("select * from user_profiles where id = :id and workspace_id = :ws", id=uid, ws=user["workspace_id"])
@@ -1573,7 +1720,7 @@ async def list_vehicle_groups(user: dict = Depends(require_module("fleet"))):
     return await fetch_all("select * from vehicle_groups where workspace_id = :ws order by name", ws=user["workspace_id"])
 
 @api.post("/vehicle-groups")
-async def create_vehicle_group(g: VehicleGroupIn, user: dict = Depends(require_module("fleet"))):
+async def create_vehicle_group(g: VehicleGroupIn, user: dict = Depends(require_action("fleet", "C"))):
     gid = str(uuid.uuid4())
     await execute(
         "insert into vehicle_groups (id, workspace_id, name, color, fleet_type, branch, region, cost_centre) "
@@ -1585,7 +1732,7 @@ async def create_vehicle_group(g: VehicleGroupIn, user: dict = Depends(require_m
     return doc
 
 @api.patch("/vehicle-groups/{gid}")
-async def update_vehicle_group(gid: str, patch: dict, user: dict = Depends(require_module("fleet"))):
+async def update_vehicle_group(gid: str, patch: dict, user: dict = Depends(require_action("fleet", "E"))):
     before = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not before: raise HTTPException(status_code=404, detail="Not found")
     await update_row("vehicle_groups", gid, user["workspace_id"], patch, VEHICLE_GROUP_COLS)
@@ -1597,7 +1744,7 @@ async def update_vehicle_group(gid: str, patch: dict, user: dict = Depends(requi
     return doc
 
 @api.delete("/vehicle-groups/{gid}")
-async def delete_vehicle_group(gid: str, user: dict = Depends(require_module("fleet"))):
+async def delete_vehicle_group(gid: str, user: dict = Depends(require_action("fleet", "D"))):
     g = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     await execute("delete from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if g:
@@ -1605,7 +1752,7 @@ async def delete_vehicle_group(gid: str, user: dict = Depends(require_module("fl
     return {"ok": True}
 
 @api.post("/vehicle-groups/{gid}/assign")
-async def assign_vehicle_group(gid: str, body: GroupAssign, user: dict = Depends(require_module("fleet"))):
+async def assign_vehicle_group(gid: str, body: GroupAssign, user: dict = Depends(require_action("fleet", "E"))):
     g = await fetch_one("select * from vehicle_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not g: raise HTTPException(status_code=404, detail="Not found")
     if body.add_ids:
@@ -1668,7 +1815,7 @@ async def list_asset_groups(user: dict = Depends(require_module("assets"))):
     return await fetch_all("select * from asset_groups where workspace_id = :ws order by name", ws=user["workspace_id"])
 
 @api.post("/asset-groups")
-async def create_asset_group(g: AssetGroupIn, user: dict = Depends(require_module("assets"))):
+async def create_asset_group(g: AssetGroupIn, user: dict = Depends(require_action("assets", "C"))):
     gid = str(uuid.uuid4())
     await execute(
         "insert into asset_groups (id, workspace_id, name, color, category, branch, region, cost_centre) "
@@ -1680,7 +1827,7 @@ async def create_asset_group(g: AssetGroupIn, user: dict = Depends(require_modul
     return doc
 
 @api.patch("/asset-groups/{gid}")
-async def update_asset_group(gid: str, patch: dict, user: dict = Depends(require_module("assets"))):
+async def update_asset_group(gid: str, patch: dict, user: dict = Depends(require_action("assets", "E"))):
     before = await fetch_one("select * from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not before: raise HTTPException(status_code=404, detail="Not found")
     await update_row("asset_groups", gid, user["workspace_id"], patch, ASSET_GROUP_COLS)
@@ -1692,7 +1839,7 @@ async def update_asset_group(gid: str, patch: dict, user: dict = Depends(require
     return doc
 
 @api.delete("/asset-groups/{gid}")
-async def delete_asset_group(gid: str, user: dict = Depends(require_module("assets"))):
+async def delete_asset_group(gid: str, user: dict = Depends(require_action("assets", "D"))):
     g = await fetch_one("select * from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     await execute("delete from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if g:
@@ -1700,7 +1847,7 @@ async def delete_asset_group(gid: str, user: dict = Depends(require_module("asse
     return {"ok": True}
 
 @api.post("/asset-groups/{gid}/assign")
-async def assign_asset_group(gid: str, body: GroupAssign, user: dict = Depends(require_module("assets"))):
+async def assign_asset_group(gid: str, body: GroupAssign, user: dict = Depends(require_action("assets", "E"))):
     g = await fetch_one("select * from asset_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not g: raise HTTPException(status_code=404, detail="Not found")
     if body.add_ids:
@@ -1736,7 +1883,7 @@ async def list_assets(kind: Optional[str] = None, search: Optional[str] = None, 
     return _scope_filter(rows, None, allowed_assets, vehicle_field=None, asset_field="id")
 
 @api.post("/assets")
-async def create_asset(a: AssetIn, user: dict = Depends(require_module("assets"))):
+async def create_asset(a: AssetIn, user: dict = Depends(require_action("assets", "C"))):
     aid = str(uuid.uuid4())
     await execute(
         "insert into assets (id, workspace_id, kind, name, identifier, category, status, group_id) "
@@ -1756,24 +1903,66 @@ async def get_asset(aid: str, user: dict = Depends(require_module("assets"))):
         raise HTTPException(status_code=404, detail="Not found")
     return a
 
+class ArchiveIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+async def _set_archived(user: dict, table: str, kind: str, rid: str, reason: str, archive: bool) -> dict:
+    row = await fetch_one(f"select * from {table} where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
+    if not row: raise HTTPException(status_code=404, detail="Not found")
+    if archive and row.get("status") == "archived":
+        raise HTTPException(status_code=400, detail=f"This {kind} is already archived")
+    if not archive and row.get("status") != "archived":
+        raise HTTPException(status_code=400, detail=f"This {kind} isn't archived")
+    await execute(f"update {table} set status = :st where id = :id and workspace_id = :ws",
+                  st="archived" if archive else "active", id=rid, ws=user["workspace_id"])
+    await log_event(user, f"{kind}.{'archived' if archive else 'restored'}", kind, rid,
+                    {"name": row.get("name"), "reason": reason.strip(), "previous_status": row.get("status")})
+    return await fetch_one(f"select * from {table} where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
+
+def _refuse_archived_status(patch: dict) -> None:
+    if (patch or {}).get("status") == "archived":
+        raise HTTPException(status_code=400, detail="Use Archive, which asks for a reason and keeps an audit record.")
+
+# Archiving replaces deleting for anything with history, so it takes the delete permission.
+@api.post("/vehicles/{vid}/archive")
+async def archive_vehicle(vid: str, body: ArchiveIn, user: dict = Depends(require_action("fleet", "D"))):
+    return await _set_archived(user, "vehicles", "vehicle", vid, body.reason, True)
+
+@api.post("/vehicles/{vid}/restore")
+async def restore_vehicle(vid: str, body: ArchiveIn, user: dict = Depends(require_action("fleet", "D"))):
+    return await _set_archived(user, "vehicles", "vehicle", vid, body.reason, False)
+
+@api.post("/assets/{aid}/archive")
+async def archive_asset(aid: str, body: ArchiveIn, user: dict = Depends(require_action("assets", "D"))):
+    return await _set_archived(user, "assets", "asset", aid, body.reason, True)
+
+@api.post("/assets/{aid}/restore")
+async def restore_asset(aid: str, body: ArchiveIn, user: dict = Depends(require_action("assets", "D"))):
+    return await _set_archived(user, "assets", "asset", aid, body.reason, False)
+
 @api.patch("/assets/{aid}")
-async def update_asset(aid: str, patch: dict, user: dict = Depends(require_module("assets"))):
+async def update_asset(aid: str, patch: dict, user: dict = Depends(require_action("assets", "E"))):
+    _refuse_archived_status(patch)
     await update_row("assets", aid, user["workspace_id"], patch, ASSET_COLS)
     return await fetch_one("select * from assets where id = :id and workspace_id = :ws", id=aid, ws=user["workspace_id"])
 
 @api.delete("/assets/{aid}")
-async def delete_asset(aid: str, user: dict = Depends(require_module("assets"))):
+async def delete_asset(aid: str, user: dict = Depends(require_action("assets", "D"))):
+    await refuse_if_history(user, "asset", aid, "Archive it instead: its history stays in reports.")
     await execute("delete from assets where id = :id and workspace_id = :ws", id=aid, ws=user["workspace_id"])
     return {"ok": True}
 
 # --- Vehicles ---
 @api.get("/vehicles")
-async def list_vehicles(search: Optional[str] = None, limit: Optional[int] = None, offset: int = 0, user: dict = Depends(require_module("fleet"))):
+async def list_vehicles(search: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
+                        include_archived: bool = False, user: dict = Depends(require_module("fleet"))):
+    # Archived vehicles are left out unless asked for, so they never appear in pickers for new work.
+    current = "" if include_archived else " and coalesce(status, '') <> 'archived'"
     if search:
-        q = "select * from vehicles where workspace_id = :ws and (name ilike :q or plate ilike :q) order by name"
+        q = f"select * from vehicles where workspace_id = :ws{current} and (name ilike :q or plate ilike :q) order by name"
         params = {"ws": user["workspace_id"], "q": f"%{search}%"}
     else:
-        q = "select * from vehicles where workspace_id = :ws order by name"
+        q = f"select * from vehicles where workspace_id = :ws{current} order by name"
         params = {"ws": user["workspace_id"]}
     rows = await fetch_all(q, **params)
     allowed_vehicles = await _resolve_scope(user, "vehicle")
@@ -1786,7 +1975,7 @@ async def list_vehicles(search: Optional[str] = None, limit: Optional[int] = Non
     return rows
 
 @api.post("/vehicles")
-async def create_vehicle(v: VehicleIn, user: dict = Depends(require_module("fleet"))):
+async def create_vehicle(v: VehicleIn, user: dict = Depends(require_action("fleet", "C"))):
     vid = str(uuid.uuid4())
     await execute(
         "insert into vehicles (id, workspace_id, name, plate, make, model, year, type, status, "
@@ -1808,12 +1997,14 @@ async def get_vehicle(vid: str, user: dict = Depends(require_any_module("fleet",
     return v
 
 @api.patch("/vehicles/{vid}")
-async def update_vehicle(vid: str, patch: dict, user: dict = Depends(require_module("fleet"))):
+async def update_vehicle(vid: str, patch: dict, user: dict = Depends(require_action("fleet", "E"))):
+    _refuse_archived_status(patch)
     await update_row("vehicles", vid, user["workspace_id"], patch, VEHICLE_COLS)
     return await fetch_one("select * from vehicles where id = :id and workspace_id = :ws", id=vid, ws=user["workspace_id"])
 
 @api.delete("/vehicles/{vid}")
-async def delete_vehicle(vid: str, user: dict = Depends(require_module("fleet"))):
+async def delete_vehicle(vid: str, user: dict = Depends(require_action("fleet", "D"))):
+    await refuse_if_history(user, "vehicle", vid, "Archive it instead: its history stays in reports.")
     await execute("delete from vehicles where id = :id and workspace_id = :ws", id=vid, ws=user["workspace_id"])
     return {"ok": True}
 
@@ -1828,7 +2019,7 @@ async def list_templates(user: dict = Depends(require_module("templates"))):
     return await fetch_all("select * from templates where workspace_id = :ws and active = true", ws=user["workspace_id"])
 
 @api.post("/templates")
-async def create_template(t: TemplateIn, user: dict = Depends(require_module("templates"))):
+async def create_template(t: TemplateIn, user: dict = Depends(require_action("templates", "C"))):
     tid = str(uuid.uuid4())
     sections = [s.model_dump() for s in t.sections]
     await execute(
@@ -1846,7 +2037,7 @@ async def create_template(t: TemplateIn, user: dict = Depends(require_module("te
     return doc
 
 @api.post("/templates/{tid}/duplicate")
-async def duplicate_template(tid: str, user: dict = Depends(require_module("templates"))):
+async def duplicate_template(tid: str, user: dict = Depends(require_action("templates", "C"))):
     src = await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
     if not src: raise HTTPException(status_code=404, detail="Not found")
     new_id = str(uuid.uuid4())
@@ -1872,7 +2063,7 @@ async def get_template(tid: str, user: dict = Depends(require_module("templates"
     return t
 
 @api.patch("/templates/{tid}")
-async def update_template(tid: str, patch: dict, user: dict = Depends(require_module("templates"))):
+async def update_template(tid: str, patch: dict, user: dict = Depends(require_action("templates", "E"))):
     ws = user["workspace_id"]
     current = await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=ws)
     if not current: raise HTTPException(status_code=404, detail="Not found")
@@ -1906,7 +2097,8 @@ async def update_template(tid: str, patch: dict, user: dict = Depends(require_mo
     return await fetch_one("select * from templates where id = :id and workspace_id = :ws", id=tid, ws=ws)
 
 @api.delete("/templates/{tid}")
-async def delete_template(tid: str, user: dict = Depends(require_module("templates"))):
+async def delete_template(tid: str, user: dict = Depends(require_action("templates", "D"))):
+    await refuse_if_history(user, "template", tid, "Retire it instead: completed inspections keep the version they used.")
     doc = await fetch_one("select name from templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
     await execute("delete from templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
     if doc:
@@ -1969,7 +2161,7 @@ async def _reverse_geocode(lat: float, lon: float) -> Optional[str]:
     return None
 
 @api.post("/inspections")
-async def create_inspection(i: InspectionIn, user: dict = Depends(require_module("vehicle_checklist"))):
+async def create_inspection(i: InspectionIn, user: dict = Depends(require_action("vehicle_checklist", "C"))):
     if bool(i.vehicle_id) == bool(i.asset_id):
         raise HTTPException(status_code=400, detail="Provide exactly one of vehicle_id or asset_id")
     ws = user["workspace_id"]
@@ -2099,7 +2291,7 @@ async def _notify_overdue_inspection(user: dict, vehicle: Optional[dict], ws_nam
         logger.error(f"overdue escalation email failed: {e}")
 
 @api.post("/escalations")
-async def create_escalation(req: EscalationIn, user: dict = Depends(require_module("vehicle_checklist"))):
+async def create_escalation(req: EscalationIn, user: dict = Depends(require_action("vehicle_checklist", "C"))):
     if user.get("role") != "driver" or not user.get("driver_id"):
         raise HTTPException(status_code=400, detail="Not a driver account")
     ws = user["workspace_id"]
@@ -2169,7 +2361,7 @@ async def list_maintenance(user: dict = Depends(require_module("maintenance"))):
     return _scope_filter(rows, allowed_vehicles, allowed_assets)
 
 @api.post("/maintenance")
-async def create_maintenance(m: MaintenanceIn, user: dict = Depends(require_module("maintenance", "full"))):
+async def create_maintenance(m: MaintenanceIn, user: dict = Depends(require_action("maintenance", "C"))):
     if bool(m.vehicle_id) == bool(m.asset_id):
         raise HTTPException(status_code=400, detail="Provide exactly one of vehicle_id or asset_id")
     if m.vehicle_id and not (m.odometer and m.odometer > 0):
@@ -2249,10 +2441,11 @@ async def get_maintenance(mid: str, user: dict = Depends(require_module("mainten
     return m
 
 @api.patch("/maintenance/{mid}")
-async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = Depends(require_module("maintenance", "full"))):
+async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = Depends(require_action("maintenance", "E"))):
     upd = {k: v for k, v in patch.model_dump().items() if v is not None}
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Not found")
+    await assert_job_editable(user, job)
     if patch.client_submission_id and job.get("client_submission_id") == patch.client_submission_id:
         # Already applied by an earlier attempt of this same offline-queued update — a retried mobile
         # sync must not re-stamp completed_at/downtime_hours against a new "now", or re-fire the
@@ -2318,12 +2511,13 @@ async def update_maintenance(mid: str, patch: MaintenanceUpdate, user: dict = De
     return await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
 
 @api.post("/maintenance/{mid}/photos")
-async def add_maintenance_photo(mid: str, p: MaintenancePhotoIn, user: dict = Depends(require_module("maintenance", "full"))):
+async def add_maintenance_photo(mid: str, p: MaintenancePhotoIn, user: dict = Depends(require_action("maintenance", "E"))):
     """Attaches a photo/document to a job at any point in its lifecycle -- not just at completion,
     unlike completion_documents which is only ever set wholesale by the Complete step. Appends to
     the same column so both the mid-job and completion-time photos show up in one place."""
-    job = await fetch_one("select completion_documents from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
+    job = await fetch_one("select completion_documents, assigned_to from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Not found")
+    await assert_job_editable(user, job)
     docs = job.get("completion_documents") or []
     if p.client_submission_id and any(d.get("client_submission_id") == p.client_submission_id for d in docs):
         return {"completion_documents": docs}
@@ -2336,12 +2530,13 @@ async def add_maintenance_photo(mid: str, p: MaintenancePhotoIn, user: dict = De
     return {"completion_documents": docs}
 
 @api.post("/maintenance/{mid}/resume")
-async def resume_maintenance(mid: str, user: dict = Depends(require_module("maintenance", "full"))):
+async def resume_maintenance(mid: str, user: dict = Depends(require_action("maintenance", "E"))):
     """Restores a job from on_hold to whatever it was doing before -- a dedicated endpoint rather than
     letting the generic PATCH accept an arbitrary client-supplied status here, so a stale/racing client
     can't overwrite previous_status with the wrong value."""
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Not found")
+    await assert_job_editable(user, job)
     if job.get("status") != "on_hold":
         raise HTTPException(status_code=400, detail="This job isn't on hold")
     restored = job.get("previous_status") or "in_progress"
@@ -2350,7 +2545,8 @@ async def resume_maintenance(mid: str, user: dict = Depends(require_module("main
     return await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
 
 @api.delete("/maintenance/{mid}")
-async def delete_maintenance(mid: str, user: dict = Depends(require_module("maintenance", "full"))):
+async def delete_maintenance(mid: str, user: dict = Depends(require_action("maintenance", "D"))):
+    await refuse_if_history(user, "job", mid, "Cancel it instead, with a reason.")
     await execute("delete from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     return {"ok": True}
 
@@ -2450,7 +2646,7 @@ async def list_asset_types(user: dict = Depends(require_module("maintenance", "r
     )
 
 @api.post("/asset-types")
-async def create_asset_type(t: AssetTypeIn, user: dict = Depends(require_module("maintenance", "full"))):
+async def create_asset_type(t: AssetTypeIn, user: dict = Depends(require_maintenance_config("C"))):
     tid = str(uuid.uuid4())
     await execute(
         "insert into asset_types (id, workspace_id, name, category) values (:id, :ws, :name, :cat)",
@@ -2466,7 +2662,7 @@ async def list_maintenance_types(user: dict = Depends(require_module("maintenanc
     )
 
 @api.post("/maintenance-types")
-async def create_maintenance_type(t: MaintenanceTypeIn, user: dict = Depends(require_module("maintenance", "full"))):
+async def create_maintenance_type(t: MaintenanceTypeIn, user: dict = Depends(require_maintenance_config("C"))):
     tid = str(uuid.uuid4())
     await execute(
         "insert into maintenance_types (id, workspace_id, name, category) values (:id, :ws, :name, :cat)",
@@ -2674,7 +2870,7 @@ async def list_maintenance_schedules(user: dict = Depends(require_module("mainte
     return await _schedule_details(user["workspace_id"], scheds)
 
 @api.post("/maintenance-schedules")
-async def create_maintenance_schedule(s: MaintenanceScheduleIn, user: dict = Depends(require_module("maintenance", "full"))):
+async def create_maintenance_schedule(s: MaintenanceScheduleIn, user: dict = Depends(require_maintenance_config("C"))):
     if not s.vehicle_ids and not s.asset_ids:
         raise HTTPException(status_code=400, detail="Select at least one asset for this schedule")
     if not s.intervals:
@@ -2699,7 +2895,7 @@ async def get_maintenance_schedule(sid: str, user: dict = Depends(require_module
     return detail
 
 @api.patch("/maintenance-schedules/{sid}")
-async def update_maintenance_schedule(sid: str, s: MaintenanceScheduleUpdate, user: dict = Depends(require_module("maintenance", "full"))):
+async def update_maintenance_schedule(sid: str, s: MaintenanceScheduleUpdate, user: dict = Depends(require_maintenance_config("E"))):
     existing = await fetch_one("select * from maintenance_schedules where id = :id and workspace_id = :ws", id=sid, ws=user["workspace_id"])
     if not existing:
         raise HTTPException(status_code=404, detail="Not found")
@@ -2717,7 +2913,7 @@ async def update_maintenance_schedule(sid: str, s: MaintenanceScheduleUpdate, us
     return await _schedule_detail(user["workspace_id"], sid)
 
 @api.delete("/maintenance-schedules/{sid}")
-async def delete_maintenance_schedule(sid: str, user: dict = Depends(require_module("maintenance", "full"))):
+async def delete_maintenance_schedule(sid: str, user: dict = Depends(require_maintenance_config("D"))):
     await execute("delete from maintenance_schedules where id = :id and workspace_id = :ws", id=sid, ws=user["workspace_id"])
     return {"ok": True}
 
@@ -2754,7 +2950,7 @@ async def list_maintenance_templates(user: dict = Depends(require_module("mainte
     return [await _template_detail(user["workspace_id"], r["id"]) for r in rows]
 
 @api.post("/maintenance-templates")
-async def create_maintenance_template(t: MaintenanceTemplateIn, user: dict = Depends(require_module("maintenance", "full"))):
+async def create_maintenance_template(t: MaintenanceTemplateIn, user: dict = Depends(require_maintenance_config("C"))):
     tid = str(uuid.uuid4())
     await execute(
         "insert into maintenance_templates (id, workspace_id, name, asset_type_id) values (:id, :ws, :name, :atid)",
@@ -2769,12 +2965,12 @@ async def create_maintenance_template(t: MaintenanceTemplateIn, user: dict = Dep
     return await _template_detail(user["workspace_id"], tid)
 
 @api.delete("/maintenance-templates/{tid}")
-async def delete_maintenance_template(tid: str, user: dict = Depends(require_module("maintenance", "full"))):
+async def delete_maintenance_template(tid: str, user: dict = Depends(require_maintenance_config("D"))):
     await execute("delete from maintenance_templates where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
     return {"ok": True}
 
 @api.post("/maintenance-templates/{tid}/apply")
-async def apply_maintenance_template(tid: str, body: ApplyTemplateIn, user: dict = Depends(require_module("maintenance", "full"))):
+async def apply_maintenance_template(tid: str, body: ApplyTemplateIn, user: dict = Depends(require_maintenance_config("C"))):
     """Feature 8: bulk-creates one schedule per template item, all assigned to the given assets —
     the user then edits individual schedules afterwards exactly like any other, per the spec."""
     if not body.vehicle_ids and not body.asset_ids:
@@ -2853,7 +3049,7 @@ async def _create_quote(ws: str, mid: str, job_title: str, items: List[QuoteItem
     return qid
 
 @api.post("/maintenance/{mid}/quotes")
-async def create_quote(mid: str, q: QuoteIn, user: dict = Depends(require_module("quotes", "full"))):
+async def create_quote(mid: str, q: QuoteIn, user: dict = Depends(require_action("quotes", "C"))):
     # Gated by the "quotes" System Right (not a hardcoded role tuple) so a workspace without a
     # Workshop Manager can grant this to Operations or Finance instead via Team permissions.
     # workshop_manager/admin/manager get "full" by default (_default_permissions); every other role
@@ -2899,8 +3095,9 @@ async def decide_quote(qid: str, body: QuoteDecision, user: dict = Depends(get_c
     if not quote: raise HTTPException(status_code=404, detail="Quote not found")
     if quote["stage"] not in ("pending_ops", "pending_finance"):
         raise HTTPException(status_code=400, detail="This quote has already been decided")
-    stage_roles = OPS_ROLES if quote["stage"] == "pending_ops" else FINANCE_ROLES
-    if user.get("role") not in stage_roles:
+    # Operations stage: approve on quotes. Finance stage (which issues the PO): approve on purchase orders.
+    stage_module = "quotes" if quote["stage"] == "pending_ops" else "purchase_orders"
+    if not await _has_action(user, stage_module, "A"):
         raise HTTPException(status_code=403, detail="You aren't authorized to decide this quote at its current stage")
     if body.decision == "rejected" and not (body.reason or "").strip():
         raise HTTPException(status_code=400, detail="A reason is required to reject a quote")
@@ -2980,9 +3177,10 @@ async def list_requisitions(user: dict = Depends(require_module("parts_requisiti
     )
 
 @api.post("/maintenance/{mid}/parts-requisitions")
-async def create_requisition(mid: str, body: PartRequisitionIn, user: dict = Depends(require_module("parts_requisitions", "full"))):
+async def create_requisition(mid: str, body: PartRequisitionIn, user: dict = Depends(require_action("parts_requisitions", "C"))):
     job = await fetch_one("select * from maintenance where id = :id and workspace_id = :ws", id=mid, ws=user["workspace_id"])
     if not job: raise HTTPException(status_code=404, detail="Maintenance job not found")
+    await assert_job_editable(user, job)  # a mechanic records parts only on their own jobs
     if body.client_submission_id:
         existing = await fetch_one(
             "select * from parts_requisitions where workspace_id = :ws and client_submission_id = :cid",
@@ -3015,13 +3213,11 @@ async def create_requisition(mid: str, body: PartRequisitionIn, user: dict = Dep
     return await fetch_one("select * from parts_requisitions where id = :id", id=rid)
 
 @api.post("/parts-requisitions/{rid}/decide")
-async def decide_requisition(rid: str, body: PartRequisitionDecision, user: dict = Depends(get_current_user)):
+async def decide_requisition(rid: str, body: PartRequisitionDecision, user: dict = Depends(require_action("parts_requisitions", "A"))):
     req = await fetch_one("select * from parts_requisitions where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
     if not req: raise HTTPException(status_code=404, detail="Requisition not found")
     if req["status"] != "pending_approval":
         raise HTTPException(status_code=400, detail="This requisition has already been decided")
-    if user.get("role") not in REQUISITION_APPROVER_ROLES:
-        raise HTTPException(status_code=403, detail="You aren't authorized to decide part requisitions")
     if body.decision == "rejected" and not (body.reason or "").strip():
         raise HTTPException(status_code=400, detail="A reason is required to reject a requisition")
     job = await fetch_one("select * from maintenance where id = :id", id=req["maintenance_id"])
@@ -3105,7 +3301,7 @@ async def list_purchase_orders(user: dict = Depends(require_module("purchase_ord
     )
 
 @api.post("/purchase-orders")
-async def create_purchase_order(po: PurchaseOrderIn, user: dict = Depends(require_module("purchase_orders", "full"))):
+async def create_purchase_order(po: PurchaseOrderIn, user: dict = Depends(require_action("purchase_orders", "C"))):
     poid = str(uuid.uuid4())
     po_count = (await fetch_one("select count(*) as c from purchase_orders where workspace_id = :ws", ws=user["workspace_id"]))["c"]
     po_number = f"PO-{datetime.now(timezone.utc).year}-{po_count + 1:04d}"
@@ -3118,7 +3314,7 @@ async def create_purchase_order(po: PurchaseOrderIn, user: dict = Depends(requir
     return await fetch_one("select * from purchase_orders where id = :id", id=poid)
 
 @api.post("/purchase-orders/{poid}/mark-paid")
-async def mark_purchase_order_paid(poid: str, body: POMarkPaid, user: dict = Depends(require_role(*FINANCE_ROLES))):
+async def mark_purchase_order_paid(poid: str, body: POMarkPaid, user: dict = Depends(require_action("purchase_orders", "A"))):
     po = await fetch_one("select * from purchase_orders where id = :id and workspace_id = :ws", id=poid, ws=user["workspace_id"])
     if not po: raise HTTPException(status_code=404, detail="Purchase order not found")
     if po["status"] != "po_issued":
@@ -3135,7 +3331,7 @@ async def mark_purchase_order_paid(poid: str, body: POMarkPaid, user: dict = Dep
     return await fetch_one("select * from purchase_orders where id = :id", id=poid)
 
 @api.patch("/purchase-orders/{poid}/supplier")
-async def assign_purchase_order_supplier(poid: str, body: PurchaseOrderSupplierAssign, user: dict = Depends(require_role(*FINANCE_ROLES))):
+async def assign_purchase_order_supplier(poid: str, body: PurchaseOrderSupplierAssign, user: dict = Depends(require_action("purchase_orders", "E"))):
     """Quote-issued POs (the vast majority) are auto-created with no supplier -- the mechanic/quote
     submitter has no reason to know who Finance will actually order from. Finance assigns the supplier
     here instead, once they know, so spend-by-supplier reporting has something to roll up."""
@@ -3178,7 +3374,7 @@ async def list_suppliers(user: dict = Depends(require_role("finance", "workshop_
     )
 
 @api.post("/suppliers")
-async def create_supplier(body: SupplierIn, user: dict = Depends(require_role(*FINANCE_ROLES))):
+async def create_supplier(body: SupplierIn, user: dict = Depends(require_action("purchase_orders", "C"))):
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Supplier name is required")
@@ -3666,6 +3862,8 @@ async def analytics_kpi(user: dict = Depends(require_any_module("dashboard", "re
     fuel_logs = _scope_filter(fuel_logs, allowed_vehicles, None)
     inspections = _scope_filter(inspections, allowed_vehicles, allowed_assets)
     vmap = {v["id"]: v for v in vehicles}
+    # Archived vehicles keep their costs in the totals above and below, but aren't part of the fleet.
+    vehicles = [v for v in vehicles if v.get("status") != "archived"]
     total_vehicles = len(vehicles)
     active = sum(1 for v in vehicles if v.get("status") == "active")
     in_maint = sum(1 for v in vehicles if v.get("status") == "maintenance")
@@ -3855,7 +4053,7 @@ async def budgets_summary(year: int = None, user: dict = Depends(require_module(
     }
 
 @api.put("/budgets")
-async def set_budgets(rows: List[dict], user: dict = Depends(require_module("reports", "full"))):
+async def set_budgets(rows: List[dict], user: dict = Depends(require_action("reports", "E"))):
     """Upserts one row per {category, year, amount} — the whole per-category table is saved at once
     from the Budget vs Actual page rather than one PATCH per cell."""
     for r in rows:
@@ -4394,7 +4592,7 @@ class ExecEmailIn(BaseModel):
     exec_email: str
 
 @api.put("/analytics/executive-dashboard/settings")
-async def set_exec_email(body: ExecEmailIn, user: dict = Depends(require_module("executive_dashboard", "read"))):
+async def set_exec_email(body: ExecEmailIn, user: dict = Depends(require_action("executive_dashboard", "E"))):
     await execute(
         "update workspaces set exec_email = :e where id = :id",
         e=body.exec_email.strip() or None, id=user["workspace_id"],
@@ -4402,7 +4600,7 @@ async def set_exec_email(body: ExecEmailIn, user: dict = Depends(require_module(
     return {"exec_email": body.exec_email.strip() or None}
 
 @api.post("/analytics/executive-dashboard/email-summary")
-async def send_exec_summary(user: dict = Depends(require_module("executive_dashboard", "read"))):
+async def send_exec_summary(user: dict = Depends(require_action("executive_dashboard", "E"))):
     result = await _send_board_email(user["workspace_id"])
     if result is None:
         raise HTTPException(status_code=400, detail="Set a board email address first")
@@ -4515,7 +4713,7 @@ async def part_alerts(user: dict = Depends(require_module("parts"))):
     )
 
 @api.post("/parts")
-async def create_part(p: PartIn, user: dict = Depends(require_module("parts"))):
+async def create_part(p: PartIn, user: dict = Depends(require_action("parts", "C"))):
     pid = str(uuid.uuid4())
     await execute(
         "insert into parts (id, workspace_id, name, sku, category, stock, reorder_point, unit_cost, "
@@ -4526,7 +4724,7 @@ async def create_part(p: PartIn, user: dict = Depends(require_module("parts"))):
     return await fetch_one("select * from parts where id = :id", id=pid)
 
 @api.patch("/parts/{pid}")
-async def update_part(pid: str, patch: dict, user: dict = Depends(require_module("parts"))):
+async def update_part(pid: str, patch: dict, user: dict = Depends(require_action("parts", "E"))):
     await update_row("parts", pid, user["workspace_id"], patch, PART_COLS)
     return await fetch_one("select * from parts where id = :id and workspace_id = :ws", id=pid, ws=user["workspace_id"])
 
@@ -4570,7 +4768,7 @@ async def _maybe_reorder_email(part: dict, workspace_id: str) -> Optional[str]:
     return email_id
 
 @api.post("/parts/{pid}/adjust")
-async def adjust_part(pid: str, adj: PartAdjust, user: dict = Depends(require_module("parts"))):
+async def adjust_part(pid: str, adj: PartAdjust, user: dict = Depends(require_action("parts", "E"))):
     part = await fetch_one("select * from parts where id = :id and workspace_id = :ws", id=pid, ws=user["workspace_id"])
     if not part: raise HTTPException(status_code=404, detail="Not found")
     was_above = (part.get("stock", 0) or 0) > (part.get("reorder_point", 0) or 0)
@@ -4591,7 +4789,8 @@ async def adjust_part(pid: str, adj: PartAdjust, user: dict = Depends(require_mo
     return updated
 
 @api.delete("/parts/{pid}")
-async def delete_part(pid: str, user: dict = Depends(require_module("parts"))):
+async def delete_part(pid: str, user: dict = Depends(require_action("parts", "D"))):
+    await refuse_if_history(user, "part", pid, "Its stock movements and requests are kept.")
     await execute("delete from parts where id = :id and workspace_id = :ws", id=pid, ws=user["workspace_id"])
     return {"ok": True}
 
@@ -4733,7 +4932,7 @@ async def list_driver_groups(user: dict = Depends(require_module("drivers"))):
     return await fetch_all("select * from driver_groups where workspace_id = :ws order by name", ws=user["workspace_id"])
 
 @api.post("/driver-groups")
-async def create_driver_group(g: DriverGroupIn, user: dict = Depends(require_module("drivers"))):
+async def create_driver_group(g: DriverGroupIn, user: dict = Depends(require_action("drivers", "C"))):
     gid = str(uuid.uuid4())
     await execute(
         "insert into driver_groups (id, workspace_id, name, color, description, department, region, cost_centre) "
@@ -4745,7 +4944,7 @@ async def create_driver_group(g: DriverGroupIn, user: dict = Depends(require_mod
     return doc
 
 @api.patch("/driver-groups/{gid}")
-async def update_driver_group(gid: str, patch: dict, user: dict = Depends(require_module("drivers"))):
+async def update_driver_group(gid: str, patch: dict, user: dict = Depends(require_action("drivers", "E"))):
     before = await fetch_one("select * from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not before: raise HTTPException(status_code=404, detail="Not found")
     await update_row("driver_groups", gid, user["workspace_id"], patch, DRIVER_GROUP_COLS)
@@ -4757,7 +4956,7 @@ async def update_driver_group(gid: str, patch: dict, user: dict = Depends(requir
     return doc
 
 @api.delete("/driver-groups/{gid}")
-async def delete_driver_group(gid: str, user: dict = Depends(require_module("drivers"))):
+async def delete_driver_group(gid: str, user: dict = Depends(require_action("drivers", "D"))):
     g = await fetch_one("select * from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     await execute("delete from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if g:
@@ -4765,7 +4964,7 @@ async def delete_driver_group(gid: str, user: dict = Depends(require_module("dri
     return {"ok": True}
 
 @api.post("/driver-groups/{gid}/assign")
-async def assign_driver_group(gid: str, body: GroupAssign, user: dict = Depends(require_module("drivers"))):
+async def assign_driver_group(gid: str, body: GroupAssign, user: dict = Depends(require_action("drivers", "E"))):
     g = await fetch_one("select * from driver_groups where id = :id and workspace_id = :ws", id=gid, ws=user["workspace_id"])
     if not g: raise HTTPException(status_code=404, detail="Not found")
     if body.add_ids:
@@ -4832,7 +5031,7 @@ async def _ensure_driver_account(driver_id: str, workspace_id: str) -> None:
             "insert into user_profiles (id, email, name, role, workspace_id, permissions, phone, driver_id) "
             "values (:id, :email, :name, 'driver', :ws, :permissions ::jsonb, :phone, :did)",
             id=user_id, email=email, name=driver.get("name") or "Driver", ws=workspace_id,
-            permissions=json_dumps(PROFILE_PRESETS.get("driver", {})), phone=driver.get("phone"), did=driver_id,
+            permissions=json_dumps(_preset_scope("driver")), phone=driver.get("phone"), did=driver_id,
         )
     except Exception:
         await auth_supabase.admin_delete_user(user_id)
@@ -4859,7 +5058,7 @@ async def list_drivers(search: Optional[str] = None, limit: Optional[int] = None
     return await fetch_all(q, **params)
 
 @api.post("/drivers")
-async def create_driver(d: dict, user: dict = Depends(require_module("drivers"))):
+async def create_driver(d: dict, user: dict = Depends(require_action("drivers", "C"))):
     # Coerce empty-string email to None before Pydantic validation
     if isinstance(d.get("email"), str) and not d["email"].strip():
         d["email"] = None
@@ -4905,7 +5104,7 @@ async def get_driver(did: str, user: dict = Depends(require_module("drivers"))):
     return d
 
 @api.patch("/drivers/{did}")
-async def update_driver(did: str, patch: dict, user: dict = Depends(require_module("drivers"))):
+async def update_driver(did: str, patch: dict, user: dict = Depends(require_action("drivers", "E"))):
     current = await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
     if not current: raise HTTPException(status_code=404, detail="Not found")
     if "assigned_vehicle_id" in patch and user.get("role") not in (
@@ -4925,7 +5124,8 @@ async def update_driver(did: str, patch: dict, user: dict = Depends(require_modu
     return await fetch_one("select * from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
 
 @api.delete("/drivers/{did}")
-async def delete_driver(did: str, user: dict = Depends(require_module("drivers"))):
+async def delete_driver(did: str, user: dict = Depends(require_action("drivers", "D"))):
+    await refuse_if_history(user, "driver", did, "Set them to Inactive instead.")
     await execute("delete from drivers where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
     return {"ok": True}
 
@@ -5438,7 +5638,7 @@ async def investigate(kpi_key: str, group_by: Optional[str] = None, period: Opti
 
 # --- Insurance / Public share link ---
 @api.post("/vehicles/{vid}/share")
-async def create_share_link(vid: str, user: dict = Depends(require_module("fleet"))):
+async def create_share_link(vid: str, user: dict = Depends(require_action("fleet", "E"))):
     v = await fetch_one("select * from vehicles where id = :id and workspace_id = :ws", id=vid, ws=user["workspace_id"])
     if not v: raise HTTPException(status_code=404, detail="Not found")
     if not v.get("share_token"):
@@ -5453,7 +5653,7 @@ async def create_share_link(vid: str, user: dict = Depends(require_module("fleet
     return {"token": token, "url": f"/public/vehicle/{token}"}
 
 @api.delete("/vehicles/{vid}/share")
-async def revoke_share_link(vid: str, user: dict = Depends(require_module("fleet"))):
+async def revoke_share_link(vid: str, user: dict = Depends(require_action("fleet", "E"))):
     await execute(
         "update vehicles set share_token = null, share_created_at = null where id = :id and workspace_id = :ws",
         id=vid, ws=user["workspace_id"],
@@ -5549,8 +5749,8 @@ async def unified_alerts(user: dict = Depends(require_any_module("dashboard", "r
         ws=user["workspace_id"], cutoff=recent_cutoff,
     )
     recent_insp = _scope_filter(recent_insp, allowed_vehicles, allowed_assets)
-    role = user.get("role")
-    actionable_stage = "pending_ops" if role in OPS_ROLES else "pending_finance" if role in FINANCE_ROLES else None
+    actionable_stage = ("pending_ops" if await _has_action(user, "quotes", "A")
+                        else "pending_finance" if await _has_action(user, "purchase_orders", "A") else None)
     pending_approvals = []
     if actionable_stage:
         pending_approvals = await fetch_all(
@@ -5878,7 +6078,7 @@ async def get_incident(iid: str, user: dict = Depends(require_module("incidents"
     return i
 
 @api.post("/incidents")
-async def create_incident(inc: IncidentIn, user: dict = Depends(require_module("incidents"))):
+async def create_incident(inc: IncidentIn, user: dict = Depends(require_action("incidents", "C"))):
     iid = str(uuid.uuid4())
     fields = inc.model_dump(exclude={"photos"})
     fields["occurred_at"] = _parse_datetime(fields["occurred_at"])
@@ -5895,7 +6095,7 @@ async def create_incident(inc: IncidentIn, user: dict = Depends(require_module("
     return doc
 
 @api.patch("/incidents/{iid}")
-async def update_incident(iid: str, patch: IncidentUpdate, user: dict = Depends(require_module("incidents"))):
+async def update_incident(iid: str, patch: IncidentUpdate, user: dict = Depends(require_action("incidents", "E"))):
     data = {k: v for k, v in patch.model_dump(exclude_unset=True).items() if v is not None}
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -5911,12 +6111,13 @@ async def update_incident(iid: str, patch: IncidentUpdate, user: dict = Depends(
     return await fetch_one("select * from incidents where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
 
 @api.delete("/incidents/{iid}")
-async def delete_incident(iid: str, user: dict = Depends(require_module("incidents"))):
+async def delete_incident(iid: str, user: dict = Depends(require_action("incidents", "D"))):
+    refuse_delete("incident", "Mark it resolved, or void it with a reason.")
     await execute("delete from incidents where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
     return {"ok": True}
 
 @api.post("/incidents/{iid}/share")
-async def create_incident_share_link(iid: str, user: dict = Depends(require_module("incidents"))):
+async def create_incident_share_link(iid: str, user: dict = Depends(require_action("incidents", "E"))):
     inc = await fetch_one("select * from incidents where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
     if not inc: raise HTTPException(status_code=404, detail="Not found")
     if not inc.get("share_token"):
@@ -5931,7 +6132,7 @@ async def create_incident_share_link(iid: str, user: dict = Depends(require_modu
     return {"token": token, "url": f"/public/incident/{token}"}
 
 @api.delete("/incidents/{iid}/share")
-async def revoke_incident_share_link(iid: str, user: dict = Depends(require_module("incidents"))):
+async def revoke_incident_share_link(iid: str, user: dict = Depends(require_action("incidents", "E"))):
     await execute(
         "update incidents set share_token = null, share_created_at = null where id = :id and workspace_id = :ws",
         id=iid, ws=user["workspace_id"],
@@ -5958,7 +6159,7 @@ async def public_incident_pdf(token: str):
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://fleetintel.vercel.app")
 
 @api.post("/incidents/{iid}/email-insurance")
-async def email_incident_to_insurance(iid: str, req: EmailInsuranceReq, user: dict = Depends(require_module("incidents"))):
+async def email_incident_to_insurance(iid: str, req: EmailInsuranceReq, user: dict = Depends(require_action("incidents", "E"))):
     inc = await fetch_one("select * from incidents where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
     if not inc: raise HTTPException(status_code=404, detail="Not found")
     if not inc.get("share_token"):
@@ -6024,7 +6225,7 @@ async def list_defects(user: dict = Depends(require_module("defects"))):
     return await _enrich_defects(user["workspace_id"], defs)
 
 @api.post("/defects")
-async def create_defect(d: DefectIn, user: dict = Depends(require_module("defects", "full"))):
+async def create_defect(d: DefectIn, user: dict = Depends(require_action("defects", "C"))):
     if d.client_submission_id:
         existing = await fetch_one(
             "select * from defects where workspace_id = :ws and client_submission_id = :cid",
@@ -6034,7 +6235,7 @@ async def create_defect(d: DefectIn, user: dict = Depends(require_module("defect
             return (await _enrich_defects(user["workspace_id"], [existing]))[0]
     did = str(uuid.uuid4())
     fields = d.model_dump()
-    if user.get("role") not in DEFECT_PRICING_ROLES:
+    if not await _has_action(user, "defects", "A"):
         fields["estimated_cost"] = 0
     await execute(
         "insert into defects (id, workspace_id, vehicle_id, category, severity, description, location, "
@@ -6047,9 +6248,13 @@ async def create_defect(d: DefectIn, user: dict = Depends(require_module("defect
     return (await _enrich_defects(user["workspace_id"], [doc]))[0]
 
 @api.patch("/defects/{did}")
-async def update_defect(did: str, patch: DefectUpdate, user: dict = Depends(require_module("defects", "full"))):
+async def update_defect(did: str, patch: DefectUpdate, user: dict = Depends(require_any_action(("defects", "E"), ("defects", "A")))):
     data = {k: v for k, v in patch.model_dump(exclude_unset=True).items() if v is not None}
-    if "estimated_cost" in data and user.get("role") not in DEFECT_PRICING_ROLES:
+    # Pricing a defect is an approval; everything else about it is an edit. Finance prices defects
+    # without being able to change them otherwise.
+    if not await _has_action(user, "defects", "E"):
+        data = {k: v for k, v in data.items() if k == "estimated_cost"}
+    if "estimated_cost" in data and not await _has_action(user, "defects", "A"):
         del data["estimated_cost"]
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -6064,12 +6269,13 @@ async def update_defect(did: str, patch: DefectUpdate, user: dict = Depends(requ
     return (await _enrich_defects(user["workspace_id"], [doc]))[0]
 
 @api.delete("/defects/{did}")
-async def delete_defect(did: str, user: dict = Depends(require_module("defects", "full"))):
+async def delete_defect(did: str, user: dict = Depends(require_action("defects", "D"))):
+    await refuse_if_history(user, "defect", did, "Resolve or close it instead.")
     await execute("delete from defects where id = :id and workspace_id = :ws", id=did, ws=user["workspace_id"])
     return {"ok": True}
 
 @api.post("/defects/{did}/convert-to-maintenance")
-async def convert_defect_to_maintenance(did: str, user: dict = Depends(require_module("maintenance", "full"))):
+async def convert_defect_to_maintenance(did: str, user: dict = Depends(require_action("maintenance", "C"))):
     """Feature 7: a controller turns a reported defect into a Maintenance Work Order in one action.
     Completing that job later cascades back and auto-resolves the defect (see update_maintenance's
     completion branch) — Defect, Work Order, and Maintenance Event close together, not as three
@@ -6140,7 +6346,7 @@ async def get_fuel_log(lid: str, user: dict = Depends(require_module("fleet"))):
     return l
 
 @api.post("/fuel-logs")
-async def create_fuel_log(f: FuelLogIn, user: dict = Depends(require_module("fleet"))):
+async def create_fuel_log(f: FuelLogIn, user: dict = Depends(require_action("fleet", "C"))):
     lid = str(uuid.uuid4())
     fields = f.model_dump()
     fields["occurred_at"] = _parse_datetime(fields["occurred_at"])
@@ -6155,7 +6361,8 @@ async def create_fuel_log(f: FuelLogIn, user: dict = Depends(require_module("fle
     return doc
 
 @api.delete("/fuel-logs/{lid}")
-async def delete_fuel_log(lid: str, user: dict = Depends(require_module("fleet"))):
+async def delete_fuel_log(lid: str, user: dict = Depends(require_action("fleet", "D"))):
+    refuse_delete("fuel entry", "Void it with a reason to correct the totals.")
     await execute("delete from fuel_logs where id = :id and workspace_id = :ws", id=lid, ws=user["workspace_id"])
     return {"ok": True}
 
@@ -6182,7 +6389,7 @@ async def list_trip_logs(vehicle_id: Optional[str] = None, user: dict = Depends(
     return _scope_filter(logs, allowed_vehicles, None)
 
 @api.post("/trip-logs")
-async def create_trip_log(t: TripLogIn, user: dict = Depends(require_module("fleet"))):
+async def create_trip_log(t: TripLogIn, user: dict = Depends(require_action("fleet", "C"))):
     tid = str(uuid.uuid4())
     fields = t.model_dump()
     fields["occurred_at"] = _parse_datetime(fields["occurred_at"])
@@ -6196,7 +6403,8 @@ async def create_trip_log(t: TripLogIn, user: dict = Depends(require_module("fle
     return doc
 
 @api.delete("/trip-logs/{tid}")
-async def delete_trip_log(tid: str, user: dict = Depends(require_module("fleet"))):
+async def delete_trip_log(tid: str, user: dict = Depends(require_action("fleet", "D"))):
+    refuse_delete("trip entry", "Void it with a reason to correct the totals.")
     await execute("delete from trip_logs where id = :id and workspace_id = :ws", id=tid, ws=user["workspace_id"])
     return {"ok": True}
 
@@ -6238,7 +6446,7 @@ async def _compute_fleet_health(workspace_id: str):
     """Shared computation used by endpoint, trend, and health digest cron."""
     ws_row = await fetch_one("select license_warning_days from workspaces where id = :id", id=workspace_id)
     license_warning_days = (ws_row or {}).get("license_warning_days") or 30
-    vehicles = await fetch_all("select * from vehicles where workspace_id = :ws", ws=workspace_id)
+    vehicles = await fetch_all("select * from vehicles where workspace_id = :ws and coalesce(status, '') <> 'archived'", ws=workspace_id)
     all_insp = await fetch_all("select * from inspections where workspace_id = :ws", ws=workspace_id)
     all_maint = await fetch_all("select * from maintenance where workspace_id = :ws", ws=workspace_id)
     all_inc = await fetch_all("select * from incidents where workspace_id = :ws", ws=workspace_id)
@@ -6394,7 +6602,7 @@ def _parse_csv(text: str) -> list:
     return [row for row in reader]
 
 @api.post("/import/vehicles")
-async def import_vehicles(payload: dict, user: dict = Depends(require_module("fleet"))):
+async def import_vehicles(payload: dict, user: dict = Depends(require_action("fleet", "C"))):
     text = payload.get("csv", "")
     if not text.strip(): raise HTTPException(status_code=400, detail="Empty CSV")
     rows = list(csvlib.DictReader(text.splitlines()))
@@ -6429,7 +6637,7 @@ async def import_vehicles(payload: dict, user: dict = Depends(require_module("fl
     return {"created": created, "errors": errors}
 
 @api.post("/import/parts")
-async def import_parts(payload: dict, user: dict = Depends(require_module("parts"))):
+async def import_parts(payload: dict, user: dict = Depends(require_action("parts", "C"))):
     text = payload.get("csv", "")
     if not text.strip(): raise HTTPException(status_code=400, detail="Empty CSV")
     rows = list(csvlib.DictReader(text.splitlines()))
@@ -6463,7 +6671,7 @@ async def import_parts(payload: dict, user: dict = Depends(require_module("parts
     return {"created": created, "errors": errors}
 
 @api.post("/import/drivers")
-async def import_drivers(payload: dict, user: dict = Depends(require_module("drivers"))):
+async def import_drivers(payload: dict, user: dict = Depends(require_action("drivers", "C"))):
     if user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Only admins/managers can bulk-invite drivers")
     text = payload.get("csv", "")
@@ -6493,7 +6701,7 @@ async def import_drivers(payload: dict, user: dict = Depends(require_module("dri
     return {"created": created, "errors": errors}
 
 @api.post("/import/driver-records")
-async def import_driver_records(payload: dict, user: dict = Depends(require_module("drivers"))):
+async def import_driver_records(payload: dict, user: dict = Depends(require_action("drivers", "C"))):
     """Bulk-imports fleet driver records (name/license/etc.) into the `drivers` table — distinct from
     /import/drivers above, which invites team-member *users* (email/role) rather than driver records."""
     text = payload.get("csv", "")
@@ -6793,7 +7001,7 @@ async def cron_weekly_digest(request: Request):
     return {"ok": True, "queued": True}
 
 @api.post("/workspace/send-digest")
-async def send_digest_now(user: dict = Depends(get_current_user)):
+async def send_digest_now(user: dict = Depends(require_action("settings", "E"))):
     """Manual trigger of the weekly digest for this workspace."""
     email_id = await _send_workspace_digest(user["workspace_id"])
     await _mark_digest_evaluated(user["workspace_id"], "weekly_digest")
@@ -6801,7 +7009,7 @@ async def send_digest_now(user: dict = Depends(get_current_user)):
     return {"sent": bool(email_id), "email_id": email_id}
 
 @api.post("/workspace/send-spend-digest")
-async def send_spend_digest_now(user: dict = Depends(get_current_user)):
+async def send_spend_digest_now(user: dict = Depends(require_action("settings", "E"))):
     """Manual trigger of the weekly spend digest for this workspace."""
     email_id = await _send_spend_digest(user["workspace_id"])
     await _mark_digest_evaluated(user["workspace_id"], "weekly_spend_digest")
@@ -6861,7 +7069,7 @@ async def cron_health_digest(request: Request):
     return {"ok": True, "queued": True}
 
 @api.post("/workspace/send-health-digest")
-async def send_health_digest_now(user: dict = Depends(get_current_user)):
+async def send_health_digest_now(user: dict = Depends(require_action("settings", "E"))):
     """Manual trigger of the health digest for this workspace."""
     email_id = await _send_health_digest(user["workspace_id"])
     await _mark_digest_evaluated(user["workspace_id"], "health_digest")
@@ -6923,8 +7131,8 @@ async def _compute_overdue_checklists(workspace_id: str):
     per assignment_scope) whose most recent matching inspection is older than the frequency interval, or
     who have never been inspected with that template at all."""
     templates = await fetch_all("select * from templates where workspace_id = :ws and active = true", ws=workspace_id)
-    vehicles = await fetch_all("select id, name, group_id from vehicles where workspace_id = :ws", ws=workspace_id)
-    assets = await fetch_all("select id, name, kind from assets where workspace_id = :ws", ws=workspace_id)
+    vehicles = await fetch_all("select id, name, group_id from vehicles where workspace_id = :ws and coalesce(status, '') <> 'archived'", ws=workspace_id)
+    assets = await fetch_all("select id, name, kind from assets where workspace_id = :ws and coalesce(status, '') <> 'archived'", ws=workspace_id)
     vmap = {v["id"]: v for v in vehicles}
     amap = {a["id"]: a for a in assets}
     now = datetime.now(timezone.utc)
@@ -6970,7 +7178,7 @@ async def _compute_checklist_compliance(workspace_id: str):
     Dashboard's breakdown and per-vehicle score. 'Due soon' = within the last 20% of the frequency
     window; 'missed' = never inspected with this template at all."""
     templates = await fetch_all("select * from templates where workspace_id = :ws and active = true", ws=workspace_id)
-    vehicles = await fetch_all("select id, name, plate, group_id from vehicles where workspace_id = :ws", ws=workspace_id)
+    vehicles = await fetch_all("select id, name, plate, group_id from vehicles where workspace_id = :ws and coalesce(status, '') <> 'archived'", ws=workspace_id)
     vmap = {v["id"]: v for v in vehicles}
     now = datetime.now(timezone.utc)
     results = []
@@ -7193,14 +7401,14 @@ async def cron_maintenance_reminders(request: Request):
     return {"ok": True, "queued": True}
 
 @api.post("/workspace/send-maintenance-reminders-now")
-async def send_maintenance_reminders_now(user: dict = Depends(require_module("maintenance", "full"))):
+async def send_maintenance_reminders_now(user: dict = Depends(require_action("settings", "E"))):
     """Manual trigger of the reminder sweep for this workspace — same underlying logic as the cron."""
     count = await _run_maintenance_reminders(user["workspace_id"])
     await log_event(user, "maintenance_reminders.sent", "workspace", user["workspace_id"], {"count": count})
     return {"sent": count}
 
 @api.post("/workspace/send-overdue-checklists-alert")
-async def send_overdue_checklists_now(user: dict = Depends(get_current_user)):
+async def send_overdue_checklists_now(user: dict = Depends(require_action("settings", "E"))):
     """Manual trigger of the overdue-checklists email for this workspace."""
     email_id = await _send_overdue_checklists_digest(user["workspace_id"])
     await _mark_digest_evaluated(user["workspace_id"], "overdue_checklists")
@@ -7237,12 +7445,17 @@ async def get_shift_settings(user: dict = Depends(get_current_user)):
 
 @api.patch("/workspace")
 async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_current_user)):
-    # Every field here is workspace-wide. `name` and `license_warning_days` used to be missing from
-    # this list, so any signed-in user (a driver included) could rename the workspace or change when
-    # licence alerts fire; the UI already offered both only to admins and managers.
-    guarded = (req.name, req.license_warning_days, req.currency, req.notification_prefs, req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.report_logo, req.costing_approver_role, req.shift_start_hour, req.overdue_alert_email, req.default_downtime_cost_per_hour, req.finance_email)
-    if any(v is not None for v in guarded) and user.get("role") not in ("admin", "manager"):
-        raise HTTPException(status_code=403, detail="Only admins/managers can change workspace-wide settings")
+    # Two kinds of company setting, two permissions. Security policy and role grants (password and
+    # lockout rules, which role may approve costs) are Customer Admin's: security E. Operational
+    # settings (name, currency, notifications, defaults, alert addresses) are Customer Admin's and
+    # Fleet Manager's: settings E.
+    security_fields = (req.min_password_length, req.lockout_enabled, req.lockout_threshold, req.costing_approver_role)
+    operational_fields = (req.name, req.license_warning_days, req.currency, req.notification_prefs, req.report_logo,
+                          req.shift_start_hour, req.overdue_alert_email, req.default_downtime_cost_per_hour, req.finance_email)
+    if any(v is not None for v in security_fields):
+        await assert_action(user, "security", "E")
+    if any(v is not None for v in operational_fields):
+        await assert_action(user, "settings", "E")
     if req.name is not None:
         await execute("update workspaces set name = :name where id = :id", name=req.name, id=user["workspace_id"])
     if req.license_warning_days is not None:
@@ -7255,11 +7468,13 @@ async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_curren
             p=json_dumps(req.notification_prefs), id=user["workspace_id"],
         )
     if req.min_password_length is not None:
-        await execute("update workspaces set min_password_length = :n where id = :id", n=max(6, req.min_password_length), id=user["workspace_id"])
+        # FleetIntel's baseline: a company can require longer passwords, never shorter than 8.
+        await execute("update workspaces set min_password_length = :n where id = :id", n=min(128, max(8, req.min_password_length)), id=user["workspace_id"])
     if req.lockout_enabled is not None:
         await execute("update workspaces set lockout_enabled = :b where id = :id", b=req.lockout_enabled, id=user["workspace_id"])
     if req.lockout_threshold is not None:
-        await execute("update workspaces set lockout_threshold = :n where id = :id", n=max(3, req.lockout_threshold), id=user["workspace_id"])
+        # Baseline: lock after 3 to 10 failed attempts; a higher number would switch lockout off in all but name.
+        await execute("update workspaces set lockout_threshold = :n where id = :id", n=min(10, max(3, req.lockout_threshold)), id=user["workspace_id"])
     if req.report_logo is not None:
         if len(req.report_logo) > REPORT_LOGO_MAX_B64_CHARS:
             raise HTTPException(status_code=400, detail="Logo image is too large (max ~1.5MB)")
@@ -7268,19 +7483,6 @@ async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_curren
         if req.costing_approver_role and req.costing_approver_role not in ("operations_manager", "finance", "workshop_manager"):
             raise HTTPException(status_code=400, detail="Invalid costing approver role")
         await execute("update workspaces set costing_approver_role = :r where id = :id", r=req.costing_approver_role or None, id=user["workspace_id"])
-        if req.costing_approver_role:
-            # Materialize the grant into everyone already in that role now -- new hires get it at
-            # registration instead (see register()'s target_ws.costing_approver_role check), so this
-            # workspace setting stays effective without a repeated per-user Team panel chore.
-            # NB: jsonb_set can't create a missing intermediate object for a 2-level path ('{modules,
-            # quotes}') -- it silently no-ops when permissions/modules is empty. Merge the whole
-            # 'modules' object instead so this works whether or not the user has any permissions yet.
-            await execute(
-                "update user_profiles set permissions = jsonb_set(coalesce(permissions, '{}'::jsonb), "
-                "'{modules}', coalesce(permissions->'modules', '{}'::jsonb) || '{\"quotes\":\"full\"}'::jsonb) "
-                "where workspace_id = :ws and role = :role",
-                ws=user["workspace_id"], role=req.costing_approver_role,
-            )
     if req.shift_start_hour is not None:
         await execute(
             "update workspaces set shift_start_hour = :h where id = :id",
@@ -7305,7 +7507,7 @@ async def rename_workspace(req: WorkspaceRename, user: dict = Depends(get_curren
 
 
 @api.post("/workspace/invites")
-async def create_invite(req: InviteIn, user: dict = Depends(get_current_user)):
+async def create_invite(req: InviteIn, user: dict = Depends(require_action("team", "C"))):
     if user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Only admins/managers can invite")
     if await fetch_one("select 1 from user_profiles where email = :email and workspace_id = :ws", email=req.email.lower(), ws=user["workspace_id"]):
@@ -7322,7 +7524,7 @@ async def create_invite(req: InviteIn, user: dict = Depends(get_current_user)):
     return doc
 
 @api.delete("/workspace/invites/{iid}")
-async def revoke_invite(iid: str, user: dict = Depends(get_current_user)):
+async def revoke_invite(iid: str, user: dict = Depends(require_action("team", "D"))):
     if user.get("role") not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Forbidden")
     await execute("delete from invites where id = :id and workspace_id = :ws", id=iid, ws=user["workspace_id"])
@@ -8099,7 +8301,7 @@ async def list_report_definitions(user: dict = Depends(require_module("reports")
     )
 
 @api.post("/reports/definitions")
-async def create_report_definition(req: ReportDefinitionIn, user: dict = Depends(require_module("reports"))):
+async def create_report_definition(req: ReportDefinitionIn, user: dict = Depends(require_action("reports", "C"))):
     if req.report_type not in REPORT_TYPES:
         raise HTTPException(status_code=400, detail="Unknown report type")
     rid = str(uuid.uuid4())
@@ -8113,7 +8315,7 @@ async def create_report_definition(req: ReportDefinitionIn, user: dict = Depends
     return await fetch_one("select * from report_definitions where id = :id", id=rid)
 
 @api.patch("/reports/definitions/{rid}")
-async def update_report_definition(rid: str, req: ReportDefinitionUpdate, user: dict = Depends(require_module("reports"))):
+async def update_report_definition(rid: str, req: ReportDefinitionUpdate, user: dict = Depends(require_action("reports", "E"))):
     existing = await fetch_one("select * from report_definitions where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
     if not existing: raise HTTPException(status_code=404, detail="Not found")
     patch = req.model_dump(exclude_unset=True)
@@ -8124,7 +8326,7 @@ async def update_report_definition(rid: str, req: ReportDefinitionUpdate, user: 
     return await fetch_one("select * from report_definitions where id = :id", id=rid)
 
 @api.delete("/reports/definitions/{rid}")
-async def delete_report_definition(rid: str, user: dict = Depends(require_module("reports"))):
+async def delete_report_definition(rid: str, user: dict = Depends(require_action("reports", "D"))):
     await execute("delete from report_definitions where id = :id and workspace_id = :ws", id=rid, ws=user["workspace_id"])
     return {"ok": True}
 

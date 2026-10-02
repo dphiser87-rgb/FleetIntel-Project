@@ -16,18 +16,28 @@ export const AuthProvider = ({ children }) => {
       .finally(() => setLoading(false));
   }, []);
 
+  // After any sign-in, load the full user from /auth/me: it carries the person's effective
+  // permissions, which the sign-in responses don't, and the sidebar and buttons are built from them.
+  const signedIn = async (data) => {
+    localStorage.setItem("token", data.token);
+    try {
+      const me = (await api.get("/auth/me")).data;
+      setUser(me);
+      return me;
+    } catch {
+      setUser(data.user);
+      return data.user;
+    }
+  };
+
   const login = async (email, password) => {
     const { data } = await api.post("/auth/login", { email, password });
-    localStorage.setItem("token", data.token);
-    setUser(data.user);
-    return data.user;
+    return signedIn(data);
   };
 
   const register = async (payload) => {
     const { data } = await api.post("/auth/register", payload);
-    localStorage.setItem("token", data.token);
-    setUser(data.user);
-    return data.user;
+    return signedIn(data);
   };
 
   const logout = () => {

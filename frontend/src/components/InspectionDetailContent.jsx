@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 import { toast } from "sonner";
 import { CheckCircle, XCircle, MapPin, Wrench } from "@phosphor-icons/react";
 
 export default function InspectionDetailContent({ id, onActioned }) {
+  const { user } = useAuth();
   const [insp, setInsp] = useState(null);
   const [template, setTemplate] = useState(null);
   const [target, setTarget] = useState(null);
@@ -127,7 +130,7 @@ export default function InspectionDetailContent({ id, onActioned }) {
               </div>
             </div>
           ) : (
-            <button onClick={() => setShowAlloc(true)} data-testid="assign-maintenance-btn" className="flex items-center gap-2 text-sm font-bold text-primary">
+            can(user, "maintenance", "C") && <button onClick={() => setShowAlloc(true)} data-testid="assign-maintenance-btn" className="flex items-center gap-2 text-sm font-bold text-primary">
               <Wrench size={18} /> Assign defects to maintenance
             </button>
           )}

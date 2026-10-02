@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Plus, Receipt, ArrowSquareOut, CurrencyCircleDollar, DownloadSimple } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
-import { hasAccess } from "@/lib/access";
+import { can } from "@/lib/access";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
 import { usePolling } from "@/hooks/use-polling";
@@ -14,7 +14,6 @@ const STATUS_COLOR = {
   pending_approval: "text-[#FFCC00] border-[#FFCC00]",
   paid: "text-muted-foreground border-border",
 };
-const FINANCE_ROLES = ["finance", "admin"];
 
 const fileToDataUrl = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -26,8 +25,8 @@ const fileToDataUrl = (file) => new Promise((resolve, reject) => {
 export default function PurchaseOrders() {
   const { user } = useAuth();
   const { currency } = useCurrency();
-  const canCreatePO = hasAccess(user, "purchase_orders", "full");
-  const canMarkPaid = FINANCE_ROLES.includes(user?.role);
+  const canCreatePO = can(user, "purchase_orders", "C");
+  const canMarkPaid = can(user, "purchase_orders", "A");
   const [orders, setOrders] = useState([]);
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ supplier: "", amount: "", notes: "" });

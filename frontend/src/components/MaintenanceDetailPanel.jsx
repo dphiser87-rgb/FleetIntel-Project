@@ -10,11 +10,8 @@ import PartsRequisitionBuilder from "@/components/PartsRequisitionBuilder";
 import PartsRequisitionPanel from "@/components/PartsRequisitionPanel";
 import { useCurrency } from "@/lib/CurrencyContext";
 import { formatMoneyFull } from "@/lib/currency";
-import { hasAccess } from "@/lib/access";
+import { can, canEditJob } from "@/lib/access";
 
-const OPS_ROLES = ["operations_manager", "admin"];
-const FINANCE_ROLES = ["finance", "admin"];
-const REQUISITION_APPROVER_ROLES = ["workshop_manager", "admin"];
 
 export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, onChange }) {
   const { currency } = useCurrency();
@@ -47,8 +44,8 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
 
   const latestQuote = quotes[0];
   const canDecide = latestQuote && (
-    (latestQuote.stage === "pending_ops" && OPS_ROLES.includes(currentUser?.role)) ||
-    (latestQuote.stage === "pending_finance" && FINANCE_ROLES.includes(currentUser?.role))
+    (latestQuote.stage === "pending_ops" && can(currentUser, "quotes", "A")) ||
+    (latestQuote.stage === "pending_finance" && can(currentUser, "purchase_orders", "A"))
   );
 
   const decide = async (decision, reason) => {
@@ -62,16 +59,16 @@ export default function MaintenanceDetailPanel({ jobId, currentUser, onClose, on
     }
   };
 
-  // Gated by the "quotes" System Right rather than a hardcoded role, mirroring the backend's
-  // require_module("quotes", "full") on POST /maintenance/{mid}/quotes -- workshop_manager/admin/manager
-  // get it by default, but a workspace with no Workshop Manager can grant it to Operations or Finance
-  // instead via Team permissions.
-  const canSubmitQuote = (!latestQuote || latestQuote.stage === "rejected") && hasAccess(currentUser, "quotes", "full");
+  // Create on quotes, as the server checks on POST /maintenance/{mid}/quotes.
+  const canSubmitQuote = (!latestQuote || latestQuote.stage === "rejected") && can(currentUser, "quotes", "C");
 
   const latestRequisition = requisitions[0];
   const canDecideRequisition = latestRequisition && latestRequisition.status === "pending_approval"
-    && REQUISITION_APPROVER_ROLES.includes(currentUser?.role);
-  const canSubmitRequisition = !latestRequisition || latestRequisition.status !== "pending_approval";
+    && can(currentUser, "parts_requisitions", "A");
+  // Recording parts used on a job; a mechanic only on jobs assigned to them.
+  const canSubmitRequisition = (!latestRequisition || latestRequisition.status !== "pending_approval")
+    && can(currentUser, "parts_requisitions", "C")
+    && (!currentUser?.own_jobs_only || String(job?.assigned_to || "") === String(currentUser?.id));
 
   const decideRequisition = async (decision, reason) => {
     try {

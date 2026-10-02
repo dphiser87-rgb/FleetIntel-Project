@@ -5,13 +5,15 @@ import { UserPlus, Copy, Trash, PencilSimple, ArrowUp, ArrowDown, DownloadSimple
 import { formatApiErrorDetail } from "@/lib/api";
 import TeamMemberPanel from "@/components/TeamMemberPanel";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { ROLE_COLOR } from "@/lib/access";
+import { ROLE_COLOR, can } from "@/lib/access";
+import { useAuth } from "@/contexts/AuthContext";
 
 const FALLBACK_ROLES = ["admin", "manager", "inspector", "mechanic"];
 
 const roleColor = (r) => ROLE_COLOR[r] || "border-muted-foreground text-muted-foreground";
 
 export default function Team() {
+  const { user: me } = useAuth();
   const [ws, setWs] = useState(null);
   const [members, setMembers] = useState([]);
   const [invites, setInvites] = useState([]);
@@ -21,6 +23,7 @@ export default function Team() {
   const [showInvite, setShowInvite] = useState(false);
   const [moduleKeys, setModuleKeys] = useState([]);
   const [presets, setPresets] = useState({});
+  const [moduleActions, setModuleActions] = useState({});
   const [vehicleGroups, setVehicleGroups] = useState([]);
   const [driverGroups, setDriverGroups] = useState([]);
   const [assetGroups, setAssetGroups] = useState([]);
@@ -46,7 +49,7 @@ export default function Team() {
   };
   useEffect(() => {
     load();
-    api.get("/permissions/presets").then((r) => { setModuleKeys(r.data.module_keys); setPresets(r.data.presets); });
+    api.get("/permissions/presets").then((r) => { setModuleKeys(r.data.module_keys); setPresets(r.data.presets); setModuleActions(r.data.module_actions || {}); });
     api.get("/vehicle-groups").then((r) => setVehicleGroups(r.data || [])).catch(() => {});
     api.get("/driver-groups").then((r) => setDriverGroups(r.data || [])).catch(() => {});
     api.get("/asset-groups").then((r) => setAssetGroups(r.data || [])).catch(() => {});
@@ -160,7 +163,7 @@ export default function Team() {
           ) : (
             <h1 className="font-display font-black text-4xl tracking-tight mt-1 flex items-center gap-3" data-testid="team-title">
               {ws.name}
-              <button onClick={() => setRenaming(true)} className="text-muted-foreground hover:text-primary" data-testid="rename-ws"><PencilSimple size={16} /></button>
+              {can(me, "settings", "E") && <button onClick={() => setRenaming(true)} className="text-muted-foreground hover:text-primary" data-testid="rename-ws"><PencilSimple size={16} /></button>}
             </h1>
           )}
         </div>
@@ -192,12 +195,12 @@ export default function Team() {
                 </select>
                 {selectedIds.size > 0 && (
                   <>
-                    <button onClick={bulkResetPassword} data-testid="bulk-reset-password" className="flex items-center gap-1 border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
+                    {can(me, "team", "E") && <><button onClick={bulkResetPassword} data-testid="bulk-reset-password" className="flex items-center gap-1 border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
                       <Key size={12} /> Reset password ({selectedIds.size})
                     </button>
                     <button onClick={bulkDeactivate} data-testid="bulk-deactivate" className="flex items-center gap-1 border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
                       <Prohibit size={12} /> Deactivate ({selectedIds.size})
-                    </button>
+                    </button></>}
                   </>
                 )}
                 <button onClick={exportCsv} data-testid="download-team-csv" className="flex items-center gap-1 border border-border px-2 py-1.5 text-xs uppercase tracking-widest hover:border-primary hover:text-primary">
@@ -245,10 +248,10 @@ export default function Team() {
               </tbody>
             </table>
             <div className="border-t border-border p-4 flex justify-end">
-              <button onClick={() => setShowInvite(true)} data-testid="open-new-user"
+              {can(me, "team", "C") && <button onClick={() => setShowInvite(true)} data-testid="open-new-user"
                 className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2.5 text-xs uppercase tracking-widest hover:bg-primary/90">
                 <UserPlus size={14} /> New user
-              </button>
+              </button>}
             </div>
           </div>
 
@@ -283,7 +286,7 @@ export default function Team() {
                       )}
                     </td>
                     <td className="p-3 text-right">
-                      {!i.used_by && (
+                      {!i.used_by && can(me, "team", "D") && (
                         <button onClick={() => revoke(i.id)} className="text-muted-foreground hover:text-primary" data-testid={`revoke-${i.email}`}><Trash size={14} /></button>
                       )}
                     </td>
@@ -330,7 +333,7 @@ export default function Team() {
         </SheetContent>
       </Sheet>
 
-      <TeamMemberPanel member={selected} moduleKeys={moduleKeys} presets={presets}
+      <TeamMemberPanel member={selected} moduleKeys={moduleKeys} presets={presets} moduleActions={moduleActions}
         vehicleGroups={vehicleGroups} driverGroups={driverGroups}
         assetGroups={assetGroups} vehicles={vehicles} assets={assets}
         onClose={() => setSelected(null)} onChange={load} />

@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api, downloadFile, formatApiErrorDetail } from "@/lib/api";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Plus, DownloadSimple, Trash, PencilSimple, ArrowUp, ArrowDown, Eye, X } from "@phosphor-icons/react";
 import { usePolling } from "@/hooks/use-polling";
@@ -92,6 +94,7 @@ function FilterFields({ typeDef, filters, onChange, vehicles }) {
 }
 
 export default function ReportCenter() {
+  const { user } = useAuth();
   const [types, setTypes] = useState([]);
   const [definitions, setDefinitions] = useState([]);
   const [vehicles, setVehicles] = useState([]);
@@ -180,9 +183,9 @@ export default function ReportCenter() {
           <div className="overline">Analytics</div>
           <h1 className="font-display font-black text-4xl tracking-tight mt-1" data-testid="report-center-title">Report Center</h1>
         </div>
-        <button onClick={startNew} data-testid="new-report-btn" className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
+        {can(user, "reports", "C") && <button onClick={startNew} data-testid="new-report-btn" className="flex items-center gap-2 bg-primary px-3 py-2 text-xs uppercase tracking-widest text-primary-foreground hover:bg-primary/90">
           <Plus size={14} weight="bold" /> New report
-        </button>
+        </button>}
       </header>
 
       <div className="p-8">
@@ -207,8 +210,8 @@ export default function ReportCenter() {
                   <td className="p-3">
                     <div className="flex items-center justify-end gap-3">
                       <button onClick={() => download(d)} data-testid={`download-report-${d.id}`} title="Download" className="text-muted-foreground hover:text-primary"><DownloadSimple size={16} /></button>
-                      <button onClick={() => openEdit(d)} title="Edit" className="text-muted-foreground hover:text-primary"><PencilSimple size={16} /></button>
-                      <button onClick={() => remove(d)} data-testid={`delete-report-${d.id}`} title="Delete" className="text-muted-foreground hover:text-[#FF3B30]"><Trash size={16} /></button>
+                      {can(user, "reports", "E") && <button onClick={() => openEdit(d)} title="Edit" className="text-muted-foreground hover:text-primary"><PencilSimple size={16} /></button>}
+                      {can(user, "reports", "D") && <button onClick={() => remove(d)} data-testid={`delete-report-${d.id}`} title="Delete" className="text-muted-foreground hover:text-[#FF3B30]"><Trash size={16} /></button>}
                     </div>
                   </td>
                 </tr>

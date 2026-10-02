@@ -4,12 +4,14 @@ import { toast } from "sonner";
 import { ShieldCheck, ShieldWarning, Copy, ArrowsClockwise, LockKey } from "@phosphor-icons/react";
 import { formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { can } from "@/lib/access";
 
 const LOCKOUT_MINUTES = 15; // mirrors backend server.py's LOCKOUT_COOLDOWN_MINUTES
 
 export default function Security() {
   const { user } = useAuth();
-  const canManage = user && ["admin", "manager"].includes(user.role);
+  // Password and lockout policy: Customer Admin (security edit). Your own 2FA below is always yours.
+  const canManage = can(user, "security", "E");
   const [status, setStatus] = useState(null);
   const [setup, setSetup] = useState(null);
   const [code, setCode] = useState("");
@@ -172,7 +174,7 @@ export default function Security() {
           <h3 className="font-display text-2xl font-bold tracking-tight">Password & lockout</h3>
           <div className="mt-2 text-sm text-muted-foreground">
             Applies workspace-wide, to every teammate's login.
-            {!canManage && " Only admins and managers can change this."}
+            {!canManage && " Only a Customer Admin can change this."}
           </div>
 
           <div className="mt-5">
